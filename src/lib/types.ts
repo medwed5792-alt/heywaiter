@@ -202,14 +202,33 @@ export interface Review {
   createdAt: unknown;
 }
 
-/** Запись графика (план/факт часов) */
+/** Тайм-слот смены (сетевые заведения: точка + время) */
+export interface ShiftSlot {
+  date: string;
+  startTime: string;
+  endTime: string;
+  venueId: string;
+}
+
+/** Запись графика (план/факт). План = endTime−startTime, Факт = checkOut−checkIn из Staff Bot. */
 export interface ScheduleEntry {
   id: string;
   venueId: string;
   staffId: string;
-  date: string;
-  planHours: number;
+  /** Слот смены: дата, время начала/конца, точка */
+  slot: ShiftSlot;
+  /** План часов (вычисляется из slot.endTime − slot.startTime) */
+  planHours?: number;
+  /** Факт часов (checkOut − checkIn) */
   factHours?: number;
+  /** Реальное время прихода (HH:mm или ISO) от Staff Bot */
+  checkIn?: string;
+  /** Реальное время ухода (HH:mm или ISO) от Staff Bot */
+  checkOut?: string;
+  /** Опоздание в минутах */
+  lateMinutes?: number;
+  /** Ранний уход в минутах */
+  earlyLeaveMinutes?: number;
   role?: ServiceRole;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -294,6 +313,8 @@ export interface Staff {
   /** ID в соцсетях (для Staff-ботов): tgId, waId и т.д. хранятся в identity или здесь */
   /** Проф: закрепление за столами (ID столов) */
   assignedTableIds?: string[];
+  /** Сеть: массив venueId — сотрудник закреплён за несколькими точками, в Staff Bot видит адрес на сегодня и «Маршрут» */
+  venueIds?: string[];
   /** Системные (read-only): рейтинг от гостей, от ЛПР заведения */
   guestRating?: number;
   venueRating?: number;
