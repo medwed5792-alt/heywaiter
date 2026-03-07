@@ -17,13 +17,13 @@ import { db } from "@/lib/firebase";
 import type { Guest, Reservation } from "@/lib/types";
 
 export type RecognitionPlatform =
-  | "tg" | "wa" | "vk" | "viber" | "wechat" | "instagram" | "facebook";
+  | "tg" | "wa" | "vk" | "viber" | "wechat" | "instagram" | "facebook" | "line";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 мин
 
 const PLATFORM_FIELD: Record<
   RecognitionPlatform,
-  keyof Pick<Guest, "tgId" | "waId" | "vkId" | "viberId" | "wechatId" | "instagramId" | "facebookId">
+  keyof Pick<Guest, "tgId" | "waId" | "vkId" | "viberId" | "wechatId" | "instagramId" | "facebookId" | "lineId">
 > = {
   tg: "tgId",
   wa: "waId",
@@ -32,6 +32,7 @@ const PLATFORM_FIELD: Record<
   wechat: "wechatId",
   instagram: "instagramId",
   facebook: "facebookId",
+  line: "lineId",
 };
 
 export interface IdentifyResult {

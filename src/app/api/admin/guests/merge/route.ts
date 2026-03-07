@@ -3,7 +3,7 @@ import { mergeGuestProfiles } from "@/lib/guest-recognition";
 import type { RecognitionPlatform } from "@/lib/guest-recognition";
 
 const PLATFORMS: RecognitionPlatform[] = [
-  "tg", "wa", "vk", "viber", "wechat", "instagram", "facebook",
+  "tg", "wa", "vk", "viber", "wechat", "instagram", "facebook", "line",
 ];
 
 /**

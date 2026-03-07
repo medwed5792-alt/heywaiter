@@ -1,6 +1,6 @@
 # Схема Firestore — HeyWaiter (Omnichannel SaaS CRM)
 
-Глобальный масштаб UI: 75%. Инфраструктура: 7 каналов × 2 бота (Client + Staff).
+Глобальный масштаб UI: 75%. Инфраструктура: 8 каналов × 2 бота (Client + Staff): Telegram, WhatsApp, VK, Viber, WeChat, Instagram, Facebook, Line.
 
 ---
 
@@ -55,13 +55,13 @@
 ## 3. Цифровой профиль гостя (CRM Engine)
 
 ### `guests`
-Сквозной поиск по всем 7 ID: `identifyGuest(platformId, platform)`.
+Сквозной поиск по всем 8 ID: `identifyGuest(platformId, platform)`.
 
 | Поле | Тип | Описание |
 |------|-----|----------|
 | id | string | Doc ID |
 | phone | string | Телефон |
-| tgId, waId, vkId, viberId, wechatId, instagramId, facebookId | string | ID в каналах |
+| tgId, waId, vkId, viberId, wechatId, instagramId, facebookId, lineId | string | ID в каналах |
 | name | string | Имя |
 | nickname | string | Ник/псевдоним |
 | type | string | `constant` \| `regular` \| `favorite` \| `vip` \| `blacklisted` |
@@ -221,7 +221,7 @@
 
 ## Роутинг вебхуков
 
-- **14 эндпоинтов:** `POST /api/webhook/{channel}/{botType}`  
-  `channel`: telegram, whatsapp, vk, viber, wechat, instagram, facebook.  
+- **16 эндпоинтов:** `POST /api/webhook/{channel}/{botType}`  
+  `channel`: telegram, whatsapp, vk, viber, wechat, instagram, facebook, line.  
   `botType`: client, staff.
 - Обратная совместимость: `POST /api/webhook/telegram` → обрабатывается как Telegram Client Bot.

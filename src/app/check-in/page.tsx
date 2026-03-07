@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Интерфейс гостя (Гостевой вход).
+ * Выбор мессенджера для перехода в бота заведения. 8 каналов в едином пульте.
+ */
+
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, Suspense, useState, useCallback } from "react";
 import { MessageCircle } from "lucide-react";
@@ -19,14 +24,21 @@ import { buildDeepLink, messengerLabels } from "@/lib/deep-links";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import type { MessengerChannel } from "@/lib/types";
+import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 мин
 
-const MESSENGER_CHANNELS: MessengerChannel[] = [
-  "telegram",
-  "whatsapp",
-  "viber",
-];
+/** Фирменные цвета брендов мессенджеров для кнопок (строгий стиль) */
+const MESSENGER_BRAND_COLORS: Record<MessengerChannel, string> = {
+  telegram: "#0088cc",
+  whatsapp: "#25D366",
+  viber: "#7360f2",
+  vk: "#0077FF",
+  facebook: "#0084FF",
+  instagram: "#E4405F",
+  wechat: "#07C160",
+  line: "#06C755",
+};
 
 function getBrowserLocale(): string {
   if (typeof navigator === "undefined") return "en";
@@ -49,7 +61,6 @@ function CheckInContent() {
     setLocale(getBrowserLocale());
   }, []);
 
-  // Таймер 120 сек после нажатия (Golden Standard)
   useEffect(() => {
     if (cooldownLeft <= 0) return;
     const t = setInterval(() => {
@@ -68,6 +79,11 @@ function CheckInContent() {
     async (channel: MessengerChannel) => {
       if (!venueId || !tableId) return;
       setStatus("loading");
+
+      // TODO: при необходимости фиксировать выбор мессенджера в Firestore:
+      // например коллекция checkInChoices { venueId, tableId, channel, createdAt }
+      // или поле guestChannel в документе activeSessions после создания сессии.
+
       const now = new Date();
       const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
       const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
@@ -199,23 +215,26 @@ function CheckInContent() {
         <p className="mt-4 text-xs text-gray-500 uppercase tracking-wider">
           Стол · {tableId} · {copy.choose}
         </p>
-        <div className="mt-6 flex flex-col gap-3">
-          {MESSENGER_CHANNELS.map((channel) => {
+        {/* Интерфейс гостя: 8 кнопок мессенджеров в сетке 2×4, фирменные цвета */}
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          {WEBHOOK_CHANNELS.map((channel) => {
             const label = messengerLabels[channel] ?? channel;
+            const brandColor = MESSENGER_BRAND_COLORS[channel] ?? "#6b7280";
             return (
               <button
                 key={channel}
                 type="button"
                 disabled={isBlocked}
                 onClick={() => runCheckIn(channel)}
-                className="flex items-center justify-center gap-3 rounded-xl border-2 border-gray-200 bg-gray-50 py-4 px-6 font-semibold text-gray-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50 hover:border-blue-500 hover:bg-blue-50 hover:text-blue-700 disabled:hover:border-gray-200 disabled:hover:bg-gray-50 disabled:hover:text-gray-800"
+                className="flex items-center justify-center gap-2 rounded-xl border-2 py-4 px-4 font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400"
+                style={{
+                  backgroundColor: brandColor,
+                  borderColor: brandColor,
+                }}
               >
-                <MessageCircle className="h-5 w-5 shrink-0" aria-hidden />
-                <span className="inline-flex items-center rounded-full bg-gray-200 px-3 py-0.5 text-xs font-medium text-gray-700">
-                  {label}
-                </span>
-                <span className="text-sm">
-                  {status === "loading" ? "…" : `${copy.openIn} ${label}`}
+                <MessageCircle className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
+                <span className="text-sm truncate">
+                  {status === "loading" ? "…" : label}
                 </span>
               </button>
             );

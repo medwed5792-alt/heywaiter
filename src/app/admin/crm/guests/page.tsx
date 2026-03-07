@@ -15,6 +15,7 @@ const CHANNEL_FIELD: Record<MessengerChannel, keyof Guest> = {
   wechat: "wechatId",
   instagram: "instagramId",
   facebook: "facebookId",
+  line: "lineId",
 };
 const CHANNEL_LABEL: Record<MessengerChannel, string> = {
   telegram: "Telegram",
@@ -24,6 +25,7 @@ const CHANNEL_LABEL: Record<MessengerChannel, string> = {
   wechat: "WeChat",
   instagram: "Instagram",
   facebook: "Facebook",
+  line: "Line",
 };
 
 function hasChannel(guest: Guest, channel: MessengerChannel): boolean {

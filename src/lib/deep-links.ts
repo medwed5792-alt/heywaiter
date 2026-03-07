@@ -8,6 +8,7 @@ import type { MessengerChannel } from "./types";
 const BOT_TELEGRAM = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "HeyWaiter_bot";
 const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
 const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
+const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
 
 export function buildDeepLink(
   channel: MessengerChannel,
@@ -33,6 +34,9 @@ export function buildDeepLink(
       return `https://wechat.com/?text=${encodeURIComponent(payload)}`;
     case "vk":
       return `https://vk.com/?text=${encodeURIComponent(payload)}`;
+    case "line":
+      if (!BOT_LINE_ID) return "#";
+      return `https://line.me/R/ti/p/@${BOT_LINE_ID.replace(/^@/, "")}?start=${encodeURIComponent(payload)}`;
     default:
       return `/#${payload}`;
   }
@@ -46,4 +50,5 @@ export const messengerLabels: Record<string, string> = {
   instagram: "Instagram",
   facebook: "Facebook",
   wechat: "WeChat",
+  line: "Line",
 };

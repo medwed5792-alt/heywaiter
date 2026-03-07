@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
  *
  *   POST /api/webhook/{channel}/{botType}
  *
- * где channel: telegram | whatsapp | vk | viber | wechat | instagram | facebook
+ * где channel: telegram | whatsapp | vk | viber | wechat | instagram | facebook | line
  *       botType: client | staff
  *
  * Обратная совместимость: POST /api/webhook/telegram → Telegram Client Bot
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(
     {
       error: "Use POST /api/webhook/{channel}/{botType}",
-      channels: ["telegram", "whatsapp", "vk", "viber", "wechat", "instagram", "facebook"],
+      channels: ["telegram", "whatsapp", "vk", "viber", "wechat", "instagram", "facebook", "line"],
       botTypes: ["client", "staff"],
     },
     { status: 400 }

@@ -3,7 +3,7 @@
  * ID мессенджера = паспорт/идентификация в системе.
  */
 
-/** 7 каналов (Dual-Bot: Client + Staff). Платформы: TG, WA, VK, Viber, WeChat, Insta, FB */
+/** 8 каналов (Dual-Bot: Client + Staff). Платформы: TG, WA, VK, Viber, WeChat, Insta, FB, Line */
 export type MessengerChannel =
   | "telegram"
   | "whatsapp"
@@ -11,7 +11,8 @@ export type MessengerChannel =
   | "viber"
   | "wechat"
   | "instagram"
-  | "facebook";
+  | "facebook"
+  | "line";
 
 /** Язык интерфейса (гость видит на своём, персонал — на своём) */
 export type LocaleCode =
@@ -109,6 +110,7 @@ export interface BotsConfig {
   wechat?: { clientToken?: string; staffToken?: string };
   instagram?: { clientToken?: string; staffToken?: string };
   facebook?: { clientToken?: string; staffToken?: string };
+  line?: { clientToken?: string; staffToken?: string };
 }
 
 /** Настройки заведения: язык для AI-переводчика (PRO) и др. */
@@ -308,6 +310,7 @@ export interface Guest {
   wechatId?: string;
   instagramId?: string;
   facebookId?: string;
+  lineId?: string;
   name?: string;
   nickname?: string;
   type: GuestType;

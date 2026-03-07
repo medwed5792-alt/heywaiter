@@ -13,6 +13,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   wechat: "WeChat",
   instagram: "Instagram",
   facebook: "Facebook",
+  line: "Line",
 };
 
 type BotStatus = { channel: string; botType: BotType; active: boolean };

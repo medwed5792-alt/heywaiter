@@ -12,6 +12,7 @@ export const WEBHOOK_CHANNELS: MessengerChannel[] = [
   "wechat",
   "instagram",
   "facebook",
+  "line",
 ];
 
 export type BotType = "client" | "staff";
@@ -24,6 +25,7 @@ const ENV_KEYS: Record<string, Record<BotType, string>> = {
   wechat: { client: "WECHAT_CLIENT_TOKEN", staff: "WECHAT_STAFF_TOKEN" },
   instagram: { client: "INSTAGRAM_CLIENT_TOKEN", staff: "INSTAGRAM_STAFF_TOKEN" },
   facebook: { client: "FACEBOOK_CLIENT_TOKEN", staff: "FACEBOOK_STAFF_TOKEN" },
+  line: { client: "LINE_CLIENT_TOKEN", staff: "LINE_STAFF_TOKEN" },
 };
 
 export function getBotToken(channel: string, botType: BotType): string | undefined {
