@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { ScheduleEntry, ServiceRole } from "@/lib/types";
+import type { ScheduleEntry, ShiftSlot, ServiceRole, Staff } from "@/lib/types";
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const HOUR_WIDTH = 28;
@@ -12,20 +12,21 @@ const ROW_HEIGHT = 44;
 interface ScheduleTimelineProps {
   entries: ScheduleEntry[];
   selectedDate: string;
-  /** staffId -> true если сотрудник на смене, но не в зоне GPS */
   outOfZoneStaffIds?: Set<string>;
   venueId: string;
+  staffList?: Staff[];
   onCloseShift?: (entryId: string) => void;
+  onCellClick?: (date: string, hour: number) => void;
 }
 
 function round1(n: number) {
   return Math.round(n * 10) / 10;
 }
 
-/** Преобразуем planHours в диапазон часов (например 8 ч с 10:00 = 10–18) */
-function planToRange(planHours: number, startHour: number = 10): [number, number] {
-  const end = startHour + planHours;
-  return [Math.max(0, startHour), Math.min(24, end)];
+/** startTime/endTime (HH:mm) в доли суток 0..1 */
+function timeToFraction(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h ?? 0) / 24 + (m ?? 0) / (24 * 60);
 }
 
 export function ScheduleTimeline({
@@ -33,7 +34,9 @@ export function ScheduleTimeline({
   selectedDate,
   outOfZoneStaffIds = new Set(),
   venueId,
+  staffList = [],
   onCloseShift,
+  onCellClick,
 }: ScheduleTimelineProps) {
   const [closingId, setClosingId] = useState<string | null>(null);
 
@@ -55,7 +58,12 @@ export function ScheduleTimeline({
     [onCloseShift]
   );
 
-  const byStaff = entries.reduce(
+  const entriesForDate = entries.filter((e) => {
+    const slot = e.slot ?? { date: (e as unknown as { date?: string }).date ?? "", startTime: "10:00", endTime: "18:00", venueId: e.venueId };
+    return slot.date === selectedDate;
+  });
+
+  const byStaff = entriesForDate.reduce(
     (acc, e) => {
       const key = e.staffId;
       if (!acc[key]) acc[key] = [];
@@ -66,10 +74,15 @@ export function ScheduleTimeline({
   );
   const staffRows = Object.entries(byStaff);
 
+  const staffName = (staffId: string) => {
+    const s = staffList.find((x) => x.id === staffId);
+    if (!s) return staffId.slice(0, 8) + "…";
+    return (s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.identity?.name ?? staffId.slice(0, 8) + "…");
+  };
+
   return (
     <div className="overflow-x-auto overflow-y-auto rounded-xl border border-gray-200 bg-white">
       <div className="min-w-[800px]">
-        {/* Заголовок часов */}
         <div className="sticky top-0 z-10 flex border-b border-gray-200 bg-gray-50">
           <div className="w-32 shrink-0 border-r border-gray-200 py-2 pl-3 text-xs font-medium text-gray-600">
             Сотрудник / Час
@@ -78,7 +91,11 @@ export function ScheduleTimeline({
             {HOURS.map((h) => (
               <div
                 key={h}
-                className="shrink-0 border-r border-gray-100 py-2 text-center text-xs text-gray-500"
+                role="button"
+                tabIndex={0}
+                onClick={() => onCellClick?.(selectedDate, h)}
+                onKeyDown={(e) => e.key === "Enter" && onCellClick?.(selectedDate, h)}
+                className="shrink-0 border-r border-gray-100 py-2 text-center text-xs text-gray-500 hover:bg-blue-50 cursor-pointer"
                 style={{ width: HOUR_WIDTH }}
               >
                 {h}
@@ -88,73 +105,84 @@ export function ScheduleTimeline({
         </div>
 
         {staffRows.map(([staffId, staffEntries]) => {
-          const entry = staffEntries[0];
-          const planHours = entry.planHours ?? 0;
-          const factHours = entry.factHours ?? 0;
-          const [planStart, planEnd] = planToRange(planHours);
-          const factExceedsPlan = factHours > planHours;
-          const outOfZone = outOfZoneStaffIds.has(staffId);
-          const showRed = factExceedsPlan || outOfZone;
+          return staffEntries.map((entry) => {
+            const slot = entry.slot ?? {
+              date: selectedDate,
+              startTime: "10:00",
+              endTime: "18:00",
+              venueId: entry.venueId,
+            } as ShiftSlot;
+            const planStart = timeToFraction(slot.startTime);
+            const planEnd = timeToFraction(slot.endTime);
+            const planHours = entry.planHours ?? (planEnd - planStart) * 24;
+            const factHours = entry.factHours ?? 0;
+            const factExceedsPlan = factHours > planHours;
+            const outOfZone = outOfZoneStaffIds.has(staffId);
+            const showRed = factExceedsPlan || outOfZone;
+            const name = staffName(staffId);
 
-          return (
-            <div
-              key={staffId}
-              className="flex border-b border-gray-100"
-              style={{ minHeight: ROW_HEIGHT }}
-            >
-              <div className="flex w-32 shrink-0 items-center justify-between gap-1 border-r border-gray-200 bg-gray-50/50 px-2 py-1">
-                <span className="truncate text-xs font-medium text-gray-800">
-                  {staffId.slice(0, 8)}…
-                </span>
-                <span className="shrink-0 text-xs text-gray-500">{entry.role ?? "—"}</span>
-              </div>
-              <div className="relative flex flex-1" style={{ width: HOURS.length * HOUR_WIDTH }}>
-                {/* Синий блок — план */}
-                <div
-                  className="absolute inset-y-1 rounded bg-blue-500/70"
-                  style={{
-                    left: `${(planStart / 24) * 100}%`,
-                    width: `${((planEnd - planStart) / 24) * 100}%`,
-                  }}
-                  title={`План: ${planHours} ч`}
-                />
-                {/* Зелёный нахлёст — факт */}
-                {factHours > 0 && (
+            return (
+              <div
+                key={entry.id}
+                className="flex border-b border-gray-100"
+                style={{ minHeight: ROW_HEIGHT }}
+              >
+                <div className="flex w-32 shrink-0 items-center justify-between gap-1 border-r border-gray-200 bg-gray-50/50 px-2 py-1">
+                  <span className="truncate text-xs font-medium text-gray-800">{name}</span>
+                  <span className="shrink-0 text-xs text-gray-500">{entry.role ?? "—"}</span>
+                </div>
+                <div className="relative flex flex-1" style={{ width: HOURS.length * HOUR_WIDTH }}>
+                  {/* Слот: [ startTime === Имя === endTime ] */}
                   <div
-                    className="absolute inset-y-1 rounded bg-green-500/80"
+                    className="absolute inset-y-1 flex items-center justify-between rounded bg-blue-500/70 px-2 text-xs text-white"
                     style={{
-                      left: `${(planStart / 24) * 100}%`,
-                      width: `${Math.min((factHours / 24) * 100, 100 - (planStart / 24) * 100)}%`,
+                      left: `${planStart * 100}%`,
+                      width: `${(planEnd - planStart) * 100}%`,
                     }}
-                    title={`Факт: ${round1(factHours)} ч`}
-                  />
-                )}
-                {/* Красный индикатор: факт > план или не в зоне GPS */}
-                {showRed && (
-                  <div
-                    className="absolute right-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-red-500"
-                    title={outOfZone ? "Не в зоне GPS" : "Факт превышает план"}
-                  />
-                )}
-                {/* Кнопка "Закрыть смену" для ЛПР */}
-                <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                  <button
-                    type="button"
-                    onClick={() => handleCloseShift(entry)}
-                    disabled={!!closingId}
-                    className="rounded bg-gray-800 px-2 py-1 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                    title={`План: ${round1(planHours)} ч | ${slot.startTime}–${slot.endTime}`}
                   >
-                    {closingId === entry.id ? "…" : "Закрыть смену"}
-                  </button>
+                    <span>{slot.startTime}</span>
+                    <span className="font-medium truncate max-w-[120px]">{name}</span>
+                    <span>{slot.endTime}</span>
+                  </div>
+                  {factHours > 0 && (
+                    <div
+                      className="absolute inset-y-1 rounded bg-green-500/80"
+                      style={{
+                        left: `${planStart * 100}%`,
+                        width: `${Math.min((factHours / 24) * 100 / (planEnd - planStart), 1) * (planEnd - planStart) * 100}%`,
+                      }}
+                      title={`Факт: ${round1(factHours)} ч`}
+                    />
+                  )}
+                  {showRed && (
+                    <div
+                      className="absolute right-1 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-red-500"
+                      title={outOfZone ? "Не в зоне GPS" : "Факт превышает план"}
+                    />
+                  )}
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                    <button
+                      type="button"
+                      onClick={() => handleCloseShift(entry)}
+                      disabled={!!closingId}
+                      className="rounded bg-gray-800 px-2 py-1 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                    >
+                      {closingId === entry.id ? "…" : "Закрыть смену"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
+            );
+          });
         })}
 
         {staffRows.length === 0 && (
-          <div className="flex items-center justify-center py-12 text-sm text-gray-500">
-            Нет данных за выбранную дату
+          <div className="flex flex-col items-center justify-center py-12 text-sm text-gray-500">
+            <p>Нет данных за выбранную дату</p>
+            {onCellClick && (
+              <p className="mt-2 text-xs">Кликните по ячейке часа в заголовке, чтобы добавить смену</p>
+            )}
           </div>
         )}
       </div>
