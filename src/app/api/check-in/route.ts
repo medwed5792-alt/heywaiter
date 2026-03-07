@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import type { ActiveSession } from "@/lib/types";
+import type { ActiveSession, MessengerIdentity } from "@/lib/types";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // 30 мин
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { venueId, tableId, tableNumber, guestIdentity } = body as {
+    const { venueId, tableId, tableNumber, guestIdentity: rawGuest } = body as {
       venueId?: string;
       tableId?: string;
       tableNumber?: number;
       guestIdentity?: unknown;
     };
+    const guestIdentity: MessengerIdentity | undefined =
+      rawGuest && typeof rawGuest === "object" && "channel" in rawGuest && "externalId" in rawGuest
+        ? (rawGuest as MessengerIdentity)
+        : undefined;
 
     if (!venueId || !tableId) {
       return NextResponse.json(
@@ -44,7 +48,7 @@ export async function POST(request: NextRequest) {
         venueId,
         tableId,
         tableNumber: tableNumber ?? 0,
-        guestIdentity: guestIdentity ?? null,
+        guestIdentity: guestIdentity ?? undefined,
         status: "table_conflict",
         createdAt: now,
         updatedAt: now,
@@ -72,9 +76,9 @@ export async function POST(request: NextRequest) {
       venueId,
       tableId,
       tableNumber: tableNumber ?? 0,
-      guestIdentity: guestIdentity ?? null,
-      waiterId: null,
-      waiterDisplayName: null,
+      guestIdentity: guestIdentity ?? undefined,
+      waiterId: undefined,
+      waiterDisplayName: undefined,
       status: "check_in_success",
       createdAt: now,
       updatedAt: now,

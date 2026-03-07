@@ -101,6 +101,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
     [checkPosition]
   );
 
+  const sessionIdForDep = params.mode === "guest" ? (params as UseGeoFencingGuest).sessionId : undefined;
   useEffect(() => {
     if (!active) return;
     let watchId: number | null = null;
@@ -116,8 +117,8 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const onError = (err: GeolocationPositionError) => {
         if (err.code !== err.PERMISSION_DENIED) return;
         const p = paramsRef.current;
-        if (p.mode === "guest" && p.sessionId) {
-          updateDoc(doc(db, "activeSessions", p.sessionId), {
+        if (p.mode === "guest" && (p as UseGeoFencingGuest).sessionId) {
+          updateDoc(doc(db, "activeSessions", (p as UseGeoFencingGuest).sessionId!), {
             geoStatus: "denied",
             updatedAt: serverTimestamp(),
           }).catch(() => {});
@@ -133,11 +134,13 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       if (intervalId != null) clearInterval(intervalId);
     };
-  }, [venueId, onPosition, active, params.mode, params.sessionId]);
+  }, [venueId, onPosition, active, params.mode, sessionIdForDep]);
 
+  const startAfterUserAction = params.mode === "guest" ? (params as UseGeoFencingGuest).startAfterUserAction : undefined;
   const startGeoFencing = useCallback(() => {
-    if (params.mode === "guest" && params.startAfterUserAction) setActive(true);
-  }, [params.mode, params.startAfterUserAction]);
+    if (params.mode === "guest" && (params as UseGeoFencingGuest).startAfterUserAction) setActive(true);
+    // params read via paramsRef would be stale; we only need mode and startAfterUserAction for the guard
+  }, [params.mode, startAfterUserAction]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     startGeoFencing,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Bell, Receipt } from "lucide-react";
 import { createTargetedNotification } from "@/lib/stealth-notifications";
 import { useRolesOnShift } from "@/hooks/useRolesOnShift";
@@ -65,7 +65,7 @@ export function GuestCallPanel({
         setCallingRole(null);
       }
     },
-    [venueId, tableId, sessionId]
+    [venueId, tableId, sessionId, startGeoFencing]
   );
 
   const handleRequestBill = useCallback(async () => {
@@ -90,7 +90,7 @@ export function GuestCallPanel({
     } finally {
       setCallingRole(null);
     }
-  }, [venueId, tableId, sessionId]);
+  }, [venueId, tableId, sessionId, startGeoFencing]);
 
   // Таймер 120 с
   useEffect(() => {

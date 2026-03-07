@@ -10,7 +10,6 @@ function getFirebaseAdmin(): { firestore: Firestore } {
   if (typeof window !== "undefined") {
     throw new Error("firebase-admin must not be used in the browser");
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const admin = require("firebase-admin");
   if (!admin.apps.length) {
     admin.initializeApp({
@@ -23,7 +22,7 @@ function getFirebaseAdmin(): { firestore: Firestore } {
   if (!adminFirestore) {
     adminFirestore = admin.firestore();
   }
-  return { firestore: adminFirestore };
+  return { firestore: adminFirestore! };
 }
 
 export function getAdminFirestore(): Firestore {

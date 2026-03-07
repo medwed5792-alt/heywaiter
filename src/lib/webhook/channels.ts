@@ -26,14 +26,14 @@ const ENV_KEYS: Record<string, Record<BotType, string>> = {
   facebook: { client: "FACEBOOK_CLIENT_TOKEN", staff: "FACEBOOK_STAFF_TOKEN" },
 };
 
-export function getBotToken(channel: string, botType: BotType): string | null {
+export function getBotToken(channel: string, botType: BotType): string | undefined {
   const keys = ENV_KEYS[channel];
-  if (!keys) return null;
-  let token = process.env[keys[botType]];
+  if (!keys) return undefined;
+  let token: string | undefined = process.env[keys[botType]];
   if (!token && channel === "telegram" && botType === "client") {
-    token = process.env.TELEGRAM_BOT_TOKEN ?? null;
+    token = process.env.TELEGRAM_BOT_TOKEN;
   }
-  return token ?? null;
+  return token;
 }
 
 export function isKnownChannel(channel: string): channel is MessengerChannel {
