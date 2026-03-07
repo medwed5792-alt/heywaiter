@@ -32,8 +32,18 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "delivery", label: "Пульт выдачи", path: "/admin/delivery", roles: ["owner", "manager"] },
   { id: "settings-geo", label: "Настройки GPS", path: "/admin/settings/geo", roles: ["owner", "manager"] },
   { id: "settings-menu", label: "Меню", path: "/admin/settings/menu", roles: ["owner", "manager"] },
-  { id: "settings-bots", label: "Настройки ботов", path: "/admin/settings/bots", roles: ["owner", "manager"] },
-  { id: "system", label: "Система (SuperAdmin)", path: "/admin/system", roles: ["owner", "superadmin"] },
+];
+
+/** Вкладки Кабинета Супер-Админа (/super). Только роль superadmin. */
+export interface SuperTab {
+  id: string;
+  label: string;
+  path: string;
+}
+
+export const SUPER_TABS: readonly SuperTab[] = [
+  { id: "bots", label: "Настройки ботов", path: "/super/bots" },
+  { id: "system", label: "Система", path: "/super/system" },
 ];
 
 /** Шпаргалка по гостю (preferences, заметки): только ЛПР и manager. Официант видит только статус. */
