@@ -210,7 +210,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
             callback_data: `v_${venueId}_t_${tableId}`,
           },
         ],
-      },
+      ],
     },
   });
 }
