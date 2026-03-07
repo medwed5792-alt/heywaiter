@@ -9,6 +9,29 @@ import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
+/** Минимальные типы для входящего Update от Telegram Bot API */
+interface TelegramChat {
+  id: number;
+}
+interface TelegramUser {
+  id: number;
+}
+interface TelegramMessage {
+  text?: string;
+  chat?: TelegramChat;
+  from?: TelegramUser;
+}
+interface TelegramCallbackQuery {
+  id: string;
+  data?: string;
+  message?: { chat?: { id: number } };
+  from?: TelegramUser;
+}
+interface TelegramUpdate {
+  callback_query?: TelegramCallbackQuery;
+  message?: TelegramMessage;
+}
+
 function getWebAppBaseUrl(): string {
   return (
     (process.env.NEXT_PUBLIC_APP_URL || process.env.TUNNEL_URL || "http://localhost:3000") as string
@@ -48,7 +71,7 @@ async function sendTelegram(
 }
 
 export async function handleTelegramClient(request: NextRequest, token: string): Promise<void> {
-  const update = await request.json();
+  const update = (await request.json()) as TelegramUpdate;
   console.log("[webhook telegram/client] Incoming update:", JSON.stringify(update, null, 2));
 
   const baseUrl = getWebAppBaseUrl();
@@ -214,3 +237,4 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     },
   });
 }
+
