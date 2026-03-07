@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { ExitReason, Staff } from "@/lib/types";
+import type { ServiceRole } from "@/lib/types";
 
 const VENUE_ID = "current";
 
@@ -15,30 +16,54 @@ const EXIT_REASONS: { value: ExitReason; label: string }[] = [
   { value: "other", label: "Другое" },
 ];
 
+const POSITION_OPTIONS: { value: ServiceRole | ""; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "waiter", label: "Официант" },
+  { value: "sommelier", label: "Сомелье" },
+  { value: "bartender", label: "Бармен" },
+  { value: "chef", label: "Шеф-повар" },
+  { value: "cook", label: "Повар" },
+  { value: "manager", label: "Менеджер" },
+  { value: "security", label: "Охрана" },
+  { value: "runner", label: "Раннер" },
+  { value: "cleaner", label: "Уборщик" },
+];
+
 function StaffRow({
   staff,
+  onEdit,
   onDismiss,
 }: {
   staff: Staff;
-  onDismiss: (staff: Staff) => void;
+  onEdit: (s: Staff) => void;
+  onDismiss: (s: Staff) => void;
 }) {
-  const name = staff.identity?.name ?? staff.identity?.username ?? staff.id;
+  const name = staff.firstName || staff.lastName
+    ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
+    : staff.identity?.displayName ?? staff.identity?.name ?? staff.id;
   const isActive = staff.active !== false;
 
   return (
     <tr className="border-b border-gray-100">
       <td className="p-3 text-sm">{name}</td>
-      <td className="p-3 text-sm text-gray-600">{staff.position ?? staff.role ?? "—"}</td>
+      <td className="p-3 text-sm text-gray-600">{staff.position ?? "—"}</td>
       <td className="p-3 text-sm">{staff.globalScore != null ? `${staff.globalScore}` : "—"}</td>
       <td className="p-3 text-sm">{isActive ? "Активен" : "Уволен"}</td>
-      <td className="p-3">
+      <td className="p-3 flex gap-2">
+        <button
+          type="button"
+          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          onClick={() => onEdit(staff)}
+        >
+          Редактировать
+        </button>
         {isActive && (
           <button
             type="button"
             className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
             onClick={() => onDismiss(staff)}
           >
-            Уволить
+            Удалить
           </button>
         )}
       </td>
@@ -48,7 +73,10 @@ function StaffRow({
 
 export default function StaffPage() {
   const [staffList, setStaffList] = useState<Staff[]>([]);
+  const [tables, setTables] = useState<{ id: string; number: number }[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [positionFilter, setPositionFilter] = useState<string>("");
+  const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [dismissModal, setDismissModal] = useState<Staff | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason>("own_wish");
   const [rating, setRating] = useState(3);
@@ -56,13 +84,19 @@ export default function StaffPage() {
 
   useEffect(() => {
     (async () => {
-      const q = query(collection(db, "staff"), where("venueId", "==", VENUE_ID));
-      const snap = await getDocs(q);
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(list);
+      const [staffSnap, tablesSnap] = await Promise.all([
+        getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
+        getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
+      ]);
+      setStaffList(staffSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
+      setTables(tablesSnap.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 })));
       setLoaded(true);
     })();
   }, []);
+
+  const filteredStaff = positionFilter
+    ? staffList.filter((s) => (s.position ?? "") === positionFilter)
+    : staffList;
 
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
@@ -96,54 +130,101 @@ export default function StaffPage() {
     }
   };
 
-  const dismissName = dismissModal?.identity?.name ?? dismissModal?.identity?.username ?? dismissModal?.id ?? "";
+  const dismissName = dismissModal?.firstName || dismissModal?.lastName
+    ? [dismissModal.firstName, dismissModal.lastName].filter(Boolean).join(" ")
+    : dismissModal?.identity?.name ?? dismissModal?.id ?? "";
 
   return (
     <div>
-      <div className="w-full max-w-2xl">
-        <h2 className="text-lg font-semibold text-gray-900">Сотрудники (Биржа труда)</h2>
-        <p className="mt-2 text-sm text-gray-600">
-          Цифровой паспорт: careerHistory, globalScore, skills. При увольнении ЛПР обязан выбрать причину и оценку — данные не удаляются.
-        </p>
+      <h2 className="text-lg font-semibold text-gray-900">Сотрудники (Биржа труда)</h2>
+      <p className="mt-2 text-sm text-gray-600">
+        HR-профиль и закрепление за столами. При создании/редактировании данные синхронизируются с глобальной коллекцией global_staff (Супер-Админ в /super). При удалении обязательны причина и оценка — обновляется globalScore.
+      </p>
 
-        {!loaded ? (
-          <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
-        ) : (
-          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-            <table className="w-full min-w-[400px]">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="p-3 text-left text-xs font-medium text-gray-600">Имя</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-600">Должность</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-600">Статус</th>
-                  <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
-                </tr>
-              </thead>
-              <tbody>
-                {staffList.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-4 text-center text-sm text-gray-500">
-                      Нет сотрудников по этому заведению.
-                    </td>
-                  </tr>
-                ) : (
-                  staffList.map((s) => (
-                    <StaffRow key={s.id} staff={s} onDismiss={handleDismiss} />
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Должность:</span>
+          <select
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            value={positionFilter}
+            onChange={(e) => setPositionFilter(e.target.value)}
+          >
+            <option value="">Все</option>
+            {POSITION_OPTIONS.filter((o) => o.value).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          onClick={() => setEditingStaff({ id: "", venueId: VENUE_ID, role: "waiter", primaryChannel: "telegram", identity: { channel: "telegram", externalId: "", locale: "ru" }, onShift: false } as Staff)}
+        >
+          Добавить сотрудника
+        </button>
       </div>
+
+      {!loaded ? (
+        <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
+      ) : (
+        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[400px]">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Имя</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Должность</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Global Score</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Статус</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStaff.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-4 text-center text-sm text-gray-500">
+                    Нет сотрудников.
+                  </td>
+                </tr>
+              ) : (
+                filteredStaff.map((s) => (
+                  <StaffRow
+                    key={s.id}
+                    staff={s}
+                    onEdit={setEditingStaff}
+                    onDismiss={handleDismiss}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editingStaff && (
+        <StaffFormModal
+          staff={editingStaff}
+          tables={tables}
+          onClose={() => setEditingStaff(null)}
+          onSaved={(updated) => {
+            if (editingStaff.id) {
+              setStaffList((prev) => prev.map((s) => (s.id === editingStaff.id ? { ...s, ...updated } : s)));
+            } else {
+              const id = (updated as { id?: string }).id;
+              if (id) setStaffList((prev) => [...prev, { ...editingStaff, ...updated, id } as Staff]);
+            }
+            setEditingStaff(null);
+          }}
+        />
+      )}
 
       {dismissModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-            <h3 className="font-semibold text-gray-900">Увольнение: {dismissName}</h3>
+            <h3 className="font-semibold text-gray-900">Удаление (увольнение): {dismissName}</h3>
             <p className="mt-1 text-sm text-gray-600">
-              Причина и оценка обязательны для записи в паспорт (Биржа труда).
+              Обязательно укажите причину и оценку — данные обновят globalScore в системе и в Бирже труда.
             </p>
             <label className="mt-3 block text-sm font-medium text-gray-700">Причина</label>
             <select
@@ -158,14 +239,13 @@ export default function StaffPage() {
               ))}
             </select>
             <label className="mt-3 block text-sm font-medium text-gray-700">Оценка сотрудника (1–5)</label>
-            <div className="mt-1 flex gap-1" role="group" aria-label="Оценка 1-5 звёзд">
+            <div className="mt-1 flex gap-1">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
                   type="button"
                   onClick={() => setRating(star)}
                   className="rounded p-1 text-lg focus:outline-none focus:ring-2 focus:ring-gray-400"
-                  aria-pressed={rating === star}
                 >
                   <span className={rating >= star ? "text-amber-500" : "text-gray-300"}>★</span>
                 </button>
@@ -186,7 +266,7 @@ export default function StaffPage() {
                 onClick={handleDismissSubmit}
                 disabled={loading}
               >
-                {loading ? "Сохранение…" : "Уволить"}
+                {loading ? "Сохранение…" : "Удалить"}
               </button>
             </div>
           </div>
@@ -196,3 +276,191 @@ export default function StaffPage() {
   );
 }
 
+function StaffFormModal({
+  staff,
+  tables,
+  onClose,
+  onSaved,
+}: {
+  staff: Staff;
+  tables: { id: string; number: number }[];
+  onClose: () => void;
+  onSaved: (data: Partial<Staff> & { id?: string }) => void;
+}) {
+  const [firstName, setFirstName] = useState(staff.firstName ?? "");
+  const [lastName, setLastName] = useState(staff.lastName ?? "");
+  const [gender, setGender] = useState(staff.gender ?? "");
+  const [birthDate, setBirthDate] = useState(staff.birthDate ?? "");
+  const [photoUrl, setPhotoUrl] = useState(staff.photoUrl ?? "");
+  const [phone, setPhone] = useState(staff.phone ?? "");
+  const [tgId, setTgId] = useState(staff.tgId ?? staff.identity?.externalId ?? "");
+  const [position, setPosition] = useState(staff.position ?? "");
+  const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
+  const [saving, setSaving] = useState(false);
+
+  const displayName = (staff.identity?.displayName ?? [firstName, lastName].filter(Boolean).join(" ")) || "Имя для уведомлений";
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/staff/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          staffId: staff.id || undefined,
+          firstName: firstName.trim() || undefined,
+          lastName: lastName.trim() || undefined,
+          gender: gender || undefined,
+          birthDate: birthDate || undefined,
+          photoUrl: photoUrl.trim() || undefined,
+          phone: phone.trim() || undefined,
+          tgId: tgId.trim() || undefined,
+          position: position || undefined,
+          assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+          identity: staff.identity ? { ...staff.identity, externalId: tgId.trim() || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: tgId.trim(), locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
+          primaryChannel: staff.primaryChannel ?? "telegram",
+          role: staff.role ?? "waiter",
+          onShift: staff.onShift ?? false,
+          active: staff.active ?? true,
+          guestRating: staff.guestRating,
+          venueRating: staff.venueRating,
+          globalScore: staff.globalScore,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка");
+      const savedId = data.staffId ?? staff.id;
+      onSaved({
+        ...(savedId ? { id: savedId } : {}),
+        firstName: firstName.trim() || undefined,
+        lastName: lastName.trim() || undefined,
+        gender: gender || undefined,
+        birthDate: birthDate || undefined,
+        photoUrl: photoUrl.trim() || undefined,
+        phone: phone.trim() || undefined,
+        tgId: tgId.trim() || undefined,
+        position: position || undefined,
+        assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleTable = (id: string) => {
+    setAssignedTableIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4">
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
+        <div className="border-b border-gray-200 p-4">
+          <h3 className="font-semibold text-gray-900">
+            {staff.id ? "Редактировать сотрудника" : "Новый сотрудник"}
+          </h3>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto p-4 space-y-4">
+          <section>
+            <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Личные</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="col-span-2 sm:col-span-1">
+                <span className="block text-xs text-gray-600">Фото (URL)</span>
+                <input type="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://..." className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+              <label>
+                <span className="block text-xs text-gray-600">Имя (для уведомлений)</span>
+                <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+              <label>
+                <span className="block text-xs text-gray-600">Фамилия</span>
+                <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+              <label>
+                <span className="block text-xs text-gray-600">Пол</span>
+                <select value={gender} onChange={(e) => setGender(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">—</option>
+                  <option value="male">М</option>
+                  <option value="female">Ж</option>
+                </select>
+              </label>
+              <label>
+                <span className="block text-xs text-gray-600">Дата рождения</span>
+                <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+            </div>
+          </section>
+          <section>
+            <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Связь</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="col-span-2">
+                <span className="block text-xs text-gray-600">Телефон</span>
+                <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+              <label className="col-span-2">
+                <span className="block text-xs text-gray-600">ID соцсетей (Telegram и др.)</span>
+                <input type="text" value={tgId} onChange={(e) => setTgId(e.target.value)} placeholder="tgId, waId…" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+            </div>
+          </section>
+          <section>
+            <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Проф</h4>
+            <label>
+              <span className="block text-xs text-gray-600">Должность</span>
+              <select value={position} onChange={(e) => setPosition(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
+                {POSITION_OPTIONS.map((o) => (
+                  <option key={o.value || "empty"} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="mt-2 block">
+              <span className="block text-xs text-gray-600">Закрепление за столами</span>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {tables.length === 0 ? (
+                  <span className="text-xs text-gray-500">Нет столов в зале</span>
+                ) : (
+                  tables.map((t) => (
+                    <label key={t.id} className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-sm">
+                      <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} />
+                      Стол {t.number}
+                    </label>
+                  ))
+                )}
+              </div>
+            </label>
+          </section>
+          <section>
+            <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Системные (только чтение)</h4>
+            <div className="grid grid-cols-3 gap-2 rounded border border-gray-100 bg-gray-50 p-3 text-sm">
+              <div>
+                <span className="text-gray-500">Рейтинг гостей</span>
+                <p className="font-medium">{staff.guestRating != null ? staff.guestRating : "—"}</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Рейтинг заведения</span>
+                <p className="font-medium">{staff.venueRating != null ? staff.venueRating : "—"}</p>
+              </div>
+              <div>
+                <span className="text-gray-500">Global Score</span>
+                <p className="font-medium">{staff.globalScore != null ? staff.globalScore : "—"}</p>
+              </div>
+            </div>
+          </section>
+        </div>
+        <div className="flex gap-2 border-t border-gray-200 p-4">
+          <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Отмена
+          </button>
+          <button type="button" onClick={handleSave} disabled={saving} className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">
+            {saving ? "Сохранение…" : "Сохранить"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
