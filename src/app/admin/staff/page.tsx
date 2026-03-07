@@ -3,15 +3,16 @@
 import { useState, useEffect } from "react";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
 import type { ExitReason, Staff } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 
 const VENUE_ID = "current";
 
 const EXIT_REASONS: { value: ExitReason; label: string }[] = [
-  { value: "own_wish", label: "Собственное желание" },
-  { value: "professionalism", label: "Профессионализм" },
-  { value: "discipline", label: "Нарушение дисциплины" },
+  { value: "discipline", label: "Дисциплина" },
+  { value: "own_wish", label: "Личные причины" },
+  { value: "professionalism", label: "Профи" },
   { value: "conflict", label: "Конфликтность" },
   { value: "other", label: "Другое" },
 ];
@@ -33,22 +34,46 @@ function StaffRow({
   staff,
   onEdit,
   onDismiss,
+  positionLabel,
 }: {
   staff: Staff;
   onEdit: (s: Staff) => void;
   onDismiss: (s: Staff) => void;
+  positionLabel: string;
 }) {
-  const name = staff.firstName || staff.lastName
+  const name = (staff.firstName || staff.lastName)
     ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
-    : staff.identity?.displayName ?? staff.identity?.name ?? staff.id;
+    : (staff.identity?.displayName ?? staff.identity?.name ?? staff.id);
   const isActive = staff.active !== false;
+  const onShift = staff.onShift === true;
 
   return (
     <tr className="border-b border-gray-100">
-      <td className="p-3 text-sm">{name}</td>
-      <td className="p-3 text-sm text-gray-600">{staff.position ?? "—"}</td>
+      <td className="p-3">
+        <div className="h-10 w-10 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center shrink-0">
+          {staff.photoUrl ? (
+            <img src={staff.photoUrl} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <User className="h-5 w-5 text-gray-500" />
+          )}
+        </div>
+      </td>
+      <td className="p-3 text-sm font-medium text-gray-900">{name}</td>
+      <td className="p-3 text-sm text-gray-600">{positionLabel}</td>
       <td className="p-3 text-sm">{staff.globalScore != null ? `${staff.globalScore}` : "—"}</td>
-      <td className="p-3 text-sm">{isActive ? "Активен" : "Уволен"}</td>
+      <td className="p-3 text-sm">
+        {!isActive ? (
+          <span className="text-gray-500">Уволен</span>
+        ) : onShift ? (
+          <span className="inline-flex items-center gap-1 text-green-700">
+            <Circle className="h-2 w-2 fill-current" /> На смене
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-gray-500">
+            <Circle className="h-2 w-2 fill-current" /> Не на смене
+          </span>
+        )}
+      </td>
       <td className="p-3 flex gap-2">
         <button
           type="button"
@@ -130,9 +155,9 @@ export default function StaffPage() {
     }
   };
 
-  const dismissName = dismissModal?.firstName || dismissModal?.lastName
+  const dismissName = (dismissModal?.firstName || dismissModal?.lastName)
     ? [dismissModal.firstName, dismissModal.lastName].filter(Boolean).join(" ")
-    : dismissModal?.identity?.name ?? dismissModal?.id ?? "";
+    : (dismissModal?.identity?.name ?? dismissModal?.id ?? "");
 
   return (
     <div>
@@ -143,6 +168,7 @@ export default function StaffPage() {
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm">
+          <Briefcase className="h-4 w-4 text-gray-500" />
           <span className="text-gray-600">Должность:</span>
           <select
             className="rounded border border-gray-300 px-2 py-1.5 text-sm"
@@ -159,10 +185,11 @@ export default function StaffPage() {
         </label>
         <button
           type="button"
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
           onClick={() => setEditingStaff({ id: "", venueId: VENUE_ID, role: "waiter", primaryChannel: "telegram", identity: { channel: "telegram", externalId: "", locale: "ru" }, onShift: false } as Staff)}
         >
-          Добавить сотрудника
+          <UserPlus className="h-4 w-4" />
+          + Добавить сотрудника
         </button>
       </div>
 
@@ -170,12 +197,13 @@ export default function StaffPage() {
         <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
       ) : (
         <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[400px]">
+          <table className="w-full min-w-[500px]">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="p-3 text-left text-xs font-medium text-gray-600">Имя</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Фото</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Имя / Фамилия</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Должность</th>
-                <th className="p-3 text-left text-xs font-medium text-gray-600">Global Score</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600"><span className="inline-flex items-center gap-1"><Star className="h-3.5 w-3.5" /> Рейтинг</span></th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Статус</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
               </tr>
@@ -183,7 +211,7 @@ export default function StaffPage() {
             <tbody>
               {filteredStaff.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-sm text-gray-500">
+                  <td colSpan={6} className="p-4 text-center text-sm text-gray-500">
                     Нет сотрудников.
                   </td>
                 </tr>
@@ -194,6 +222,7 @@ export default function StaffPage() {
                     staff={s}
                     onEdit={setEditingStaff}
                     onDismiss={handleDismiss}
+                    positionLabel={POSITION_OPTIONS.find((o) => o.value === (s.position ?? ""))?.label ?? (s.position ?? "—")}
                   />
                 ))
               )}
@@ -220,13 +249,13 @@ export default function StaffPage() {
       )}
 
       {dismissModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="dismiss-title">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-            <h3 className="font-semibold text-gray-900">Удаление (увольнение): {dismissName}</h3>
+            <h3 id="dismiss-title" className="font-semibold text-gray-900">Подтверждение удаления: {dismissName}</h3>
             <p className="mt-1 text-sm text-gray-600">
-              Обязательно укажите причину и оценку — данные обновят globalScore в системе и в Бирже труда.
+              Обязательно укажите причину увольнения и оценку от ЛПР (1–5). Данные обновят globalScore и синхронизируются с Биржей труда (global_staff).
             </p>
-            <label className="mt-3 block text-sm font-medium text-gray-700">Причина</label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения</label>
             <select
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               value={exitReason}
@@ -238,7 +267,7 @@ export default function StaffPage() {
                 </option>
               ))}
             </select>
-            <label className="mt-3 block text-sm font-medium text-gray-700">Оценка сотрудника (1–5)</label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Рейтинг от ЛПР (1–5 звёзд)</label>
             <div className="mt-1 flex gap-1">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
@@ -368,8 +397,8 @@ function StaffFormModal({
             <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Личные</h4>
             <div className="grid grid-cols-2 gap-3">
               <label className="col-span-2 sm:col-span-1">
-                <span className="block text-xs text-gray-600">Фото (URL)</span>
-                <input type="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://..." className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+                <span className="block text-xs text-gray-600">Фото (URL или Upload)</span>
+                <input type="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://... или загрузите файл" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
               </label>
               <label>
                 <span className="block text-xs text-gray-600">Имя (для уведомлений)</span>
@@ -401,7 +430,7 @@ function StaffFormModal({
                 <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
               </label>
               <label className="col-span-2">
-                <span className="block text-xs text-gray-600">ID соцсетей (Telegram и др.)</span>
+                <span className="block text-xs text-gray-600">ID мессенджера (для связи со Staff-ботом)</span>
                 <input type="text" value={tgId} onChange={(e) => setTgId(e.target.value)} placeholder="tgId, waId…" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
               </label>
             </div>
@@ -419,7 +448,7 @@ function StaffFormModal({
               </select>
             </label>
             <label className="mt-2 block">
-              <span className="block text-xs text-gray-600">Закрепление за столами</span>
+              <span className="block text-xs text-gray-600">Закреплённые столы (multi-select)</span>
               <div className="mt-1 flex flex-wrap gap-2">
                 {tables.length === 0 ? (
                   <span className="text-xs text-gray-500">Нет столов в зале</span>
@@ -438,15 +467,15 @@ function StaffFormModal({
             <h4 className="text-xs font-semibold uppercase text-gray-500 mb-2">Системные (только чтение)</h4>
             <div className="grid grid-cols-3 gap-2 rounded border border-gray-100 bg-gray-50 p-3 text-sm">
               <div>
-                <span className="text-gray-500">Рейтинг гостей</span>
+                <span className="block text-gray-500">Рейтинг гостей</span>
                 <p className="font-medium">{staff.guestRating != null ? staff.guestRating : "—"}</p>
               </div>
               <div>
-                <span className="text-gray-500">Рейтинг заведения</span>
+                <span className="block text-gray-500">Рейтинг ЛПР</span>
                 <p className="font-medium">{staff.venueRating != null ? staff.venueRating : "—"}</p>
               </div>
               <div>
-                <span className="text-gray-500">Global Score</span>
+                <span className="block text-gray-500">Global Score</span>
                 <p className="font-medium">{staff.globalScore != null ? staff.globalScore : "—"}</p>
               </div>
             </div>
