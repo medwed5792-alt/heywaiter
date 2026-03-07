@@ -1,7 +1,7 @@
 /**
  * Обработчик Telegram Staff Bot (персонал).
  * Число = закрытие стола → гостю thankYou + реклама/опрос по tier. SOS = ForceReply → веерная рассылка.
- * Сотрудники сети (venueIds): в ответе показываем адрес работы на сегодня и кнопку «Маршрут до объекта».
+ * Сотрудники сети (venueIds): в ответе только [Дата] | [Время смены: От - До] | [Название заведения].
  */
 import { NextRequest } from "next/server";
 import { collection, addDoc, query, where, getDocs, doc, getDoc, serverTimestamp } from "firebase/firestore";
@@ -148,17 +148,18 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Подсказка + кнопка SOS. Для сети (venueIds) — актуальный адрес на сегодня и «Маршрут до объекта»
+  // Подсказка + кнопка SOS. Для сети (venueIds) — только [Дата] | [Время смены: От - До] | [Название заведения]
   const staffData = await getStaffByTgId(String(fromId));
   let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
-  const inlineKeyboard: { text: string; callback_data?: string; url?: string }[][] = [[{ text: "🚨 SOS", callback_data: "sos" }]];
+  const inlineKeyboard: { text: string; callback_data?: string }[][] = [[{ text: "🚨 SOS", callback_data: "sos" }]];
 
   if (staffData?.venueIds?.length) {
-    const todayVenue = await getTodayShiftVenue(staffData.staffId);
-    if (todayVenue?.address) {
-      replyText = `Сегодня вы работаете: ${todayVenue.name}${todayVenue.address ? `, ${todayVenue.address}` : ""}.\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
-      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(todayVenue.address)}`;
-      inlineKeyboard.push([{ text: "Маршрут до объекта", url: mapsUrl }]);
+    const todayShift = await getTodayShiftVenue(staffData.staffId);
+    if (todayShift?.name) {
+      const timePart = todayShift.startTime && todayShift.endTime
+        ? `${todayShift.startTime} – ${todayShift.endTime}`
+        : "—";
+      replyText = `${todayShift.date} | ${timePart} | ${todayShift.name}\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
     }
   }
 
