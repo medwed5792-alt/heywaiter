@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
@@ -9,33 +9,94 @@ import type { VenueGeo, StaffLiveGeo } from "@/lib/types";
 const VENUE_ID = "current";
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
-const MAP_SIZE = 400;
-/** Масштаб: 1px = сколько метров (чтобы радиус и точки Staff помещались) */
-const METERS_PER_PX = 2;
+const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
-function latLngToPx(
-  staffLat: number,
-  staffLng: number,
-  venueLat: number,
-  venueLng: number,
-  centerPx: number,
-  metersPerPx: number
-): { x: number; y: number } {
-  const toM = (deg: number, scale: number) => deg * scale * 1000;
-  const latScale = 111;
-  const lngScale = 111 * Math.cos((venueLat * Math.PI) / 180);
-  const dxM = (staffLng - venueLng) * lngScale * 1000;
-  const dyM = (staffLat - venueLat) * latScale * 1000;
-  return {
-    x: centerPx + dxM / metersPerPx,
-    y: centerPx - dyM / metersPerPx,
-  };
+/** Геокодинг: адрес → lat, lng через Nominatim (OpenStreetMap) */
+async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  const q = encodeURIComponent(address.trim());
+  if (!q) return null;
+  const res = await fetch(
+    `${NOMINATIM_URL}?q=${q}&format=json&limit=1`,
+    { headers: { Accept: "application/json" } }
+  );
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const lat = parseFloat(data[0].lat);
+  const lng = parseFloat(data[0].lon);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
+
+// Refs for Leaflet map (typed as unknown to avoid pulling Leaflet into main bundle until map loads)
+type LeafletRef = React.MutableRefObject<unknown>;
+
+/** Интерактивная карта (Leaflet) — загружается только на клиенте */
+function GeoMap({
+  lat,
+  lng,
+  radius,
+  staffGeos,
+  onLatLngChange,
+  onRadiusChange,
+}: {
+  lat: number;
+  lng: number;
+  radius: number;
+  staffGeos: StaffLiveGeo[];
+  onLatLngChange: (lat: number, lng: number) => void;
+  onRadiusChange: (r: number) => void;
+}) {
+  const mapRef = useRef<unknown>(null);
+  const markerRef = useRef<unknown>(null);
+  const circleRef = useRef<unknown>(null);
+  const layerRef = useRef<unknown>(null);
+  const [MapComponent, setMapComponent] = useState<React.ComponentType<{
+    lat: number;
+    lng: number;
+    radius: number;
+    staffGeos: StaffLiveGeo[];
+    onLatLngChange: (lat: number, lng: number) => void;
+    onRadiusChange: (r: number) => void;
+    mapRef: LeafletRef;
+    markerRef: LeafletRef;
+    circleRef: LeafletRef;
+    layerRef: LeafletRef;
+  }> | null>(null);
+
+  useEffect(() => {
+    import("./GeoMapLeaflet").then((m) => setMapComponent(() => m.GeoMapLeaflet));
+  }, []);
+
+  if (!MapComponent) {
+    return (
+      <div className="flex h-[400px] w-full items-center justify-center rounded-xl border border-gray-200 bg-slate-50 text-sm text-gray-500">
+        Загрузка карты…
+      </div>
+    );
+  }
+
+  return (
+    <MapComponent
+      lat={lat}
+      lng={lng}
+      radius={radius}
+      staffGeos={staffGeos}
+      onLatLngChange={onLatLngChange}
+      onRadiusChange={onRadiusChange}
+      mapRef={mapRef}
+      markerRef={markerRef}
+      circleRef={circleRef}
+      layerRef={layerRef}
+    />
+  );
 }
 
 export default function AdminSettingsGeoPage() {
   const [lat, setLat] = useState(55.75);
   const [lng, setLng] = useState(37.62);
   const [radius, setRadius] = useState(100);
+  const [addressQuery, setAddressQuery] = useState("");
+  const [geocodeLoading, setGeocodeLoading] = useState(false);
+  const [geocodeError, setGeocodeError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [staffGeos, setStaffGeos] = useState<StaffLiveGeo[]>([]);
@@ -94,21 +155,43 @@ export default function AdminSettingsGeoPage() {
     [lat, lng, radius]
   );
 
-  const handleRadiusChange = (value: number) => {
-    setRadius(value);
-  };
+  const handleSearchAddress = useCallback(async () => {
+    if (!addressQuery.trim()) return;
+    setGeocodeError(null);
+    setGeocodeLoading(true);
+    try {
+      const result = await geocodeAddress(addressQuery);
+      if (result) {
+        setLat(result.lat);
+        setLng(result.lng);
+      } else {
+        setGeocodeError("Адрес не найден. Уточните запрос.");
+      }
+    } catch {
+      setGeocodeError("Ошибка геокодинга.");
+    } finally {
+      setGeocodeLoading(false);
+    }
+  }, [addressQuery]);
 
-  const handleRadiusCommit = useCallback(() => {
-    saveGeo({ radius });
-  }, [radius, saveGeo]);
+  const handleMyLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGeocodeError("Геолокация недоступна в этом браузере.");
+      return;
+    }
+    setGeocodeError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+      },
+      () => setGeocodeError("Не удалось определить местоположение.")
+    );
+  }, []);
 
-  const handleLatLngBlur = useCallback(() => {
-    saveGeo({ lat, lng });
-  }, [lat, lng, saveGeo]);
-
-  const radiusPx = radius / METERS_PER_PX;
-  const cx = MAP_SIZE / 2;
-  const cy = MAP_SIZE / 2;
+  const handleSave = useCallback(() => {
+    saveGeo({ lat, lng, radius });
+  }, [lat, lng, radius, saveGeo]);
 
   return (
     <div>
@@ -126,142 +209,104 @@ export default function AdminSettingsGeoPage() {
         )}
       </DebugPanelTrigger>
       <p className="mt-1 text-sm text-gray-600">
-        Маркер заведения и круг радиуса. Слайдер обновляет радиус; значение сохраняется в Firestore.
+        Интерактивная карта: поиск по адресу, перетаскивание маркера, красная зона по радиусу. Сохранение в Firestore — кнопкой «Сохранить».
       </p>
 
       {!loaded ? (
         <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
       ) : (
         <>
-          <div className="mt-4 flex flex-col gap-4 sm:flex-row">
-            {/* SVG-карта: сетка, центр (заведение), пульсирующий круг, точки Staff */}
-            <div className="shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-slate-50">
-              <svg
-                width={MAP_SIZE}
-                height={MAP_SIZE}
-                viewBox={`0 0 ${MAP_SIZE} ${MAP_SIZE}`}
-                className="block"
-              >
-                {/* Сетка координат */}
-                {Array.from({ length: 9 }, (_, i) => (
-                  <g key={i}>
-                    <line
-                      x1={0}
-                      y1={(MAP_SIZE / 8) * i}
-                      x2={MAP_SIZE}
-                      y2={(MAP_SIZE / 8) * i}
-                      stroke="#cbd5e1"
-                      strokeWidth={0.5}
-                    />
-                    <line
-                      x1={(MAP_SIZE / 8) * i}
-                      y1={0}
-                      x2={(MAP_SIZE / 8) * i}
-                      y2={MAP_SIZE}
-                      stroke="#cbd5e1"
-                      strokeWidth={0.5}
-                    />
-                  </g>
-                ))}
-                {/* Пульсирующий круг радиуса */}
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={radiusPx}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  strokeOpacity={0.6}
-                  className="animate-pulse"
-                />
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={radiusPx}
-                  fill="rgba(59, 130, 246, 0.08)"
-                />
-                {/* Центр — заведение */}
-                <circle cx={cx} cy={cy} r={6} fill="#1d4ed8" stroke="#fff" strokeWidth={2} />
-                <title>{`Заведение ${lat.toFixed(5)}, ${lng.toFixed(5)}`}</title>
-                {/* Точки Staff в реальном времени */}
-                {staffGeos.map((s) => {
-                  const { x, y } = latLngToPx(s.lat, s.lng, lat, lng, cx, METERS_PER_PX);
-                  const inBounds = x >= 0 && x <= MAP_SIZE && y >= 0 && y <= MAP_SIZE;
-                  if (!inBounds) return null;
-                  return (
-                    <g key={s.staffId}>
-                      <circle
-                        cx={x}
-                        cy={y}
-                        r={5}
-                        fill={s.isInside ? "#22c55e" : "#ef4444"}
-                        stroke="#fff"
-                        strokeWidth={1.5}
-                      />
-                      <title>{`${s.staffId} ${s.isInside ? "в зоне" : "вне зоны"}`}</title>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-
-            <div className="flex flex-1 flex-col gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Радиус охраны, м
-                </label>
+          <div className="mt-4 flex flex-col gap-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex-1 min-w-[200px]">
+                <span className="block text-sm font-medium text-gray-700">Поиск по адресу</span>
                 <input
-                  type="range"
-                  min={RADIUS_MIN}
-                  max={RADIUS_MAX}
-                  value={radius}
-                  onChange={(e) => handleRadiusChange(Number(e.target.value))}
-                  onMouseUp={handleRadiusCommit}
-                  onTouchEnd={handleRadiusCommit}
-                  className="mt-1 w-full accent-blue-600"
+                  type="text"
+                  value={addressQuery}
+                  onChange={(e) => setAddressQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearchAddress()}
+                  placeholder="Город, улица, дом"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
-                <p className="mt-1 text-sm text-gray-600">
-                  {radius} м — круг на карте расширяется при перемещении слайдера
-                </p>
-                <p className="mt-1 text-xs text-gray-500">
-                  При отпускании слайдера значение geo.radius сохраняется в Firestore.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <span className="block text-sm font-medium text-gray-700">Широта (Lat)</span>
-                  <input
-                    type="number"
-                    step="any"
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    value={lat}
-                    onChange={(e) => setLat(Number(e.target.value))}
-                    onBlur={handleLatLngBlur}
-                  />
-                </label>
-                <label className="block">
-                  <span className="block text-sm font-medium text-gray-700">Долгота (Lng)</span>
-                  <input
-                    type="number"
-                    step="any"
-                    className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                    value={lng}
-                    onChange={(e) => setLng(Number(e.target.value))}
-                    onBlur={handleLatLngBlur}
-                  />
-                </label>
-              </div>
-
+              </label>
               <button
                 type="button"
-                onClick={() => saveGeo({ lat, lng, radius })}
-                disabled={saving}
-                className="self-start rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                onClick={handleSearchAddress}
+                disabled={geocodeLoading}
+                className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
               >
-                {saving ? "Сохранение…" : "Сохранить в Firestore"}
+                {geocodeLoading ? "Поиск…" : "Найти"}
+              </button>
+              <button
+                type="button"
+                onClick={handleMyLocation}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Определить моё местоположение
               </button>
             </div>
+            {geocodeError && (
+              <p className="text-sm text-red-600">{geocodeError}</p>
+            )}
+
+            <GeoMap
+              lat={lat}
+              lng={lng}
+              radius={radius}
+              staffGeos={staffGeos}
+              onLatLngChange={(newLat, newLng) => {
+                setLat(newLat);
+                setLng(newLng);
+              }}
+              onRadiusChange={setRadius}
+            />
+
+            <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <label className="block text-sm font-medium text-gray-700">
+                Радиус красной зоны, м
+              </label>
+              <input
+                type="range"
+                min={RADIUS_MIN}
+                max={RADIUS_MAX}
+                value={radius}
+                onChange={(e) => setRadius(Number(e.target.value))}
+                className="mt-1 w-full accent-red-600"
+              />
+              <p className="mt-1 text-sm text-gray-600">{radius} м</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <label className="block">
+                <span className="block text-sm font-medium text-gray-700">Широта (Lat)</span>
+                <input
+                  type="number"
+                  step="any"
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  value={lat}
+                  onChange={(e) => setLat(Number(e.target.value))}
+                />
+              </label>
+              <label className="block">
+                <span className="block text-sm font-medium text-gray-700">Долгота (Lng)</span>
+                <input
+                  type="number"
+                  step="any"
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  value={lng}
+                  onChange={(e) => setLng(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="self-start rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            >
+              {saving ? "Сохранение…" : "Сохранить"}
+            </button>
           </div>
         </>
       )}

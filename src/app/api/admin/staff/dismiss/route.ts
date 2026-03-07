@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { ExitReason, StaffCareerEntry } from "@/lib/types";
 
@@ -70,6 +70,17 @@ export async function POST(request: NextRequest) {
     if (globalScore != null) updatePayload.globalScore = globalScore;
 
     await updateDoc(staffRef, updatePayload);
+
+    // Синхронизация с глобальной коллекцией global_staff (Биржа труда, видна Супер-Админу в /super)
+    const globalRef = doc(db, "global_staff", staffId);
+    await setDoc(globalRef, {
+      venueId,
+      active: false,
+      careerHistory,
+      globalScore: globalScore ?? null,
+      onShift: false,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

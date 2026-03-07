@@ -261,7 +261,7 @@ export interface StaffCareerEntry {
   rating?: number;
 }
 
-/** Цифровой паспорт сотрудника (Биржа труда) */
+/** Цифровой паспорт сотрудника (Биржа труда). Синхронизируется с global_staff для Супер-Админа. */
 export interface Staff {
   id: string;
   venueId: string;
@@ -276,13 +276,27 @@ export interface Staff {
   tgId?: string;
   /** История карьеры: данные не удаляются при увольнении */
   careerHistory?: StaffCareerEntry[];
-  /** Глобальный рейтинг 0–5 */
+  /** Глобальный рейтинг 0–5 (из глобальной коллекции / пересчёт при увольнении) */
   globalScore?: number;
   skills?: string[];
   /** Текущая должность */
   position?: string;
   /** Активен в заведении (false = уволен) */
   active?: boolean;
+  /** HR-профиль: личные данные */
+  firstName?: string;
+  lastName?: string;
+  gender?: string;
+  birthDate?: string;
+  photoUrl?: string;
+  /** Связь */
+  phone?: string;
+  /** ID в соцсетях (для Staff-ботов): tgId, waId и т.д. хранятся в identity или здесь */
+  /** Проф: закрепление за столами (ID столов) */
+  assignedTableIds?: string[];
+  /** Системные (read-only): рейтинг от гостей, от ЛПР заведения */
+  guestRating?: number;
+  venueRating?: number;
   updatedAt: unknown;
 }
 
