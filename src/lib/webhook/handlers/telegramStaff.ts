@@ -1,13 +1,15 @@
 /**
  * Обработчик Telegram Staff Bot (персонал).
  * Число = закрытие стола → гостю thankYou + реклама/опрос по tier. SOS = ForceReply → веерная рассылка.
+ * Сотрудники сети (venueIds): в ответе показываем адрес работы на сегодня и кнопку «Маршрут до объекта».
  */
 import { NextRequest } from "next/server";
-import { collection, addDoc, query, where, getDocs, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { closeTableAndNotifyGuest, sosFanOut } from "@/lib/bot-router";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 async function sendTelegram(
   token: string,
@@ -29,8 +31,44 @@ async function getVenueIdByStaffTgId(tgId: string): Promise<string | null> {
   const staffRef = collection(db, "staff");
   const q = query(staffRef, where("tgId", "==", tgId), where("active", "==", true));
   const snap = await getDocs(q);
-  const doc = snap.docs[0];
-  return doc?.exists() ? (doc.data().venueId as string) ?? null : null;
+  const d = snap.docs[0];
+  return d?.exists() ? (d.data().venueId as string) ?? null : null;
+}
+
+/** Данные сотрудника по tgId (для сети: venueIds и staffId) */
+async function getStaffByTgId(tgId: string): Promise<{ staffId: string; venueId: string; venueIds?: string[] } | null> {
+  const q = query(collection(db, "staff"), where("tgId", "==", tgId), where("active", "==", true));
+  const snap = await getDocs(q);
+  const d = snap.docs[0];
+  if (!d?.exists()) return null;
+  const data = d.data();
+  return {
+    staffId: d.id,
+    venueId: (data.venueId as string) ?? "",
+    venueIds: data.venueIds as string[] | undefined,
+  };
+}
+
+/** Смена на сегодня для сотрудника (из scheduleEntries по slot.date и staffId) */
+async function getTodayShiftVenue(staffId: string): Promise<{ venueId: string; name: string; address: string } | null> {
+  const today = todayISO();
+  const q = query(
+    collection(db, "scheduleEntries"),
+    where("staffId", "==", staffId),
+    where("slot.date", "==", today)
+  );
+  const snap = await getDocs(q);
+  const entry = snap.docs[0];
+  if (!entry?.exists()) return null;
+  const slot = entry.data().slot as { venueId?: string } | undefined;
+  const venueId = slot?.venueId ?? entry.data().venueId;
+  if (!venueId) return null;
+  const venueSnap = await getDoc(doc(db, "venues", venueId));
+  if (!venueSnap.exists()) return null;
+  const v = venueSnap.data();
+  const address = (v.address as string) ?? "";
+  const name = (v.name as string) ?? venueId;
+  return { venueId, name, address };
 }
 
 export async function handleTelegramStaff(request: NextRequest, token: string): Promise<void> {
@@ -110,12 +148,23 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Подсказка + кнопка SOS
+  // Подсказка + кнопка SOS. Для сети (venueIds) — актуальный адрес на сегодня и «Маршрут до объекта»
+  const staffData = await getStaffByTgId(String(fromId));
+  let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
+  const inlineKeyboard: { text: string; callback_data?: string; url?: string }[][] = [[{ text: "🚨 SOS", callback_data: "sos" }]];
+
+  if (staffData?.venueIds?.length) {
+    const todayVenue = await getTodayShiftVenue(staffData.staffId);
+    if (todayVenue?.address) {
+      replyText = `Сегодня вы работаете: ${todayVenue.name}${todayVenue.address ? `, ${todayVenue.address}` : ""}.\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
+      const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(todayVenue.address)}`;
+      inlineKeyboard.push([{ text: "Маршрут до объекта", url: mapsUrl }]);
+    }
+  }
+
   await sendTelegram(token, "sendMessage", {
     chat_id: chatId,
-    text: "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.",
-    reply_markup: {
-      inline_keyboard: [[{ text: "🚨 SOS", callback_data: "sos" }]],
-    },
+    text: replyText,
+    reply_markup: { inline_keyboard: inlineKeyboard },
   });
 }
