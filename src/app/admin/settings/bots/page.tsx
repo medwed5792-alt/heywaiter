@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 import type { MessengerChannel } from "@/lib/types";
 import type { BotType } from "@/lib/webhook/channels";
@@ -15,9 +15,19 @@ const CHANNEL_LABEL: Record<string, string> = {
   facebook: "Facebook",
 };
 
+type BotStatus = { channel: string; botType: BotType; active: boolean };
+
 export default function AdminSettingsBotsPage() {
   const [testing, setTesting] = useState<string | null>(null);
   const [result, setResult] = useState<{ key: string; ok: boolean; message?: string } | null>(null);
+  const [statusList, setStatusList] = useState<BotStatus[]>([]);
+
+  useEffect(() => {
+    fetch("/api/admin/bots/status")
+      .then((r) => r.json())
+      .then((data: { bots?: BotStatus[] }) => setStatusList(data.bots ?? []))
+      .catch(() => setStatusList([]));
+  }, []);
 
   const handleTest = async (channel: MessengerChannel, botType: BotType) => {
     const key = `${channel}-${botType}`;
@@ -53,6 +63,7 @@ export default function AdminSettingsBotsPage() {
         <table className="w-full min-w-[400px]">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
+              <th className="p-3 text-left text-xs font-medium text-gray-600">Статус</th>
               <th className="p-3 text-left text-xs font-medium text-gray-600">Канал</th>
               <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
               <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
@@ -65,8 +76,18 @@ export default function AdminSettingsBotsPage() {
                 const key = `${channel}-${botType}`;
                 const isTesting = testing === key;
                 const res = result?.key === key ? result : null;
+                const isActive = statusList.some((s) => s.channel === channel && s.botType === botType && s.active);
                 return (
                   <tr key={key} className="border-b border-gray-100">
+                    <td className="p-3">
+                      <span
+                        className="inline-block h-2 w-2 rounded-full"
+                        style={{ backgroundColor: isActive ? "#22c55e" : "#d1d5db" }}
+                        title={isActive ? "Активен" : "Не настроен"}
+                        aria-label={isActive ? "Активен" : "Не настроен"}
+                      />
+                      <span className="ml-1.5 text-xs text-gray-500">{isActive ? "Активен" : "—"}</span>
+                    </td>
                     <td className="p-3 text-sm">{CHANNEL_LABEL[channel] ?? channel}</td>
                     <td className="p-3 text-sm text-gray-600">{botType === "client" ? "Клиент" : "Персонал"}</td>
                     <td className="p-3">

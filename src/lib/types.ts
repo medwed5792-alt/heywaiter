@@ -244,8 +244,9 @@ export interface Table {
 /** Причина увольнения (обязательный выбор ЛПР при увольнении) */
 export type ExitReason =
   | "own_wish"
-  | "discipline"
   | "professionalism"
+  | "discipline"
+  | "conflict"
   | "other";
 
 /** Запись в карьере сотрудника (Биржа труда) — данные перманентны */

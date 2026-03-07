@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "@/lib/firebase";
 
 const VENUE_ID = "current";
 
@@ -18,7 +19,9 @@ export default function AdminSettingsMenuPage() {
   const [menuItemsText, setMenuItemsText] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -31,6 +34,29 @@ export default function AdminSettingsMenuPage() {
       }
       setLoaded(true);
     })();
+  }, []);
+
+  const handlePdfUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || file.type !== "application/pdf") {
+      setMessage({ type: "error", text: "Выберите файл PDF." });
+      return;
+    }
+    setMessage(null);
+    setUploading(true);
+    try {
+      const path = `venues/${VENUE_ID}/menu_${Date.now()}.pdf`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      setMenuPdfUrl(url);
+      setMessage({ type: "ok", text: "PDF загружен. Нажмите «Сохранить», чтобы применить." });
+    } catch (err) {
+      setMessage({ type: "error", text: err instanceof Error ? err.message : "Ошибка загрузки" });
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   }, []);
 
   const saveConfig = useCallback(async () => {
@@ -82,17 +108,30 @@ export default function AdminSettingsMenuPage() {
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-gray-700">Ссылка на PDF меню</span>
+          <span className="text-sm font-medium text-gray-700">PDF меню (Firebase Storage)</span>
+          <input type="file" ref={fileInputRef} accept="application/pdf" className="hidden" onChange={handlePdfUpload} />
+          <div className="flex gap-2 items-center">
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {uploading ? "Загрузка…" : "Загрузить PDF"}
+            </button>
+            {menuPdfUrl && (
+              <a href={menuPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 underline">
+                Открыть
+              </a>
+            )}
+          </div>
           <input
             type="url"
-            placeholder="https://storage.example.com/menu.pdf"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            placeholder="или вставьте ссылку на PDF"
+            className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
             value={menuPdfUrl}
             onChange={(e) => setMenuPdfUrl(e.target.value)}
           />
-          <p className="text-xs text-gray-500">
-            Загрузка PDF в Firebase Storage — заглушка: пока укажите готовую ссылку на PDF. Прямая загрузка файла будет добавлена позже.
-          </p>
         </label>
 
         <label className="flex flex-col gap-1">

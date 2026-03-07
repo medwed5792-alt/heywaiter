@@ -5,13 +5,13 @@ import type { ExitReason, StaffCareerEntry } from "@/lib/types";
 
 /**
  * POST /api/admin/staff/dismiss
- * Тело: { staffId: string, exitReason: ExitReason }
- * ЛПР обязан выбрать причину. Данные сотрудника перманентны: в careerHistory добавляется запись.
+ * Тело: { staffId: string, exitReason: ExitReason, rating: number (1-5) }
+ * ЛПР обязан выбрать причину и оценку. Данные сотрудника перманентны: в careerHistory добавляется запись, globalScore пересчитывается.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { staffId, exitReason } = body as { staffId?: string; exitReason?: ExitReason };
+    const { staffId, exitReason, rating } = body as { staffId?: string; exitReason?: ExitReason; rating?: number };
 
     if (!staffId || !exitReason) {
       return NextResponse.json(
@@ -19,10 +19,17 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const allowed: ExitReason[] = ["own_wish", "discipline", "professionalism", "other"];
+    const allowed: ExitReason[] = ["own_wish", "discipline", "professionalism", "conflict", "other"];
     if (!allowed.includes(exitReason)) {
       return NextResponse.json(
         { error: "Invalid exitReason" },
+        { status: 400 }
+      );
+    }
+    const ratingNum = typeof rating === "number" ? rating : parseInt(String(rating), 10);
+    if (Number.isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+      return NextResponse.json(
+        { error: "rating required, 1-5" },
         { status: 400 }
       );
     }
@@ -45,16 +52,24 @@ export async function POST(request: NextRequest) {
       joinDate,
       exitDate: serverTimestamp(),
       exitReason,
-      rating: data.rating,
+      rating: ratingNum,
     };
     careerHistory.push(newEntry);
 
-    await updateDoc(staffRef, {
+    const ratingsWithValues = careerHistory.map((e) => e.rating).filter((r): r is number => typeof r === "number" && r >= 1 && r <= 5);
+    const globalScore = ratingsWithValues.length > 0
+      ? Math.round((ratingsWithValues.reduce((a, b) => a + b, 0) / ratingsWithValues.length) * 10) / 10
+      : undefined;
+
+    const updatePayload: Record<string, unknown> = {
       active: false,
       careerHistory,
       onShift: false,
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (globalScore != null) updatePayload.globalScore = globalScore;
+
+    await updateDoc(staffRef, updatePayload);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
