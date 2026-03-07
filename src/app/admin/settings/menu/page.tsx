@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 
 const VENUE_ID = "current";
 
@@ -14,49 +13,23 @@ type VenueMenuConfig = {
 };
 
 export default function AdminSettingsMenuPage() {
-  const [menuLink, setMenuLink] = useState("");
-  const [menuPdfUrl, setMenuPdfUrl] = useState("");
+  const [menuUrl, setMenuUrl] = useState("");
   const [menuItemsText, setMenuItemsText] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
       const snap = await getDoc(doc(db, "venues", VENUE_ID));
       if (snap.exists()) {
         const config = snap.data().config as VenueMenuConfig | undefined;
-        if (config?.menuLink != null) setMenuLink(config.menuLink);
-        if (config?.menuPdfUrl != null) setMenuPdfUrl(config.menuPdfUrl);
+        const url = config?.menuLink || config?.menuPdfUrl || "";
+        setMenuUrl(url);
         if (config?.menuItems?.length) setMenuItemsText(config.menuItems.join("\n"));
       }
       setLoaded(true);
     })();
-  }, []);
-
-  const handlePdfUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || file.type !== "application/pdf") {
-      setMessage({ type: "error", text: "Выберите файл PDF." });
-      return;
-    }
-    setMessage(null);
-    setUploading(true);
-    try {
-      const path = `venues/${VENUE_ID}/menu_${Date.now()}.pdf`;
-      const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setMenuPdfUrl(url);
-      setMessage({ type: "ok", text: "PDF загружен. Нажмите «Сохранить», чтобы применить." });
-    } catch (err) {
-      setMessage({ type: "error", text: err instanceof Error ? err.message : "Ошибка загрузки" });
-    } finally {
-      setUploading(false);
-      e.target.value = "";
-    }
   }, []);
 
   const saveConfig = useCallback(async () => {
@@ -67,22 +40,23 @@ export default function AdminSettingsMenuPage() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
+      const url = menuUrl.trim() || undefined;
       const config: VenueMenuConfig = {
-        menuLink: menuLink.trim() || undefined,
-        menuPdfUrl: menuPdfUrl.trim() || undefined,
+        menuLink: url,
+        menuPdfUrl: url,
         menuItems: menuItems.length > 0 ? menuItems : undefined,
       };
       await updateDoc(doc(db, "venues", VENUE_ID), {
         config,
         updatedAt: serverTimestamp(),
       });
-      setMessage({ type: "ok", text: "Настройки меню сохранены. Кнопка «📜 Меню» в Mini App гостя появится, если заполнена ссылка, PDF или позиции." });
+      setMessage({ type: "ok", text: "Настройки меню сохранены. Кнопка «📜 Меню» в Mini App гостя появится, если заполнена ссылка или позиции." });
     } catch (e) {
       setMessage({ type: "error", text: e instanceof Error ? e.message : "Ошибка сохранения" });
     } finally {
       setSaving(false);
     }
-  }, [menuLink, menuPdfUrl, menuItemsText]);
+  }, [menuUrl, menuItemsText]);
 
   if (!loaded) {
     return <p className="text-sm text-gray-500">Загрузка…</p>;
@@ -97,41 +71,17 @@ export default function AdminSettingsMenuPage() {
 
       <div className="mt-6 flex flex-col gap-4 max-w-xl">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-gray-700">Внешняя ссылка на меню</span>
+          <span className="text-sm font-medium text-gray-700">Ссылка на PDF или внешнее меню (URL)</span>
           <input
             type="url"
-            placeholder="https://example.com/menu"
+            placeholder="https://example.com/menu.pdf или ссылка на Google Диск"
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            value={menuLink}
-            onChange={(e) => setMenuLink(e.target.value)}
+            value={menuUrl}
+            onChange={(e) => setMenuUrl(e.target.value)}
           />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-gray-700">PDF меню (Firebase Storage)</span>
-          <input type="file" ref={fileInputRef} accept="application/pdf" className="hidden" onChange={handlePdfUpload} />
-          <div className="flex gap-2 items-center">
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-            >
-              {uploading ? "Загрузка…" : "Загрузить PDF"}
-            </button>
-            {menuPdfUrl && (
-              <a href={menuPdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 underline">
-                Открыть
-              </a>
-            )}
-          </div>
-          <input
-            type="url"
-            placeholder="или вставьте ссылку на PDF"
-            className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            value={menuPdfUrl}
-            onChange={(e) => setMenuPdfUrl(e.target.value)}
-          />
+          <p className="text-xs text-gray-500">
+            💡 Совет: Загрузите ваш PDF на Google Диск или облако и вставьте прямую ссылку сюда.
+          </p>
         </label>
 
         <label className="flex flex-col gap-1">
