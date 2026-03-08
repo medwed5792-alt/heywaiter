@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const VENUE_ID = "current";
@@ -41,18 +41,16 @@ export function SettingsMenuSection() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      // Сохраняем ссылку как есть; пустое/undefined → ""
-      const menuLinkStr = String(menuUrl ?? "").trim();
-      const menuPdfUrlStr = String(menuUrl ?? "").trim();
+      const cleanUrl = String(menuUrl || "").trim();
       const payload: Record<string, unknown> = {
         config: {
-          menuLink: String(menuLinkStr || ""),
-          menuPdfUrl: String(menuPdfUrlStr || ""),
+          menuLink: cleanUrl,
+          menuPdfUrl: cleanUrl,
           ...(menuItems.length > 0 ? { menuItems } : {}),
         },
         updatedAt: serverTimestamp(),
       };
-      await updateDoc(doc(db, "venues", VENUE_ID), payload);
+      await setDoc(doc(db, "venues", VENUE_ID), payload, { merge: true });
       setMessage({ type: "ok", text: "Настройки меню сохранены. Кнопка «📜 Меню» в Mini App гостя открывает эту ссылку в браузере." });
     } catch (e) {
       setMessage({ type: "error", text: e instanceof Error ? e.message : "Ошибка сохранения" });

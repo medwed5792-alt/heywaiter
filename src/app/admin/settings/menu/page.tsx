@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 const VENUE_ID = "current";
@@ -40,18 +40,13 @@ export default function AdminSettingsMenuPage() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      // Сохраняем текст ссылки как есть; пустое/undefined → ""
-      const menuLink = String(menuUrl ?? "").trim();
-      const menuPdfUrl = String(menuUrl ?? "").trim();
+      const cleanUrl = String(menuUrl || "").trim();
       const config: VenueMenuConfig = {
-        menuLink: String(menuLink || ""),
-        menuPdfUrl: String(menuPdfUrl || ""),
+        menuLink: cleanUrl,
+        menuPdfUrl: cleanUrl,
         menuItems: menuItems.length > 0 ? menuItems : undefined,
       };
-      await updateDoc(doc(db, "venues", VENUE_ID), {
-        config,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(doc(db, "venues", VENUE_ID), { config, updatedAt: serverTimestamp() }, { merge: true });
       setMessage({ type: "ok", text: "Настройки меню сохранены. Кнопка «📜 Меню» в Mini App гостя появится, если заполнена ссылка или позиции." });
     } catch (e) {
       setMessage({ type: "error", text: e instanceof Error ? e.message : "Ошибка сохранения" });
