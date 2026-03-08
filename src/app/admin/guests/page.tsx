@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import toast from "react-hot-toast";
 import { collection, doc, addDoc, updateDoc, getDoc, query, where, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
@@ -285,12 +286,14 @@ function GuestCardModal({
       };
       if (guest?.id) {
         await updateDoc(doc(db, "guests", guest.id), payload);
+        toast.success("Гость сохранён");
       } else {
         await addDoc(collection(db, "guests"), { ...payload, venueId, createdAt: serverTimestamp() });
+        toast.success("Гость добавлен");
       }
       onSaved();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Ошибка сохранения");
+      toast.error(err instanceof Error ? err.message : "Ошибка сохранения");
     } finally {
       setSaving(false);
     }
@@ -311,8 +314,9 @@ function GuestCardModal({
       setGlobalGuestScore(avg);
       setNewRating(null);
       onRatingSaved?.(guest.id, avg);
+      toast.success("Оценка сохранена");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Ошибка сохранения оценки");
+      toast.error(err instanceof Error ? err.message : "Ошибка сохранения оценки");
     } finally {
       setRatingSaving(false);
     }

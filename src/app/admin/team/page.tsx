@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
@@ -176,8 +177,9 @@ export default function TeamPage() {
         prev.map((s) => (s.id === dismissModal.id ? { ...s, active: false } : s))
       );
       setDismissModal(null);
+      toast.success("Сотрудник уволен");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка увольнения");
+      toast.error(e instanceof Error ? e.message : "Ошибка увольнения");
     } finally {
       setLoading(false);
     }
@@ -452,8 +454,9 @@ function StaffFormModal({
         position: position || undefined,
         assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
       });
+      toast.success("Сохранено");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка сохранения");
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
     } finally {
       setSaving(false);
     }

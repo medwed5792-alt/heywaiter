@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
 import {
   collection,
   doc,
@@ -13,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { LayoutGrid, Map, Plus, Pencil, Trash2, QrCode } from "lucide-react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { VenueType } from "@/lib/types";
 
 const DEFAULT_CHECK_IN = "Располагайтесь! Нажмите кнопку ниже, чтобы открыть меню или позвать официанта.";
@@ -68,7 +70,7 @@ function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void })
       }
     } else {
       await navigator.clipboard?.writeText(url);
-      alert("Ссылка скопирована в буфер обмена.");
+      toast.success("Ссылка скопирована в буфер обмена.");
     }
   };
   return (
@@ -140,6 +142,13 @@ export function SettingsHallsSection() {
   const [addingTableHallId, setAddingTableHallId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<VenueTable | null>(null);
   const [qrTable, setQrTable] = useState<VenueTable | null>(null);
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    variant: "danger" | "primary";
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   const hallsRef = collection(db, "venues", VENUE_ID, "halls");
   const tablesRef = collection(db, "venues", VENUE_ID, "tables");
@@ -181,8 +190,9 @@ export function SettingsHallsSection() {
       await addDoc(hallsRef, { name, order: halls.length, updatedAt: serverTimestamp() });
       setNewHallName("");
       await loadHallsAndTables();
+      toast.success("Зал добавлен");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка добавления зала");
+      toast.error(e instanceof Error ? e.message : "Ошибка добавления зала");
     }
   };
 
@@ -194,20 +204,30 @@ export function SettingsHallsSection() {
       setEditingHall(null);
       setEditingHallName("");
       await loadHallsAndTables();
+      toast.success("Зал сохранён");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка сохранения зала");
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения зала");
     }
   };
 
-  const deleteHall = async (hall: Hall) => {
-    if (!confirm(`Удалить зал «${hall.name}» и все столы в нём?`)) return;
-    try {
-      for (const t of tables.filter((x) => x.hallId === hall.id)) await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
-      await deleteDoc(doc(db, "venues", VENUE_ID, "halls", hall.id));
-      await loadHallsAndTables();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка удаления зала");
-    }
+  const openDeleteHallConfirm = (hall: Hall) => {
+    setConfirmState({
+      open: true,
+      title: "Подтверждение",
+      message: `Удалить зал «${hall.name}» и все столы в нём?`,
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          for (const t of tables.filter((x) => x.hallId === hall.id)) await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
+          await deleteDoc(doc(db, "venues", VENUE_ID, "halls", hall.id));
+          await loadHallsAndTables();
+          toast.success("Зал удалён");
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Ошибка удаления зала");
+        }
+        setConfirmState(null);
+      },
+    });
   };
 
   const addTable = async (hallId: string, number: number, name: string, description: string, seats: number) => {
@@ -216,8 +236,9 @@ export function SettingsHallsSection() {
       await addDoc(tablesRef, { hallId, number: Number(number), name: name.trim() || null, description: description.trim() || null, seats: seats > 0 ? seats : null, updatedAt: serverTimestamp() });
       setAddingTableHallId(null);
       await loadHallsAndTables();
+      toast.success("Стол добавлен");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка добавления стола");
+      toast.error(e instanceof Error ? e.message : "Ошибка добавления стола");
     }
   };
 
@@ -226,19 +247,29 @@ export function SettingsHallsSection() {
       await updateDoc(doc(db, "venues", VENUE_ID, "tables", t.id), { number: Number(number), name: name.trim() || null, description: description.trim() || null, seats: seats > 0 ? seats : null, updatedAt: serverTimestamp() });
       setEditingTable(null);
       await loadHallsAndTables();
+      toast.success("Стол сохранён");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка сохранения стола");
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения стола");
     }
   };
 
-  const deleteTable = async (t: VenueTable) => {
-    if (!confirm(`Удалить стол ${t.number}?`)) return;
-    try {
-      await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
-      await loadHallsAndTables();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка удаления стола");
-    }
+  const openDeleteTableConfirm = (t: VenueTable) => {
+    setConfirmState({
+      open: true,
+      title: "Подтверждение",
+      message: `Удалить стол ${t.number}?`,
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
+          await loadHallsAndTables();
+          toast.success("Стол удалён");
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Ошибка удаления стола");
+        }
+        setConfirmState(null);
+      },
+    });
   };
 
   return (
@@ -256,7 +287,7 @@ export function SettingsHallsSection() {
             <span className="text-sm">Фастфуд (заказ по номеру, выдача)</span>
           </label>
         </div>
-        <button type="button" className="mt-3 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setVenueTypeSaving(true); try { await updateDoc(doc(db, "venues", VENUE_ID), { venueType, updatedAt: serverTimestamp() }); } catch (e) { alert(e instanceof Error ? e.message : "Ошибка"); } finally { setVenueTypeSaving(false); } }} disabled={venueTypeSaving}>
+        <button type="button" className="mt-3 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setVenueTypeSaving(true); try { await updateDoc(doc(db, "venues", VENUE_ID), { venueType, updatedAt: serverTimestamp() }); toast.success("Тип заведения сохранён"); } catch (e) { toast.error(e instanceof Error ? e.message : "Ошибка"); } finally { setVenueTypeSaving(false); } }} disabled={venueTypeSaving}>
           {venueTypeSaving ? "Сохранение…" : "Сохранить тип"}
         </button>
       </div>
@@ -270,7 +301,7 @@ export function SettingsHallsSection() {
         <textarea className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" rows={2} value={messages.booking} onChange={(e) => setMessages((m) => ({ ...m, booking: e.target.value }))} />
         <label className="mt-4 block text-sm font-medium text-gray-700">Благодарность (thankYou)</label>
         <textarea className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" rows={2} value={messages.thankYou} onChange={(e) => setMessages((m) => ({ ...m, thankYou: e.target.value }))} />
-        <button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setSaving(true); try { const res = await fetch("/api/admin/venue/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ venueId: "current", messages }) }); if (!res.ok) throw new Error((await res.json()).error || "Ошибка"); } catch (e) { alert(e instanceof Error ? e.message : "Ошибка"); } finally { setSaving(false); }} } disabled={saving}>
+        <button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setSaving(true); try { const res = await fetch("/api/admin/venue/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ venueId: "current", messages }) }); if (!res.ok) throw new Error((await res.json()).error || "Ошибка"); toast.success("Тексты сохранены"); } catch (e) { toast.error(e instanceof Error ? e.message : "Ошибка"); } finally { setSaving(false); }} } disabled={saving}>
           {saving ? "Сохранение…" : "Сохранить тексты"}
         </button>
       </div>
@@ -303,7 +334,7 @@ export function SettingsHallsSection() {
                       {editingHall?.id === hall.id ? (
                         <><button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100" onClick={() => updateHall(hall)}>Сохранить</button><button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100" onClick={() => { setEditingHall(null); setEditingHallName(""); }}>Отмена</button></>
                       ) : (
-                        <><button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-200" onClick={() => { setEditingHall(hall); setEditingHallName(hall.name); }} title="Редактировать зал"><Pencil className="h-3.5 w-3.5" /></button><button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={() => deleteHall(hall)} title="Удалить зал"><Trash2 className="h-3.5 w-3.5" /></button></>
+                        <><button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-200" onClick={() => { setEditingHall(hall); setEditingHallName(hall.name); }} title="Редактировать зал"><Pencil className="h-3.5 w-3.5" /></button><button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={() => openDeleteHallConfirm(hall)} title="Удалить зал"><Trash2 className="h-3.5 w-3.5" /></button></>
                       )}
                     </div>
                   </div>
@@ -318,7 +349,7 @@ export function SettingsHallsSection() {
                         <div className="flex gap-1">
                           <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setQrTable(t)} title="QR-код"><QrCode className="h-4 w-4" /></button>
                           <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setEditingTable(t)} title="Редактировать"><Pencil className="h-3.5 w-3.5" /></button>
-                          <button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={() => deleteTable(t)} title="Удалить"><Trash2 className="h-3.5 w-3.5" /></button>
+                          <button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={() => openDeleteTableConfirm(t)} title="Удалить"><Trash2 className="h-3.5 w-3.5" /></button>
                         </div>
                       </div>
                     ))}
@@ -333,6 +364,19 @@ export function SettingsHallsSection() {
       </div>
 
       {qrTable && <QRModal table={qrTable} onClose={() => setQrTable(null)} />}
+
+      {confirmState && (
+        <ConfirmModal
+          open={confirmState.open}
+          title={confirmState.title}
+          message={confirmState.message}
+          variant={confirmState.variant}
+          confirmLabel="ПОДТВЕРДИТЬ"
+          cancelLabel="ОТМЕНА"
+          onConfirm={confirmState.onConfirm}
+          onCancel={() => setConfirmState(null)}
+        />
+      )}
     </div>
   );
 }

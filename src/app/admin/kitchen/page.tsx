@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import toast from "react-hot-toast";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Order } from "@/lib/types";
@@ -86,10 +87,12 @@ export default function AdminKitchenPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
-        alert(data.error || "Ошибка");
+        toast.error(data.error || "Ошибка");
+      } else {
+        toast.success("Заказ отмечен готовым");
       }
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Ошибка");
+      toast.error(e instanceof Error ? e.message : "Ошибка");
     } finally {
       setMarkingId(null);
     }

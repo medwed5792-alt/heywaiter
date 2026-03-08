@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -32,7 +33,7 @@ export default function GuestPage() {
       setTimeout(() => setStatus('idle'), 3000);
     } catch (error) {
       console.error("Ошибка Firebase:", error);
-      alert("Ошибка связи с базой данных");
+      toast.error("Ошибка связи с базой данных");
       setStatus('idle');
     }
   };

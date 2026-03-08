@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
 import {
   collection,
   doc,
@@ -382,7 +383,7 @@ function RateGuestVisitModal({
       onRated();
     } catch (e) {
       console.error(e);
-      alert(e instanceof Error ? e.message : "Ошибка");
+      toast.error(e instanceof Error ? e.message : "Ошибка");
     } finally {
       setSubmitting(false);
     }
