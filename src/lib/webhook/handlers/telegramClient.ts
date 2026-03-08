@@ -124,9 +124,13 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   const parsed = parseStartPayload(message.text);
   if (!parsed) {
+    const webAppUrl = `${baseUrl}/check-in/panel?chatId=${chatId}&platform=telegram`;
     await sendTelegram(token, "sendMessage", {
       chat_id: chatId,
-      text: "Добро пожаловать в HeyWaiter! Отсканируйте QR-код стола, чтобы начать.",
+      text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню.",
+      reply_markup: {
+        inline_keyboard: [[{ text: "📋 Открыть меню", web_app: { url: webAppUrl } }]],
+      },
     });
     return;
   }

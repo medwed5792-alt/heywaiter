@@ -1,17 +1,19 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { Suspense, useMemo, useState, useEffect } from "react";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { Suspense, useMemo, useState, useEffect, useRef } from "react";
+import { collection, doc, getDoc, getDocs, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { GuestCallPanel } from "@/components/guest/GuestCallPanel";
+import { GuestMainMenu } from "@/components/guest/GuestMainMenu";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import type { Order } from "@/lib/types";
 
 /**
  * Mini App гостя.
- * Full service: ?v=venueId&t=tableId&role=guest|vip — вызов официанта/сомелье.
- * Fast Food: ?v=venueId&orderId=XXX — только «Статус заказа» и «Меню». Масштаб 75% в globals.css.
+ * Сценарий QR (v=ID, t=ID): сразу пульт вызова.
+ * Сценарий «Из дома» (без v/t): главное меню — Сканер, Монитор, Бронирование, Акции, Рейтинг, Поиск, Связаться.
+ * Fast Food: ?v=venueId&orderId=XXX — Статус заказа и Меню. Масштаб 75% в globals.css.
  */
 function PanelContent() {
   const searchParams = useSearchParams();
@@ -27,8 +29,13 @@ function PanelContent() {
   const isFastFood = Boolean(venueId && (orderId || chatId));
   const isFullService = Boolean(venueId && tableId);
   const isValid = isFastFood || isFullService;
+  const isDirectAccess = !venueId && !tableId && !orderId;
 
   const sessionId = useMemo(() => searchParams.get("sessionId") ?? undefined, [searchParams]);
+
+  if (isDirectAccess) {
+    return <GuestMainMenu chatId={chatId || undefined} platform={platform} />;
+  }
 
   if (!isValid) {
     return (
@@ -55,6 +62,57 @@ function PanelContent() {
       <FastFoodPrimitiveView venueId={venueId} chatId={chatId} platform={platform} />
     );
   }
+
+  return (
+    <FullServicePanel
+      venueId={venueId}
+      tableId={tableId}
+      sessionId={sessionId}
+      chatId={chatId}
+      platform={platform}
+      isPro={isPro}
+    />
+  );
+}
+
+function FullServicePanel({
+  venueId,
+  tableId,
+  sessionId,
+  chatId,
+  platform,
+  isPro,
+}: {
+  venueId: string;
+  tableId: string;
+  sessionId: string | undefined;
+  chatId: string;
+  platform: string;
+  isPro: boolean;
+}) {
+  const checkInDone = useRef(false);
+  useEffect(() => {
+    if (checkInDone.current || !venueId || !tableId) return;
+    checkInDone.current = true;
+    (async () => {
+      const q = query(
+        collection(db, "activeSessions"),
+        where("venueId", "==", venueId),
+        where("tableId", "==", tableId),
+        where("status", "==", "check_in_success")
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) return;
+      const guestIdentity = chatId
+        ? { channel: platform as "telegram", externalId: chatId, locale: "ru" as const }
+        : undefined;
+      await fetch("/api/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, tableId, guestIdentity }),
+      });
+    })();
+  }, [venueId, tableId, chatId, platform]);
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
