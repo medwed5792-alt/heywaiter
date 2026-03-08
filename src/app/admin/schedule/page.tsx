@@ -70,7 +70,9 @@ export default function AdminSchedulePage() {
   const [filterMonth, setFilterMonth] = useState(todayISO().slice(0, 7));
   const [filterRole, setFilterRole] = useState<ServiceRole | "">("");
   const [staffOutOfZoneIdSet, setStaffOutOfZoneIdSet] = useState<Set<string>>(new Set());
-  const [addShiftModal, setAddShiftModal] = useState<{ date: string; hour: number } | null>(null);
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [addShiftModal, setAddShiftModal] = useState<{ dates: string[]; defaultStartHour: number } | null>(null);
+  const [dragStart, setDragStart] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,16 +136,57 @@ export default function AdminSchedulePage() {
 
   const managedVenues = useMemo(() => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]), [venues, VENUE_ID]);
 
+  const monthDays = useMemo(() => {
+    const [y, m] = filterMonth.split("-").map(Number);
+    const first = new Date(y, m - 1, 1);
+    const last = new Date(y, m, 0);
+    const days: string[] = [];
+    for (let d = 1; d <= last.getDate(); d++) {
+      days.push(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+    }
+    return days;
+  }, [filterMonth]);
+
+  const toggleDate = (date: string) => {
+    setSelectedDates((prev) => (prev.includes(date) ? prev.filter((x) => x !== date) : [...prev, date].sort()));
+  };
+
+  const selectRange = (date: string) => {
+    if (!dragStart) return;
+    const a = monthDays.indexOf(dragStart);
+    const b = monthDays.indexOf(date);
+    if (a === -1 || b === -1) return;
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    setSelectedDates(monthDays.slice(lo, hi + 1));
+  };
+
+  const openAddShiftForSelection = () => {
+    const dates = selectedDates.length > 0 ? selectedDates : [filterDate];
+    setAddShiftModal({ dates, defaultStartHour: 10 });
+  };
+
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900">График</h2>
       <p className="mt-1 text-sm text-gray-600">
-        Клик по ячейке — добавить смену. Таймлайн: слоты [ начало === Сотрудник === конец ]. Внизу — сводка по ФОТ и экспорт CSV.
+        Выберите дни (клик или протягивание), затем «+ Назначить смену» — смены создадутся для всех выделенных дней. Таймлайн по выбранной дате.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-gray-600">Дата</span>
+          <span className="text-gray-600">Месяц</span>
+          <input
+            type="month"
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            value={filterMonth}
+            onChange={(e) => {
+              setFilterMonth(e.target.value);
+              setSelectedDates([]);
+            }}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Дата (таймлайн)</span>
           <input
             type="date"
             className="rounded border border-gray-300 px-2 py-1.5 text-sm"
@@ -165,6 +208,37 @@ export default function AdminSchedulePage() {
             <option value="security">Охрана</option>
           </select>
         </label>
+        <button
+          type="button"
+          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          onClick={openAddShiftForSelection}
+        >
+          + Назначить смену
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+        <p className="mb-2 text-xs font-medium text-gray-600">Выбор дней (клик — один день, зажатие и протягивание — диапазон)</p>
+        <div className="flex flex-wrap gap-1">
+          {monthDays.map((d) => {
+            const selected = selectedDates.includes(d);
+            return (
+              <button
+                key={d}
+                type="button"
+                className="h-8 min-w-[2rem] rounded px-2 text-xs font-medium transition-colors hover:opacity-90"
+                style={{ backgroundColor: selected ? "#E0F2FE" : undefined, color: selected ? "#0C4A6E" : "#374151" }}
+                onClick={() => toggleDate(d)}
+                onMouseDown={() => setDragStart(d)}
+                onMouseEnter={() => dragStart && selectRange(d)}
+                onMouseUp={() => setDragStart(null)}
+                onMouseLeave={() => setDragStart(null)}
+              >
+                {d.slice(8)}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-4 max-h-[50vh] min-h-[200px]">
@@ -177,15 +251,15 @@ export default function AdminSchedulePage() {
             outOfZoneStaffIds={staffOutOfZoneIdSet}
             venueId={VENUE_ID}
             staffList={staffList}
-            onCellClick={(date, hour) => setAddShiftModal({ date, hour })}
+            onCellClick={(date, hour) => setAddShiftModal({ dates: [date], defaultStartHour: hour })}
           />
         )}
       </div>
 
       {addShiftModal && (
         <AddShiftModal
-          date={addShiftModal.date}
-          defaultStartHour={addShiftModal.hour}
+          dates={addShiftModal.dates}
+          defaultStartHour={addShiftModal.defaultStartHour}
           staffList={staffList}
           managedVenues={managedVenues}
           onClose={() => setAddShiftModal(null)}
@@ -205,14 +279,14 @@ export default function AdminSchedulePage() {
 }
 
 function AddShiftModal({
-  date,
+  dates,
   defaultStartHour,
   staffList,
   managedVenues,
   onClose,
   onSaved,
 }: {
-  date: string;
+  dates: string[];
   defaultStartHour: number;
   staffList: Staff[];
   managedVenues: Venue[];
@@ -228,19 +302,23 @@ function AddShiftModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffId.trim()) return;
+    const toCreate = dates.length > 0 ? dates : [todayISO()];
     setSaving(true);
     try {
-      const slot = { date, startTime, endTime, venueId };
-      const planH = planHoursFromSlot(slot);
-      await addDoc(collection(db, "scheduleEntries"), {
-        venueId: venueId || VENUE_ID,
-        staffId,
-        slot,
-        planHours: Math.round(planH * 10) / 10,
-        role: staffList.find((s) => s.id === staffId)?.position ?? "waiter",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      const role = staffList.find((s) => s.id === staffId)?.position ?? "waiter";
+      for (const date of toCreate) {
+        const slot = { date, startTime, endTime, venueId };
+        const planH = planHoursFromSlot(slot);
+        await addDoc(collection(db, "scheduleEntries"), {
+          venueId: venueId || VENUE_ID,
+          staffId,
+          slot,
+          planHours: Math.round(planH * 10) / 10,
+          role,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
       onSaved();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Ошибка");
@@ -253,7 +331,7 @@ function AddShiftModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
         <h3 className="font-semibold text-gray-900">Добавить смену</h3>
-        <p className="mt-1 text-sm text-gray-500">Дата: {date}</p>
+        <p className="mt-1 text-sm text-gray-500">{dates.length > 1 ? `Дни: ${dates.length} (${dates[0]} … ${dates[dates.length - 1]})` : `Дата: ${dates[0] ?? todayISO()}`}</p>
         <form onSubmit={handleSubmit} className="mt-4 space-y-3">
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Сотрудник (Команда)</span>
