@@ -1,14 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useGoogleMapsConfig } from "@/hooks/useGoogleMapsConfig";
 import type { StaffLiveGeo } from "@/lib/types";
 
 const VENUE_ID = "current";
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+
+const GoogleMapVenue = dynamic(
+  () => import("@/components/admin/geo/GoogleMapVenue").then((m) => m.GoogleMapVenue),
+  { ssr: false }
+);
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   const q = encodeURIComponent(address.trim());
@@ -21,69 +28,8 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
   return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
 
-type LeafletRef = React.MutableRefObject<unknown>;
-
-function GeoMap({
-  lat,
-  lng,
-  radius,
-  staffGeos,
-  onLatLngChange,
-  onRadiusChange,
-}: {
-  lat: number;
-  lng: number;
-  radius: number;
-  staffGeos: StaffLiveGeo[];
-  onLatLngChange: (lat: number, lng: number) => void;
-  onRadiusChange: (r: number) => void;
-}) {
-  const mapRef = useRef<unknown>(null);
-  const markerRef = useRef<unknown>(null);
-  const circleRef = useRef<unknown>(null);
-  const layerRef = useRef<unknown>(null);
-  const [MapComponent, setMapComponent] = useState<React.ComponentType<{
-    lat: number;
-    lng: number;
-    radius: number;
-    staffGeos: StaffLiveGeo[];
-    onLatLngChange: (lat: number, lng: number) => void;
-    onRadiusChange: (r: number) => void;
-    mapRef: LeafletRef;
-    markerRef: LeafletRef;
-    circleRef: LeafletRef;
-    layerRef: LeafletRef;
-  }> | null>(null);
-
-  useEffect(() => {
-    import("./geo/GeoMapLeaflet").then((m) => setMapComponent(() => m.GeoMapLeaflet));
-  }, []);
-
-  if (!MapComponent) {
-    return (
-      <div className="flex h-[400px] w-full items-center justify-center rounded-xl border border-gray-200 bg-slate-50 text-sm text-gray-500">
-        Загрузка карты…
-      </div>
-    );
-  }
-
-  return (
-    <MapComponent
-      lat={lat}
-      lng={lng}
-      radius={radius}
-      staffGeos={staffGeos}
-      onLatLngChange={onLatLngChange}
-      onRadiusChange={onRadiusChange}
-      mapRef={mapRef}
-      markerRef={markerRef}
-      circleRef={circleRef}
-      layerRef={layerRef}
-    />
-  );
-}
-
 export function SettingsGeoSection() {
+  const { apiKey, hasKey } = useGoogleMapsConfig();
   const [lat, setLat] = useState(55.75);
   const [lng, setLng] = useState(37.62);
   const [radius, setRadius] = useState(100);
@@ -153,7 +99,7 @@ export function SettingsGeoSection() {
   if (!loaded) return <p className="mt-3 text-sm text-gray-500">Загрузка…</p>;
 
   return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6">
+    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6" style={{ zoom: 0.75 }}>
       <p className="text-sm text-gray-600">Интерактивная карта: поиск по адресу, перетаскивание маркера, красная зона по радиусу.</p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="flex-1 min-w-[200px]">
@@ -164,7 +110,22 @@ export function SettingsGeoSection() {
         <button type="button" onClick={handleMyLocation} className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Определить моё местоположение</button>
       </div>
       {geocodeError && <p className="mt-2 text-sm text-red-600">{geocodeError}</p>}
-      <GeoMap lat={lat} lng={lng} radius={radius} staffGeos={staffGeos} onLatLngChange={(a, b) => { setLat(a); setLng(b); }} onRadiusChange={setRadius} />
+      {hasKey ? (
+        <div className="mt-4">
+          <GoogleMapVenue
+            apiKey={apiKey}
+            lat={lat}
+            lng={lng}
+            radius={radius}
+            onLatLngChange={(a, b) => { setLat(a); setLng(b); }}
+            onRadiusChange={setRadius}
+          />
+        </div>
+      ) : (
+        <div className="mt-4 flex h-[280px] w-full items-center justify-center rounded-xl border border-dashed border-gray-300 bg-slate-50/80 text-center text-sm text-gray-500">
+          Карта ожидает активации в Кабинете Супер-Админа. Задайте координаты и радиус вручную ниже или используйте поиск по адресу (Nominatim).
+        </div>
+      )}
       <div className="mt-4 rounded-xl border border-gray-200 p-4">
         <label className="block text-sm font-medium text-gray-700">Радиус красной зоны, м</label>
         <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} value={radius} onChange={(e) => setRadius(Number(e.target.value))} className="mt-1 w-full accent-red-600" />
