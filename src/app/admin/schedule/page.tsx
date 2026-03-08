@@ -72,6 +72,7 @@ export default function AdminSchedulePage() {
   const [staffOutOfZoneIdSet, setStaffOutOfZoneIdSet] = useState<Set<string>>(new Set());
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [addShiftModal, setAddShiftModal] = useState<{ dates: string[]; defaultStartHour: number } | null>(null);
+  const [editShiftEntry, setEditShiftEntry] = useState<ScheduleEntry | null>(null);
   const [dragStart, setDragStart] = useState<string | null>(null);
 
   useEffect(() => {
