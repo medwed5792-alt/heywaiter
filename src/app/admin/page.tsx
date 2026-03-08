@@ -55,6 +55,8 @@ export default function AdminDashboardPage() {
   const [tablesCount, setTablesCount] = useState(0);
   const [emergencies, setEmergencies] = useState<EmergencyEvent[]>([]);
   const [emergenciesLoading, setEmergenciesLoading] = useState(true);
+  const [occupiedTables, setOccupiedTables] = useState<{ tableId: string; tableNumber: number; guestId?: string }[]>([]);
+  const [guestNames, setGuestNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     (async () => {
@@ -79,9 +81,38 @@ export default function AdminDashboardPage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       setOccupiedCount(snap.size);
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        return { tableId: data.tableId ?? "", tableNumber: data.tableNumber ?? 0, guestId: data.guestId };
+      });
+      setOccupiedTables(list);
     });
     return () => unsub();
   }, [venueType]);
+
+  useEffect(() => {
+    const ids = [...new Set(occupiedTables.map((t) => t.guestId).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setGuestNames({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const names: Record<string, string> = {};
+      await Promise.all(
+        ids.map(async (id) => {
+          if (cancelled) return;
+          const snap = await getDoc(doc(db, "guests", id));
+          if (snap.exists()) {
+            const d = snap.data();
+            names[id] = (d.name as string) || (d.nickname as string) || (d.phone as string) || id.slice(0, 8);
+          }
+        })
+      );
+      if (!cancelled) setGuestNames(names);
+    })();
+    return () => { cancelled = true; };
+  }, [occupiedTables]);
 
   useEffect(() => {
     const now = new Date();
@@ -180,6 +211,19 @@ export default function AdminDashboardPage() {
               <p className="mt-1 text-2xl font-bold text-gray-900">{tablesCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">свободно: {Math.max(0, tablesCount - occupiedCount)}</p>
             </div>
+            {occupiedTables.length > 0 && (
+              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:col-span-2 lg:col-span-3">
+                <h3 className="text-sm font-medium text-gray-600">Занятые столы</h3>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {occupiedTables.map((t, i) => (
+                    <li key={t.tableId + i} className="flex justify-between gap-2">
+                      <span className="text-gray-700">Стол {t.tableNumber || t.tableId || "—"}</span>
+                      <span className="font-medium text-gray-900">{t.guestId ? (guestNames[t.guestId] ?? "…") : "—"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         )}
       </div>

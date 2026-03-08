@@ -17,6 +17,7 @@ interface ScheduleTimelineProps {
   staffList?: Staff[];
   onCloseShift?: (entryId: string) => void;
   onCellClick?: (date: string, hour: number) => void;
+  onEntryClick?: (entry: ScheduleEntry) => void;
 }
 
 function round1(n: number) {
@@ -37,6 +38,7 @@ export function ScheduleTimeline({
   staffList = [],
   onCloseShift,
   onCellClick,
+  onEntryClick,
 }: ScheduleTimelineProps) {
   const [closingId, setClosingId] = useState<string | null>(null);
 
@@ -132,14 +134,18 @@ export function ScheduleTimeline({
                   <span className="shrink-0 text-xs text-gray-500">{entry.role ?? "—"}</span>
                 </div>
                 <div className="relative flex flex-1" style={{ width: HOURS.length * HOUR_WIDTH }}>
-                  {/* Слот: [ startTime === Имя === endTime ] */}
+                  {/* Слот: клик по смене — редактирование/удаление */}
                   <div
-                    className="absolute inset-y-1 flex items-center justify-between rounded bg-blue-500/70 px-2 text-xs text-white"
+                    role="button"
+                    tabIndex={0}
+                    className="absolute inset-y-1 flex items-center justify-between rounded bg-blue-500/70 px-2 text-xs text-white cursor-pointer hover:bg-blue-600/80"
                     style={{
                       left: `${planStart * 100}%`,
                       width: `${(planEnd - planStart) * 100}%`,
                     }}
-                    title={`План: ${round1(planHours)} ч | ${slot.startTime}–${slot.endTime}`}
+                    title={`План: ${round1(planHours)} ч | ${slot.startTime}–${slot.endTime}. Клик — редактировать`}
+                    onClick={() => onEntryClick?.(entry)}
+                    onKeyDown={(e) => e.key === "Enter" && onEntryClick?.(entry)}
                   >
                     <span>{slot.startTime}</span>
                     <span className="font-medium truncate max-w-[120px]">{name}</span>
@@ -161,7 +167,7 @@ export function ScheduleTimeline({
                       title={outOfZone ? "Не в зоне GPS" : "Факт превышает план"}
                     />
                   )}
-                  <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2" onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => handleCloseShift(entry)}

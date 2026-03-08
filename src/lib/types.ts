@@ -355,6 +355,8 @@ export interface Guest {
   birthday?: string;
   gender?: string;
   venueId?: string;
+  /** Последний визит (для TTL: не показывать «чужих» старше 7 дней) */
+  lastVisitAt?: unknown;
 }
 
 /** Бронь стола (проверка за 30 мин до текущего времени) */

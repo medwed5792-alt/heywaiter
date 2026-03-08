@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, query, where, getDocs, onSnapshot, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, doc, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
 import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/types";
@@ -252,6 +252,7 @@ export default function AdminSchedulePage() {
             venueId={VENUE_ID}
             staffList={staffList}
             onCellClick={(date, hour) => setAddShiftModal({ dates: [date], defaultStartHour: hour })}
+            onEntryClick={setEditShiftEntry}
           />
         )}
       </div>
@@ -267,6 +268,16 @@ export default function AdminSchedulePage() {
         />
       )}
 
+      {editShiftEntry && (
+        <EditShiftModal
+          entry={editShiftEntry}
+          staffList={staffList}
+          managedVenues={managedVenues}
+          onClose={() => setEditShiftEntry(null)}
+          onSaved={() => setEditShiftEntry(null)}
+        />
+      )}
+
       <FOTReport
         entries={entries}
         staffList={staffList}
@@ -274,6 +285,102 @@ export default function AdminSchedulePage() {
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
       />
+    </div>
+  );
+}
+
+function EditShiftModal({
+  entry,
+  staffList,
+  managedVenues,
+  onClose,
+  onSaved,
+}: {
+  entry: ScheduleEntry;
+  staffList: Staff[];
+  managedVenues: Venue[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const slot = entry.slot ?? { date: todayISO(), startTime: "10:00", endTime: "18:00", venueId: entry.venueId };
+  const [staffId, setStaffId] = useState(entry.staffId);
+  const [venueId, setVenueId] = useState(slot.venueId ?? entry.venueId ?? VENUE_ID);
+  const [date, setDate] = useState(slot.date);
+  const [startTime, setStartTime] = useState(slot.startTime);
+  const [endTime, setEndTime] = useState(slot.endTime);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const newSlot = { date, startTime, endTime, venueId };
+      const planH = planHoursFromSlot(newSlot);
+      await updateDoc(doc(db, "scheduleEntries", entry.id), {
+        staffId,
+        venueId: venueId || VENUE_ID,
+        slot: newSlot,
+        planHours: Math.round(planH * 10) / 10,
+        role: staffList.find((s) => s.id === staffId)?.position ?? entry.role ?? "waiter",
+        updatedAt: serverTimestamp(),
+      });
+      onSaved();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm("Удалить эту смену?")) return;
+    setSaving(true);
+    try {
+      await deleteDoc(doc(db, "scheduleEntries", entry.id));
+      onSaved();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
+        <h3 className="font-semibold text-gray-900">Редактировать смену</h3>
+        <form onSubmit={handleSave} className="mt-4 space-y-3">
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Сотрудник</span>
+            <select value={staffId} onChange={(e) => setStaffId(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" required>
+              {staffList.map((s) => (
+                <option key={s.id} value={s.id}>{(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Объект</span>
+            <select value={venueId} onChange={(e) => setVenueId(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm">
+              {managedVenues.map((v) => (
+                <option key={v.id} value={v.id}>{v.name ?? v.id}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Дата</span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" required />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label><span className="block text-xs font-medium text-gray-600">С</span><input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" /></label>
+            <label><span className="block text-xs font-medium text-gray-600">До</span><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" /></label>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button type="button" onClick={handleDelete} disabled={saving} className="rounded-lg border border-red-200 bg-white py-2 px-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Удалить</button>
+            <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Отмена</button>
+            <button type="submit" disabled={saving} className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

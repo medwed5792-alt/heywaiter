@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, updateDoc, setDoc, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { ExitReason, StaffCareerEntry } from "@/lib/types";
 
@@ -70,6 +70,14 @@ export async function POST(request: NextRequest) {
     if (globalScore != null) updatePayload.globalScore = globalScore;
 
     await updateDoc(staffRef, updatePayload);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const futureShiftsSnap = await getDocs(query(collection(db, "scheduleEntries"), where("staffId", "==", staffId)));
+    for (const d of futureShiftsSnap.docs) {
+      const slot = d.data().slot as { date?: string } | undefined;
+      const date = slot?.date ?? (d.data().date as string);
+      if (date && date >= today) await deleteDoc(doc(db, "scheduleEntries", d.id));
+    }
 
     // Синхронизация с глобальной коллекцией global_staff (Биржа труда, видна Супер-Админу в /super)
     const globalRef = doc(db, "global_staff", staffId);
