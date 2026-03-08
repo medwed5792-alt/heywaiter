@@ -78,7 +78,7 @@ export async function closeTableAndNotifyGuest(
   venueId: string,
   tableId: string,
   staffChannel: MessengerChannel = "telegram"
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; sessionId?: string }> {
   try {
     const sessionsRef = collection(db, "activeSessions");
     const q = query(
@@ -162,7 +162,7 @@ export async function closeTableAndNotifyGuest(
       createdAt: serverTimestamp(),
     });
 
-    return { ok: true };
+    return { ok: true, sessionId: sessionDoc.id };
   } catch (e) {
     console.error("[bot-router] closeTableAndNotifyGuest error:", e);
     return {

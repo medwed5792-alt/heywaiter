@@ -4,7 +4,7 @@
  * Сотрудники сети (venueIds): в ответе только [Дата] | [Время смены: От - До] | [Название заведения].
  */
 import { NextRequest } from "next/server";
-import { collection, addDoc, query, where, getDocs, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { closeTableAndNotifyGuest, sosFanOut } from "@/lib/bot-router";
 
@@ -101,7 +101,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Callback: кнопка "🚨 SOS" — включаем ForceReply
+  // Callback: кнопка "🚨 SOS" или "OK" по уведомлению "гость оценен"
   if (update.callback_query) {
     const { id: callbackId, data } = update.callback_query;
     if (data === "sos") {
@@ -111,6 +111,17 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
         text: "Укажите номер стола для вызова охраны.",
         reply_markup: { force_reply: true },
       });
+      return;
+    }
+    if (typeof data === "string" && data.startsWith("gr_")) {
+      const notificationId = data.slice(3);
+      if (notificationId) {
+        try {
+          await deleteDoc(doc(db, "staffNotifications", notificationId));
+        } catch (_) {}
+      }
+      await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "OK" });
+      return;
     }
     return;
   }
@@ -128,6 +139,13 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     }
     const result = await closeTableAndNotifyGuest(venueId, tableNum, "telegram");
     if (result.ok) {
+      const staffData = await getStaffByTgId(String(fromId));
+      if (result.sessionId && staffData?.staffId) {
+        await updateDoc(doc(db, "activeSessions", result.sessionId), {
+          waiterId: staffData.staffId,
+          updatedAt: serverTimestamp(),
+        });
+      }
       await addDoc(collection(db, "staffActions"), {
         type: "close_table",
         tableId: tableNum,

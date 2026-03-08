@@ -11,6 +11,10 @@ import {
   limit,
   orderBy,
   Timestamp,
+  updateDoc,
+  addDoc,
+  setDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
@@ -18,6 +22,14 @@ import type { VenueType } from "@/lib/types";
 const VENUE_ID = "current";
 const EMERGENCY_LIMIT = 10;
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000;
+
+interface ClosedSessionForRating {
+  id: string;
+  guestId?: string;
+  guestName: string;
+  waiterId?: string;
+  closedAt: unknown;
+}
 
 interface EmergencyEvent {
   id: string;
@@ -57,6 +69,8 @@ export default function AdminDashboardPage() {
   const [emergenciesLoading, setEmergenciesLoading] = useState(true);
   const [occupiedTables, setOccupiedTables] = useState<{ tableId: string; tableNumber: number; guestId?: string }[]>([]);
   const [guestNames, setGuestNames] = useState<Record<string, string>>({});
+  const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -143,6 +157,44 @@ export default function AdminDashboardPage() {
     });
     return () => unsub();
   }, [venueType]);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, "activeSessions"),
+      where("venueId", "==", VENUE_ID),
+      where("status", "==", "closed"),
+      orderBy("closedAt", "desc"),
+      limit(30)
+    );
+    const unsubClosed = onSnapshot(q, async (snap) => {
+      const closed = snap.docs
+        .map((d) => {
+          const data = d.data();
+          if (data.ratedAt != null) return null;
+          return { id: d.id, ...data };
+        })
+        .filter(Boolean) as { id: string; guestId?: string; waiterId?: string; closedAt: unknown }[];
+      const guestIds = [...new Set(closed.map((c) => c.guestId).filter(Boolean))] as string[];
+      const names: Record<string, string> = {};
+      for (const gid of guestIds) {
+        const s = await getDoc(doc(db, "guests", gid));
+        if (s.exists()) {
+          const d = s.data();
+          names[gid] = (d.name as string) || (d.nickname as string) || (d.phone as string) || gid.slice(0, 8);
+        }
+      }
+      setUnratedClosedSessions(
+        closed.map((c) => ({
+          id: c.id,
+          guestId: c.guestId,
+          guestName: c.guestId ? (names[c.guestId] ?? "Гость") : "Гость",
+          waiterId: c.waiterId,
+          closedAt: c.closedAt,
+        }))
+      );
+    });
+    return () => unsubClosed();
+  }, []);
 
   useEffect(() => {
     const q = query(
@@ -264,6 +316,117 @@ export default function AdminDashboardPage() {
           </ul>
         )}
       </section>
+
+      {unratedClosedSessions.length > 0 && (
+        <RateGuestVisitModal
+          session={unratedClosedSessions[0]}
+          onRated={() => setUnratedClosedSessions((prev) => prev.slice(1))}
+          onDismiss={() => setUnratedClosedSessions((prev) => prev.slice(1))}
+          submitting={ratingSubmitting}
+          setSubmitting={setRatingSubmitting}
+        />
+      )}
+    </div>
+  );
+}
+
+function RateGuestVisitModal({
+  session,
+  onRated,
+  onDismiss,
+  submitting,
+  setSubmitting,
+}: {
+  session: ClosedSessionForRating;
+  onRated: () => void;
+  onDismiss: () => void;
+  submitting: boolean;
+  setSubmitting: (v: boolean) => void;
+}) {
+  const [stars, setStars] = useState<number | null>(null);
+
+  const handleSubmit = async () => {
+    if (stars == null) return;
+    setSubmitting(true);
+    try {
+      const guestId = session.guestId;
+      if (guestId) {
+        const ref = doc(db, "global_guests", guestId);
+        const snap = await getDoc(ref);
+        const data = snap.exists() ? snap.data() : {};
+        const ratings: number[] = Array.isArray(data?.ratings) ? data.ratings : [];
+        const newRatings = [...ratings, stars];
+        const avg = Math.round((newRatings.reduce((a, b) => a + b, 0) / newRatings.length) * 10) / 10;
+        await setDoc(ref, { ratings: newRatings, globalGuestScore: avg }, { merge: true });
+      }
+      await updateDoc(doc(db, "activeSessions", session.id), {
+        ratedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      const notifRef = await addDoc(collection(db, "staffNotifications"), {
+        venueId: "current",
+        tableId: "",
+        type: "guest_rated",
+        message: `Ваш гость оценён на ${stars} звёзд. Отличная работа!`,
+        read: false,
+        targetUids: session.waiterId ? [session.waiterId] : [],
+        createdAt: serverTimestamp(),
+      });
+      if (session.waiterId) {
+        await fetch("/api/admin/notify-waiter-rated", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notificationId: notifRef.id, waiterId: session.waiterId, stars }),
+        });
+      }
+      onRated();
+    } catch (e) {
+      console.error(e);
+      alert(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+        <h3 className="font-semibold text-gray-900">Оцените визит гостя</h3>
+        <p className="mt-2 text-sm text-gray-600">
+          {session.guestName} (1–5 звёзд)
+        </p>
+        <div className="mt-4 flex gap-2">
+          {([1, 2, 3, 4, 5] as const).map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`rounded border px-3 py-2 text-sm font-medium ${
+                stars === n ? "border-amber-500 bg-amber-50 text-amber-700" : "border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setStars(n)}
+            >
+              {n} ★
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={onDismiss}
+          >
+            Позже
+          </button>
+          <button
+            type="button"
+            disabled={stars == null || submitting}
+            className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            onClick={handleSubmit}
+          >
+            {submitting ? "…" : "Отправить"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

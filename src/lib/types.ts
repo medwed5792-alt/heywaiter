@@ -392,6 +392,8 @@ export interface ActiveSession {
   assignments?: TableAssignments;
   status: "check_in_success" | "table_conflict" | "closed";
   closedAt?: unknown;
+  /** После оценки визита ЛПР в Дашборде — чтобы не показывать повторно */
+  ratedAt?: unknown;
   /** Ghost GPS: если гость запретил геолокацию — логируем, интерфейс не блокируем */
   geoStatus?: "granted" | "denied";
   createdAt: unknown;

@@ -56,17 +56,10 @@ export default function AdminGuestsPage() {
   const [guests, setGuests] = useState<Guest[]>([]);
   const [sessions, setSessions] = useState<{ guestId?: string; tableId: string; tableNumber: number }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<"all" | "new" | "own">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "new" | "own" | "vip" | "blacklisted">("all");
   const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
   const [addingNew, setAddingNew] = useState(false);
-  const [venueIsPro, setVenueIsPro] = useState(false);
   const [globalScores, setGlobalScores] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    getDoc(doc(db, "venues", VENUE_ID)).then((snap) => {
-      if (snap.exists()) setVenueIsPro(snap.data()?.isPro === true);
-    });
-  }, []);
 
   useEffect(() => {
     const unsubG = onSnapshot(
@@ -108,6 +101,8 @@ export default function AdminGuestsPage() {
       if (!own && g.lastVisitAt != null && !recent) return false;
       if (typeFilter === "new") return g.type === "regular";
       if (typeFilter === "own") return own;
+      if (typeFilter === "vip") return g.type === "vip";
+      if (typeFilter === "blacklisted") return g.type === "blacklisted";
       return true;
     });
   }, [guests, inHallGuestIds, typeFilter]);
@@ -156,11 +151,13 @@ export default function AdminGuestsPage() {
           <select
             className="rounded border border-gray-300 px-2 py-1.5 text-sm"
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as "all" | "new" | "own")}
+            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
           >
             <option value="all">Все</option>
             <option value="new">Новый (Чужой)</option>
             <option value="own">Свой (Постоянный, VIP, Любимый, ЧС)</option>
+            <option value="vip">Только VIP</option>
+            <option value="blacklisted">Только ЧС</option>
           </select>
         </label>
         <button
@@ -183,7 +180,7 @@ export default function AdminGuestsPage() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="p-3 text-left text-xs font-medium text-gray-600">ФИО / Контакт</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
-                {venueIsPro && <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>}
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">В зале</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
               </tr>
@@ -195,7 +192,7 @@ export default function AdminGuestsPage() {
                     {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                   </td>
                   <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
-                  {venueIsPro && <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>}
+                  <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
                   <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
                   <td className="p-3">
                     <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => setEditingGuest(g)}>Редактировать</button>
