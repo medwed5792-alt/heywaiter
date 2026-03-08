@@ -105,7 +105,7 @@ export default function AdminGuestsPage() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-gray-900">CRM: Гости</h2>
+      <h2 className="text-lg font-semibold text-gray-900">Гости</h2>
       <p className="mt-2 text-sm text-gray-600">
         Только гости за последние 7 дней + в зале сейчас. Тип «Свой» (Постоянный, VIP, Любимый, ЧС) не скрывается по TTL.
       </p>

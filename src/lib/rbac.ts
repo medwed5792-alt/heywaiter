@@ -23,7 +23,7 @@ export interface AdminTab {
 export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "dashboard", label: "Дашборд", path: "/admin", roles: ["owner", "manager", "waiter", "security", "superadmin"] },
   { id: "settings", label: "Настройки", path: "/admin/settings", roles: ["owner", "manager"] },
-  { id: "crm", label: "CRM: Гости", path: "/admin/guests", roles: ["owner", "manager"] },
+  { id: "crm", label: "Гости", path: "/admin/guests", roles: ["owner", "manager"] },
   { id: "team", label: "Команда", path: "/admin/team", roles: ["owner", "manager"] },
   { id: "staff", label: "Сотрудники (Биржа труда)", path: "/admin/staff", roles: ["owner", "manager"] },
   { id: "reviews", label: "Отзывы", path: "/admin/reviews", roles: ["owner", "manager"] },
