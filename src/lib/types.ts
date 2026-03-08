@@ -159,6 +159,8 @@ export interface Venue {
     menuLink?: string;
     menuPdfUrl?: string;
     menuItems?: string[];
+    /** Рекламный блок для кнопки «Акции» в боте: текст и/или картинка */
+    promos?: { text?: string; imageUrl?: string };
   };
   /** PRO: в CRM показывается рейтинг гостя (globalGuestScore) */
   isPro?: boolean;
@@ -372,6 +374,36 @@ export interface Reservation {
   reservedAt: unknown;
   guestName?: string;
   guestPhone?: string;
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
+/** Бронирование (редактор в /admin/bookings): ФИО, соцсеть, места, время С/ПО. Цифровой замок: при скане гостя — arrived. */
+export interface Booking {
+  id: string;
+  venueId: string;
+  tableId: string;
+  /** ФИО гостя */
+  guestName: string;
+  /** Контакт: соцсеть (tg, wa, …) или телефон */
+  guestContact: string;
+  /** ID гостя в системе (для цифрового замка при check-in) */
+  guestId?: string;
+  /** Внешний ID мессенджера (например tgId) для сопоставления при скане */
+  guestExternalId?: string;
+  /** Количество мест */
+  seats: number;
+  /** Время начала (ISO или HH:mm в день date) */
+  startTime: string;
+  /** Время окончания */
+  endTime: string;
+  /** Дата брони (YYYY-MM-DD) */
+  date: string;
+  status: "pending" | "confirmed" | "arrived" | "cancelled" | "no_show";
+  /** Гость отсканировал QR — сессия активирована */
+  arrived?: boolean;
+  /** Время начала (Timestamp) для запросов check-in ±30 мин */
+  startAt?: unknown;
   createdAt: unknown;
   updatedAt: unknown;
 }

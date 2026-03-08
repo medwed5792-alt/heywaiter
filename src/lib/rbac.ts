@@ -22,6 +22,7 @@ export interface AdminTab {
 /** Вкладки личного кабинета и роли, которым доступны (ReadonlyArray, не кортеж) */
 export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "dashboard", label: "Дашборд", path: "/admin", roles: ["owner", "manager", "waiter", "security", "superadmin"] },
+  { id: "bookings", label: "Брони", path: "/admin/bookings", roles: ["owner", "manager"] },
   { id: "settings", label: "Настройки", path: "/admin/settings", roles: ["owner", "manager"] },
   { id: "crm", label: "Гости", path: "/admin/guests", roles: ["owner", "manager"] },
   { id: "team", label: "Команда", path: "/admin/team", roles: ["owner", "manager"] },

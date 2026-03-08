@@ -17,6 +17,7 @@ import type { AdminRole } from "@/lib/types";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   dashboard: LayoutDashboard,
+  bookings: Calendar,
   settings: Settings,
   crm: Users,
   team: UserCog,
