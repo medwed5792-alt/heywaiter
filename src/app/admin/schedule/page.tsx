@@ -76,7 +76,7 @@ export default function AdminSchedulePage() {
     let cancelled = false;
     (async () => {
       const [staffSnap, venuesSnap] = await Promise.all([
-        getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID), where("active", "!=", false))),
+        getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
         getDocs(collection(db, "venues")),
       ]);
       if (cancelled) return;

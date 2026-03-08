@@ -96,9 +96,21 @@ function StaffRow({
   );
 }
 
+export interface TableItem {
+  id: string;
+  number: number;
+  hallId?: string;
+}
+export interface HallWithTables {
+  hallId: string;
+  hallName: string;
+  tables: TableItem[];
+}
+
 export default function TeamPage() {
   const [staffList, setStaffList] = useState<Staff[]>([]);
-  const [tables, setTables] = useState<{ id: string; number: number }[]>([]);
+  const [tables, setTables] = useState<TableItem[]>([]);
+  const [halls, setHalls] = useState<{ id: string; name: string }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [nameSearch, setNameSearch] = useState("");
   const [positionFilter, setPositionFilter] = useState<string>("");
@@ -112,14 +124,19 @@ export default function TeamPage() {
 
   useEffect(() => {
     (async () => {
-      const [staffSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
+      const [staffSnap, hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
         getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
+        getDocs(collection(db, "venues", VENUE_ID, "halls")),
         getDocs(collection(db, "venues", VENUE_ID, "tables")),
         getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
       ]);
       setStaffList(staffSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
-      const fromSub = tablesFromSub.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 }));
-      const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 }));
+      setHalls(hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "" })));
+      const fromSub = tablesFromSub.docs.map((d) => {
+        const data = d.data();
+        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined };
+      });
+      const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }));
       setTables(fromSub.length ? fromSub : fromRoot);
       setLoaded(true);
     })();
@@ -285,6 +302,7 @@ export default function TeamPage() {
         <StaffFormModal
           staff={editingStaff}
           tables={tables}
+          halls={halls}
           onClose={() => setEditingStaff(null)}
           onSaved={(updated) => {
             if (editingStaff.id) {
@@ -358,14 +376,27 @@ export default function TeamPage() {
 function StaffFormModal({
   staff,
   tables,
+  halls,
   onClose,
   onSaved,
 }: {
   staff: Staff;
-  tables: { id: string; number: number }[];
+  tables: TableItem[];
+  halls: { id: string; name: string }[];
   onClose: () => void;
   onSaved: (data: Partial<Staff> & { id?: string }) => void;
 }) {
+  const tablesByHall: HallWithTables[] = (() => {
+    const withHall = tables.filter((t) => t.hallId);
+    const withoutHall = tables.filter((t) => !t.hallId);
+    const result: HallWithTables[] = [];
+    for (const hall of halls) {
+      const list = withHall.filter((t) => t.hallId === hall.id);
+      if (list.length) result.push({ hallId: hall.id, hallName: hall.name, tables: list });
+    }
+    if (withoutHall.length) result.push({ hallId: "", hallName: "Без зала", tables: withoutHall });
+    return result;
+  })();
   const [firstName, setFirstName] = useState(staff.firstName ?? "");
   const [lastName, setLastName] = useState(staff.lastName ?? "");
   const [gender, setGender] = useState(staff.gender ?? "");
@@ -498,16 +529,30 @@ function StaffFormModal({
               </select>
             </label>
             <label className="mt-2 block">
-              <span className="block text-xs text-gray-600">Закреплённые столы</span>
-              <div className="mt-1 grid grid-cols-4 sm:grid-cols-6 gap-2">
+              <span className="block text-xs text-gray-600">Закреплённые столы (по залам)</span>
+              <div className="mt-1 space-y-2">
                 {tables.length === 0 ? (
-                  <span className="col-span-full text-xs text-gray-500">Нет столов в зале. Добавьте столы в Зал & QR или в подколлекцию venues/{VENUE_ID}/tables.</span>
-                ) : (
+                  <span className="text-xs text-gray-500">Нет столов. Добавьте залы и столы в Зал & QR.</span>
+                ) : tablesByHall.length === 0 ? (
                   tables.map((t) => (
-                    <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
+                    <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50 mr-2 mb-1">
                       <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} className="rounded border-gray-300" />
-                      <span>{t.number}</span>
+                      <span>Стол {t.number}</span>
                     </label>
+                  ))
+                ) : (
+                  tablesByHall.map((group) => (
+                    <div key={group.hallId || "none"}>
+                      <p className="text-xs font-medium text-gray-500 mb-1">{group.hallName}:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {group.tables.map((t) => (
+                          <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
+                            <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} className="rounded border-gray-300" />
+                            <span>{t.number}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   ))
                 )}
               </div>
