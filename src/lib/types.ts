@@ -160,6 +160,8 @@ export interface Venue {
     menuPdfUrl?: string;
     menuItems?: string[];
   };
+  /** PRO: в CRM показывается рейтинг гостя (globalGuestScore) */
+  isPro?: boolean;
   createdAt: unknown;
   updatedAt: unknown;
 }

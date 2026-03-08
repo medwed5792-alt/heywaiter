@@ -28,6 +28,7 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "staff", label: "Сотрудники (Биржа труда)", path: "/admin/staff", roles: ["owner", "manager"] },
   { id: "reviews", label: "Отзывы", path: "/admin/reviews", roles: ["owner", "manager"] },
   { id: "schedule", label: "График", path: "/admin/schedule", roles: ["owner", "manager"] },
+  { id: "analytics", label: "Аналитика", path: "/admin/analytics", roles: ["owner", "manager"] },
   { id: "kitchen", label: "Кухня", path: "/admin/kitchen", roles: ["owner", "manager"] },
   { id: "delivery", label: "Пульт выдачи", path: "/admin/delivery", roles: ["owner", "manager"] },
 ];

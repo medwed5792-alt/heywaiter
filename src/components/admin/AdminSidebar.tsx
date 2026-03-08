@@ -9,6 +9,7 @@ import {
   Settings,
   Star,
   Calendar,
+  BarChart2,
   ChefHat,
 } from "lucide-react";
 import { getTabsForRole } from "@/lib/rbac";
@@ -22,6 +23,7 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   staff: UserCog,
   reviews: Star,
   schedule: Calendar,
+  analytics: BarChart2,
   kitchen: ChefHat,
   delivery: ChefHat,
   "settings-bots": Settings,

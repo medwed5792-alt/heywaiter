@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { collection, doc, addDoc, updateDoc, query, where, onSnapshot, serverTimestamp } from "firebase/firestore";
+import { collection, doc, addDoc, updateDoc, getDoc, query, where, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
 import type { MessengerChannel } from "@/lib/types";
 
 const VENUE_ID = "current";
+const GLOBAL_GUESTS_BATCH = 30;
 const DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const CHANNEL_FIELD: Record<MessengerChannel, keyof Guest> = {
@@ -58,6 +59,14 @@ export default function AdminGuestsPage() {
   const [typeFilter, setTypeFilter] = useState<"all" | "new" | "own">("all");
   const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
   const [addingNew, setAddingNew] = useState(false);
+  const [venueIsPro, setVenueIsPro] = useState(false);
+  const [globalScores, setGlobalScores] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    getDoc(doc(db, "venues", VENUE_ID)).then((snap) => {
+      if (snap.exists()) setVenueIsPro(snap.data()?.isPro === true);
+    });
+  }, []);
 
   useEffect(() => {
     const unsubG = onSnapshot(
@@ -103,6 +112,37 @@ export default function AdminGuestsPage() {
     });
   }, [guests, inHallGuestIds, typeFilter]);
 
+  const visibleGuestIds = useMemo(() => visibleGuests.map((g) => g.id).sort().join(","), [visibleGuests]);
+
+  useEffect(() => {
+    if (visibleGuestIds === "") {
+      setGlobalScores({});
+      return;
+    }
+    const ids = visibleGuests.map((g) => g.id);
+    const batches: string[][] = [];
+    for (let i = 0; i < ids.length; i += GLOBAL_GUESTS_BATCH) {
+      batches.push(ids.slice(i, i + GLOBAL_GUESTS_BATCH));
+    }
+    let cancelled = false;
+    (async () => {
+      const map: Record<string, number> = {};
+      for (const batch of batches) {
+        if (cancelled) return;
+        const snaps = await Promise.all(batch.map((id) => getDoc(doc(db, "global_guests", id))));
+        snaps.forEach((snap, i) => {
+          const id = batch[i];
+          if (!id) return;
+          const data = snap.exists() ? snap.data() : {};
+          const score = data.globalGuestScore;
+          if (typeof score === "number") map[id] = Math.round(score * 10) / 10;
+        });
+      }
+      if (!cancelled) setGlobalScores(map);
+    })();
+    return () => { cancelled = true; };
+  }, [visibleGuestIds, visibleGuests]);
+
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Гости</h2>
@@ -143,6 +183,7 @@ export default function AdminGuestsPage() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="p-3 text-left text-xs font-medium text-gray-600">ФИО / Контакт</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
+                {venueIsPro && <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>}
                 <th className="p-3 text-left text-xs font-medium text-gray-600">В зале</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
               </tr>
@@ -154,6 +195,7 @@ export default function AdminGuestsPage() {
                     {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                   </td>
                   <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
+                  {venueIsPro && <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>}
                   <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
                   <td className="p-3">
                     <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => setEditingGuest(g)}>Редактировать</button>
@@ -171,6 +213,7 @@ export default function AdminGuestsPage() {
           venueId={VENUE_ID}
           onClose={() => { setEditingGuest(null); setAddingNew(false); }}
           onSaved={() => { setEditingGuest(null); setAddingNew(false); }}
+          onRatingSaved={(guestId, newScore) => setGlobalScores((prev) => ({ ...prev, [guestId]: newScore }))}
         />
       )}
     </div>
@@ -182,11 +225,13 @@ function GuestCardModal({
   venueId,
   onClose,
   onSaved,
+  onRatingSaved,
 }: {
   guest?: Guest;
   venueId: string;
   onClose: () => void;
   onSaved: () => void;
+  onRatingSaved?: (guestId: string, newScore: number) => void;
 }) {
   const [name, setName] = useState(guest?.name ?? "");
   const [gender, setGender] = useState(guest?.gender ?? "");
@@ -204,6 +249,21 @@ function GuestCardModal({
     line: guest?.lineId ?? "",
   });
   const [saving, setSaving] = useState(false);
+  const [globalGuestScore, setGlobalGuestScore] = useState<number | null>(null);
+  const [ratingSaving, setRatingSaving] = useState(false);
+  const [newRating, setNewRating] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!guest?.id) {
+      setGlobalGuestScore(null);
+      return;
+    }
+    getDoc(doc(db, "global_guests", guest.id)).then((snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      const score = data.globalGuestScore;
+      setGlobalGuestScore(typeof score === "number" ? Math.round(score * 10) / 10 : null);
+    });
+  }, [guest?.id]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,6 +296,28 @@ function GuestCardModal({
       alert(err instanceof Error ? err.message : "Ошибка сохранения");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveRating = async () => {
+    if (!guest?.id || newRating == null) return;
+    setRatingSaving(true);
+    try {
+      const ref = doc(db, "global_guests", guest.id);
+      const snap = await getDoc(ref);
+      const data = snap.exists() ? snap.data() : {};
+      const ratings: number[] = Array.isArray(data.ratings) ? data.ratings : [];
+      const newRatings = [...ratings, newRating];
+      const sum = newRatings.reduce((a, b) => a + b, 0);
+      const avg = Math.round((sum / newRatings.length) * 10) / 10;
+      await setDoc(ref, { ratings: newRatings, globalGuestScore: avg }, { merge: true });
+      setGlobalGuestScore(avg);
+      setNewRating(null);
+      onRatingSaved?.(guest.id, avg);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Ошибка сохранения оценки");
+    } finally {
+      setRatingSaving(false);
     }
   };
 
@@ -276,6 +358,34 @@ function GuestCardModal({
               ))}
             </select>
           </label>
+          {guest?.id && (
+            <div className="block">
+              <span className="block text-xs font-medium text-gray-600">Рейтинг гостя (ЛПР)</span>
+              {globalGuestScore != null && (
+                <p className="mt-1 text-sm text-gray-700">Средний балл: <strong>{globalGuestScore}</strong></p>
+              )}
+              <div className="mt-2 flex items-center gap-2">
+                {([1, 2, 3, 4, 5] as const).map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    className={`rounded border px-2 py-1 text-sm ${newRating === star ? "border-amber-500 bg-amber-50 text-amber-700" : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"}`}
+                    onClick={() => setNewRating(star)}
+                  >
+                    {star} ★
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={newRating == null || ratingSaving}
+                  className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                  onClick={handleSaveRating}
+                >
+                  {ratingSaving ? "…" : "Поставить оценку"}
+                </button>
+              </div>
+            </div>
+          )}
           <div>
             <span className="block text-xs font-medium text-gray-600 mb-2">ID соцсетей (8 каналов)</span>
             <div className="grid grid-cols-2 gap-2">

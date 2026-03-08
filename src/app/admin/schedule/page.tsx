@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { Trash2 } from "lucide-react";
 import { collection, doc, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
@@ -376,7 +377,10 @@ function EditShiftModal({
             <label><span className="block text-xs font-medium text-gray-600">До</span><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" /></label>
           </div>
           <div className="mt-4 flex gap-2">
-            <button type="button" onClick={handleDelete} disabled={saving} className="rounded-lg border border-red-200 bg-white py-2 px-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Удалить смену</button>
+            <button type="button" onClick={handleDelete} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 py-2 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">
+              <Trash2 className="h-4 w-4" />
+              Удалить смену
+            </button>
             <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Отмена</button>
             <button type="submit" disabled={saving} className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
           </div>
