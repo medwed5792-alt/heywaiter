@@ -24,10 +24,13 @@ function round1(n: number) {
   return Math.round(n * 10) / 10;
 }
 
-/** startTime/endTime (HH:mm) в доли суток 0..1 */
-function timeToFraction(t: string): number {
-  const [h, m] = t.split(":").map(Number);
-  return (h ?? 0) / 24 + (m ?? 0) / (24 * 60);
+/** startTime/endTime (HH:mm) в доли суток 0..1. Защита от отсутствующего или неверного формата. */
+function timeToFraction(t: string | undefined): number {
+  const s = t ?? "10:00";
+  const [h, m] = s.split(":").map(Number);
+  const h0 = Number.isFinite(h) ? h : 10;
+  const m0 = Number.isFinite(m) ? m : 0;
+  return h0 / 24 + m0 / (24 * 60);
 }
 
 export function ScheduleTimeline({
@@ -114,8 +117,10 @@ export function ScheduleTimeline({
               endTime: "18:00",
               venueId: entry.venueId,
             } as ShiftSlot;
-            const planStart = timeToFraction(slot.startTime);
-            const planEnd = timeToFraction(slot.endTime);
+            const startTime = slot?.startTime ?? "10:00";
+            const endTime = slot?.endTime ?? "18:00";
+            const planStart = timeToFraction(startTime);
+            const planEnd = timeToFraction(endTime);
             const planHours = entry.planHours ?? (planEnd - planStart) * 24;
             const factHours = entry.factHours ?? 0;
             const factExceedsPlan = factHours > planHours;
@@ -143,13 +148,13 @@ export function ScheduleTimeline({
                       left: `${planStart * 100}%`,
                       width: `${(planEnd - planStart) * 100}%`,
                     }}
-                    title={`План: ${round1(planHours)} ч | ${slot.startTime}–${slot.endTime}. Клик — редактировать`}
+                    title={`План: ${round1(planHours)} ч | ${startTime}–${endTime}. Клик — редактировать`}
                     onClick={() => onEntryClick?.(entry)}
                     onKeyDown={(e) => e.key === "Enter" && onEntryClick?.(entry)}
                   >
-                    <span>{slot.startTime}</span>
+                    <span>{startTime}</span>
                     <span className="font-medium truncate max-w-[120px]">{name}</span>
-                    <span>{slot.endTime}</span>
+                    <span>{endTime}</span>
                   </div>
                   {factHours > 0 && (
                     <div

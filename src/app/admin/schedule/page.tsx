@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Pencil } from "lucide-react";
 import { collection, doc, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
@@ -13,11 +13,17 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** План часов из startTime/endTime (HH:mm) */
+/** План часов из startTime/endTime (HH:mm). Защита от отсутствующих полей. */
 function planHoursFromSlot(slot: ShiftSlot): number {
-  const [sh, sm] = slot.startTime.split(":").map(Number);
-  const [eh, em] = slot.endTime.split(":").map(Number);
-  return (eh - sh) + (em - sm) / 60;
+  const start = slot?.startTime || "10:00";
+  const end = slot?.endTime || "18:00";
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  const sh0 = Number.isFinite(sh) ? sh : 10;
+  const sm0 = Number.isFinite(sm) ? sm : 0;
+  const eh0 = Number.isFinite(eh) ? eh : 18;
+  const em0 = Number.isFinite(em) ? em : 0;
+  return eh0 - sh0 + (em0 - sm0) / 60;
 }
 
 /** Факт часов из checkIn/checkOut (HH:mm) */
@@ -37,8 +43,14 @@ function normalizeEntry(d: { id: string; data: () => Record<string, unknown> }):
   const staffId = (data?.staffId as string) ?? "";
   const date = (data?.date as string) ?? todayISO();
   const planHours = (data?.planHours as number) ?? 0;
-  const slot: ShiftSlot = data?.slot
-    ? { ...(data.slot as ShiftSlot) }
+  const rawSlot = data?.slot as ShiftSlot | undefined;
+  const slot: ShiftSlot = rawSlot
+    ? {
+        date: rawSlot.date ?? date,
+        startTime: rawSlot.startTime ?? "10:00",
+        endTime: rawSlot.endTime ?? "18:00",
+        venueId: rawSlot.venueId ?? venueId,
+      }
     : {
         date,
         startTime: "10:00",
@@ -286,6 +298,16 @@ export default function AdminSchedulePage() {
         venues={venues}
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
+        onEditEntry={setEditShiftEntry}
+        onDeleteEntry={async (entry) => {
+          if (!window.confirm("Удалить эту смену из графика?")) return;
+          try {
+            await deleteDoc(doc(db, "scheduleEntries", entry.id));
+            setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+          } catch (err) {
+            alert(err instanceof Error ? err.message : "Ошибка удаления");
+          }
+        }}
       />
     </div>
   );
@@ -513,18 +535,23 @@ function FOTReport({
   venues,
   filterMonth,
   onFilterMonthChange,
+  onEditEntry,
+  onDeleteEntry,
 }: {
   entries: ScheduleEntry[];
   staffList: Staff[];
   venues: Venue[];
   filterMonth: string;
   onFilterMonthChange: (v: string) => void;
+  onEditEntry?: (entry: ScheduleEntry) => void;
+  onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
   const rows = useMemo(() => {
     const byEntry = entries.filter((e) => {
       const slot = e.slot;
       if (!slot) return false;
-      return slot.date.startsWith(filterMonth);
+      const date = slot?.date;
+      return date && String(date).startsWith(filterMonth);
     });
     return byEntry.map((e) => {
       const staff = staffList.find((s) => s.id === e.staffId);
@@ -535,12 +562,15 @@ function FOTReport({
       const early = e.earlyLeaveMinutes ?? 0;
       const name = (staff?.firstName ?? staff?.lastName) ? [staff.firstName, staff.lastName].filter(Boolean).join(" ") : (staff?.identity?.displayName ?? e.staffId);
       return {
+        entry: e,
         name,
         venueName: venue?.name ?? (e.slot?.venueId ?? e.venueId),
         plan: Math.round(plan * 10) / 10,
         fact: Math.round(fact * 10) / 10,
         late,
         early,
+        startTime: e.slot?.startTime ?? "--:--",
+        endTime: e.slot?.endTime ?? "--:--",
       };
     });
   }, [entries, staffList, venues, filterMonth]);
@@ -589,22 +619,47 @@ function FOTReport({
               <th className="p-3 text-right font-medium text-gray-600">Факт (ч)</th>
               <th className="p-3 text-right font-medium text-gray-600">Опоздание (мин)</th>
               <th className="p-3 text-right font-medium text-gray-600">Ранний уход (мин)</th>
+              <th className="p-3 text-right font-medium text-gray-600 w-24">Действия</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-4 text-center text-gray-500">Нет данных за выбранный период</td>
+                <td colSpan={7} className="p-4 text-center text-gray-500">Нет данных за выбранный период</td>
               </tr>
             ) : (
-              rows.map((r, i) => (
-                <tr key={i} className="border-b border-gray-100">
+              rows.map((r) => (
+                <tr
+                  key={r.entry.id}
+                  className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
+                  onClick={() => onEditEntry?.(r.entry)}
+                >
                   <td className="p-3">{r.name}</td>
                   <td className="p-3">{r.venueName}</td>
                   <td className="p-3 text-right">{r.plan}</td>
                   <td className="p-3 text-right">{r.fact}</td>
                   <td className="p-3 text-right">{r.late}</td>
                   <td className="p-3 text-right">{r.early}</td>
+                  <td className="p-3 text-right" onClick={(ev) => ev.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
+                        title="Редактировать"
+                        onClick={() => onEditEntry?.(r.entry)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1.5 text-red-600 hover:bg-red-100"
+                        title="Удалить"
+                        onClick={() => onDeleteEntry?.(r.entry)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
