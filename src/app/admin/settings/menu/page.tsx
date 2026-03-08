@@ -40,10 +40,12 @@ export default function AdminSettingsMenuPage() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      const url = menuUrl.trim() || undefined;
+      // Сохраняем текст ссылки как есть; пустое/undefined → ""
+      const menuLink = String(menuUrl ?? "").trim();
+      const menuPdfUrl = String(menuUrl ?? "").trim();
       const config: VenueMenuConfig = {
-        menuLink: url,
-        menuPdfUrl: url,
+        menuLink: String(menuLink || ""),
+        menuPdfUrl: String(menuPdfUrl || ""),
         menuItems: menuItems.length > 0 ? menuItems : undefined,
       };
       await updateDoc(doc(db, "venues", VENUE_ID), {

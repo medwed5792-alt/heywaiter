@@ -41,13 +41,13 @@ export function SettingsMenuSection() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
-      const url = typeof menuUrl === "string" ? menuUrl.trim() : "";
-      const menuLinkStr = url || "";
-      const menuPdfUrlStr = url || "";
+      // Сохраняем ссылку как есть; пустое/undefined → ""
+      const menuLinkStr = String(menuUrl ?? "").trim();
+      const menuPdfUrlStr = String(menuUrl ?? "").trim();
       const payload: Record<string, unknown> = {
         config: {
-          menuLink: menuLinkStr,
-          menuPdfUrl: menuPdfUrlStr,
+          menuLink: String(menuLinkStr || ""),
+          menuPdfUrl: String(menuPdfUrlStr || ""),
           ...(menuItems.length > 0 ? { menuItems } : {}),
         },
         updatedAt: serverTimestamp(),
