@@ -15,6 +15,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const staffId = body.staffId as string | undefined;
 
+    const assignedTableIds = Array.isArray(body.assignedTableIds) ? body.assignedTableIds : [];
     const payload: Record<string, unknown> = {
       venueId: VENUE_ID,
       firstName: body.firstName ?? null,
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
       photoUrl: body.photoUrl ?? null,
       phone: body.phone ?? null,
       position: body.position ?? null,
-      assignedTableIds: body.assignedTableIds ?? null,
+      assignedTableIds,
       guestRating: body.guestRating ?? null,
       venueRating: body.venueRating ?? null,
       updatedAt: serverTimestamp(),
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
         photoUrl: payload.photoUrl,
         phone: payload.phone,
         position: payload.position,
-        assignedTableIds: payload.assignedTableIds,
+        assignedTableIds,
         guestRating: payload.guestRating,
         venueRating: payload.venueRating,
         tgId: body.tgId ?? null,

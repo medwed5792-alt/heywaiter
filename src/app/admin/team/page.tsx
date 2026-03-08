@@ -100,7 +100,10 @@ export default function TeamPage() {
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [tables, setTables] = useState<{ id: string; number: number }[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [nameSearch, setNameSearch] = useState("");
   const [positionFilter, setPositionFilter] = useState<string>("");
+  const [tableFilterId, setTableFilterId] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "on_shift">("all");
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [dismissModal, setDismissModal] = useState<Staff | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason>("own_wish");
@@ -109,19 +112,27 @@ export default function TeamPage() {
 
   useEffect(() => {
     (async () => {
-      const [staffSnap, tablesSnap] = await Promise.all([
+      const [staffSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
         getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
+        getDocs(collection(db, "venues", VENUE_ID, "tables")),
         getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
       ]);
       setStaffList(staffSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
-      setTables(tablesSnap.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 })));
+      const fromSub = tablesFromSub.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 }));
+      const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0 }));
+      setTables(fromSub.length ? fromSub : fromRoot);
       setLoaded(true);
     })();
   }, []);
 
-  const filteredStaff = positionFilter
-    ? staffList.filter((s) => (s.position ?? "") === positionFilter)
-    : staffList;
+  const filteredStaff = staffList.filter((s) => {
+    const name = (s.firstName ?? "") + " " + (s.lastName ?? "") + " " + (s.identity?.displayName ?? "") + " " + (s.identity?.name ?? "");
+    if (nameSearch.trim() && !name.toLowerCase().includes(nameSearch.trim().toLowerCase())) return false;
+    if (positionFilter && (s.position ?? "") !== positionFilter) return false;
+    if (tableFilterId && !(s.assignedTableIds ?? []).includes(tableFilterId)) return false;
+    if (statusFilter === "on_shift" && s.onShift !== true) return false;
+    return true;
+  });
 
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
@@ -167,6 +178,13 @@ export default function TeamPage() {
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Поиск по имени"
+          value={nameSearch}
+          onChange={(e) => setNameSearch(e.target.value)}
+          className="rounded border border-gray-300 px-3 py-1.5 text-sm w-44"
+        />
         <label className="flex items-center gap-2 text-sm">
           <Briefcase className="h-4 w-4 text-gray-500" />
           <span className="text-gray-600">Должность:</span>
@@ -183,6 +201,38 @@ export default function TeamPage() {
             ))}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Зона (стол):</span>
+          <select
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            value={tableFilterId}
+            onChange={(e) => setTableFilterId(e.target.value)}
+          >
+            <option value="">Все столы</option>
+            {tables.map((t) => (
+              <option key={t.id} value={t.id}>Стол {t.number}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Статус:</span>
+          <div className="flex rounded-lg border border-gray-300 p-0.5">
+            <button
+              type="button"
+              onClick={() => setStatusFilter("all")}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium ${statusFilter === "all" ? "bg-gray-200 text-gray-900" : "text-gray-600 hover:bg-gray-100"}`}
+            >
+              Все
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("on_shift")}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium ${statusFilter === "on_shift" ? "bg-gray-200 text-gray-900" : "text-gray-600 hover:bg-gray-100"}`}
+            >
+              На смене
+            </button>
+          </div>
+        </div>
         <button
           type="button"
           className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
@@ -345,7 +395,7 @@ function StaffFormModal({
           phone: phone.trim() || undefined,
           tgId: tgId.trim() || undefined,
           position: position || undefined,
-          assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+          assignedTableIds: assignedTableIds,
           identity: staff.identity ? { ...staff.identity, externalId: tgId.trim() || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: tgId.trim(), locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
           primaryChannel: staff.primaryChannel ?? "telegram",
           role: staff.role ?? "waiter",
@@ -448,15 +498,15 @@ function StaffFormModal({
               </select>
             </label>
             <label className="mt-2 block">
-              <span className="block text-xs text-gray-600">Закреплённые столы (multi-select)</span>
-              <div className="mt-1 flex flex-wrap gap-2">
+              <span className="block text-xs text-gray-600">Закреплённые столы</span>
+              <div className="mt-1 grid grid-cols-4 sm:grid-cols-6 gap-2">
                 {tables.length === 0 ? (
-                  <span className="text-xs text-gray-500">Нет столов в зале</span>
+                  <span className="col-span-full text-xs text-gray-500">Нет столов в зале. Добавьте столы в Зал & QR или в подколлекцию venues/{VENUE_ID}/tables.</span>
                 ) : (
                   tables.map((t) => (
-                    <label key={t.id} className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-sm">
-                      <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} />
-                      Стол {t.number}
+                    <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
+                      <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} className="rounded border-gray-300" />
+                      <span>{t.number}</span>
                     </label>
                   ))
                 )}

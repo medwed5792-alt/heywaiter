@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { collection, getDocs, query, limit, onSnapshot } from "firebase/firestore";
+import { collection, query, where, limit, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
 import type { MessengerChannel } from "@/lib/types";
@@ -25,6 +25,16 @@ const CHANNEL_LABEL: Record<MessengerChannel, string> = {
   wechat: "WeChat",
   instagram: "Instagram",
   facebook: "Facebook",
+  line: "Line",
+};
+const CHANNEL_SHORT: Record<MessengerChannel, string> = {
+  telegram: "TG",
+  whatsapp: "WA",
+  vk: "VK",
+  viber: "VB",
+  wechat: "WC",
+  instagram: "IG",
+  facebook: "FB",
   line: "Line",
 };
 
@@ -57,7 +67,11 @@ export default function CRMGuestsPage() {
   const [channelFilter, setChannelFilter] = useState<MessengerChannel | "">("");
 
   useEffect(() => {
-    const q = query(collection(db, "guests"), limit(200));
+    const q = query(
+      collection(db, "guests"),
+      where("venueId", "==", VENUE_ID),
+      limit(200)
+    );
     const unsub = onSnapshot(q, (snap) => {
       const list: Guest[] = snap.docs.map((d) => {
         const data = d.data();
@@ -82,7 +96,7 @@ export default function CRMGuestsPage() {
     <div>
       <h2 className="text-lg font-semibold text-gray-900">CRM: Гости</h2>
       <p className="mt-2 text-sm text-gray-600">
-        Управление профилями гостей и заметками ЛПР. Фильтр по каналу входа (откуда пришёл гость). Склейка: если гость в VK ввёл телефон, совпадающий с гостем в TG, используйте «Склеить» в карточке гостя или API merge.
+        Управление профилями гостей по заведению (venueId). Фильтр по каналу входа. Склейка: если гость в VK ввёл телефон, совпадающий с гостем в TG, используйте «Склеить» в карточке гостя или API merge.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -110,6 +124,7 @@ export default function CRMGuestsPage() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Имя / ID</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Телефон</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Мессенджер</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Каналы</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
               </tr>
@@ -121,13 +136,14 @@ export default function CRMGuestsPage() {
             </tbody>
           </table>
         ) : filtered.length === 0 ? (
-          <p className="p-6 text-center text-sm text-gray-500">Нет гостей</p>
+          <p className="p-6 text-center text-sm text-gray-500">Нет гостей (фильтр: venueId={VENUE_ID})</p>
         ) : (
           <table className="w-full min-w-[400px]">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Имя / ID</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Телефон</th>
+                <th className="p-3 text-left text-xs font-medium text-gray-600">Мессенджер</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Каналы</th>
                 <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
               </tr>
@@ -139,6 +155,15 @@ export default function CRMGuestsPage() {
                     {g.name || g.nickname || g.id.slice(0, 8)}
                   </td>
                   <td className="p-3 text-sm text-gray-600">{g.phone ?? "—"}</td>
+                  <td className="p-3">
+                    <span className="inline-flex flex-wrap gap-1">
+                      {guestChannels(g).length ? guestChannels(g).map((ch) => (
+                        <span key={ch} className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700" title={CHANNEL_LABEL[ch]}>
+                          {CHANNEL_SHORT[ch]}
+                        </span>
+                      )) : "—"}
+                    </span>
+                  </td>
                   <td className="p-3 text-xs text-gray-500">
                     {guestChannels(g).map((ch) => CHANNEL_LABEL[ch]).join(", ") || "—"}
                   </td>
