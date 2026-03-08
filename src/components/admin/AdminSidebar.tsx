@@ -4,22 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  QrCode,
   Users,
   UserCog,
   Settings,
   Star,
   Calendar,
-  MapPin,
   ChefHat,
-  FileText,
 } from "lucide-react";
 import { getTabsForRole } from "@/lib/rbac";
 import type { AdminRole } from "@/lib/types";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   dashboard: LayoutDashboard,
-  "hall-qr": QrCode,
+  settings: Settings,
   crm: Users,
   team: UserCog,
   staff: UserCog,
@@ -27,8 +24,6 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   schedule: Calendar,
   kitchen: ChefHat,
   delivery: ChefHat,
-  "settings-geo": MapPin,
-  "settings-menu": FileText,
   "settings-bots": Settings,
   system: Settings,
 };

@@ -22,7 +22,7 @@ export interface AdminTab {
 /** Вкладки личного кабинета и роли, которым доступны (ReadonlyArray, не кортеж) */
 export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "dashboard", label: "Дашборд", path: "/admin", roles: ["owner", "manager", "waiter", "security", "superadmin"] },
-  { id: "hall-qr", label: "Зал & QR", path: "/admin/hall-qr", roles: ["owner", "manager"] },
+  { id: "settings", label: "Настройки", path: "/admin/settings", roles: ["owner", "manager"] },
   { id: "crm", label: "CRM: Гости", path: "/admin/crm/guests", roles: ["owner", "manager"] },
   { id: "team", label: "Команда", path: "/admin/team", roles: ["owner", "manager"] },
   { id: "staff", label: "Сотрудники (Биржа труда)", path: "/admin/staff", roles: ["owner", "manager"] },
@@ -30,8 +30,6 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   { id: "schedule", label: "График", path: "/admin/schedule", roles: ["owner", "manager"] },
   { id: "kitchen", label: "Кухня", path: "/admin/kitchen", roles: ["owner", "manager"] },
   { id: "delivery", label: "Пульт выдачи", path: "/admin/delivery", roles: ["owner", "manager"] },
-  { id: "settings-geo", label: "Настройки GPS", path: "/admin/settings/geo", roles: ["owner", "manager"] },
-  { id: "settings-menu", label: "Меню", path: "/admin/settings/menu", roles: ["owner", "manager"] },
 ];
 
 /** Вкладки Кабинета Супер-Админа (/super). Только роль superadmin. */
