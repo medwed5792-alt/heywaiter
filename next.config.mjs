@@ -6,3 +6,4 @@ const nextConfig = {
   output: "standalone",
 };
 export default nextConfig;
+// vercel fix 2026
