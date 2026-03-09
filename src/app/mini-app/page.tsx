@@ -108,8 +108,8 @@ function MiniAppContent() {
 
   useEffect(() => {
     if (!loaded || !firestoreDone) return;
-    const v = venueId || searchParams.get("v") ?? "";
-    const t = tableId || searchParams.get("t") ?? "";
+    const v = (venueId || searchParams.get("v")) ?? "";
+    const t = (tableId || searchParams.get("t")) ?? "";
     const chatId = typeof window !== "undefined" ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : undefined;
     const params = new URLSearchParams(searchParams.toString());
     if (v) params.set("v", v);
