@@ -1,6 +1,4 @@
 import { NextRequest } from "next/server";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 const VENUE_ID = "current";
 
@@ -22,6 +20,8 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
     const orderId = `${venueId}_${orderNumber}`;
     await setDoc(doc(db, "orders", orderId), {
       orderNumber,

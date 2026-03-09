@@ -4,8 +4,6 @@ import {
   isKnownChannel,
   isKnownBotType,
 } from "@/lib/webhook/channels";
-import { handleTelegramClient } from "@/lib/webhook/handlers/telegramClient";
-import { handleTelegramStaff } from "@/lib/webhook/handlers/telegramStaff";
 
 /**
  * Универсальный роутер для 14 ботов: 7 каналов × 2 типа (Client + Staff).
@@ -43,10 +41,12 @@ export async function POST(
 
   try {
     if (channel === "telegram" && botType === "client") {
+      const { handleTelegramClient } = await import("@/lib/webhook/handlers/telegramClient");
       await handleTelegramClient(request, token);
       return NextResponse.json({ ok: true });
     }
     if (channel === "telegram" && botType === "staff") {
+      const { handleTelegramStaff } = await import("@/lib/webhook/handlers/telegramStaff");
       await handleTelegramStaff(request, token);
       return NextResponse.json({ ok: true });
     }

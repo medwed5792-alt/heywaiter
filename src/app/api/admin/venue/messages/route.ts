@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 /**
  * POST /api/admin/venue/messages
@@ -22,6 +20,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { doc, updateDoc, serverTimestamp } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
     const venueRef = doc(db, "venues", venueId);
     await updateDoc(venueRef, {
       messages: {

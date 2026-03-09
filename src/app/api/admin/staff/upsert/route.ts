@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, addDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 const VENUE_ID = "current";
 
@@ -39,6 +37,9 @@ export async function POST(request: NextRequest) {
     if (body.onShift != null) payload.onShift = body.onShift;
     if (body.active != null) payload.active = body.active;
     if (body.globalScore != null) payload.globalScore = body.globalScore;
+
+    const { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, addDoc } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
 
     let resolvedId: string;
 

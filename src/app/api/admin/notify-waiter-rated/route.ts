@@ -1,6 +1,4 @@
 import { NextRequest } from "next/server";
-import { doc, getDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { getBotToken } from "@/lib/webhook/channels";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
@@ -32,6 +30,8 @@ export async function POST(request: NextRequest) {
     if (!notificationId || !waiterId || typeof stars !== "number") {
       return Response.json({ ok: false, error: "notificationId, waiterId, stars required" }, { status: 400 });
     }
+    const { doc, getDoc } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
     const staffSnap = await getDoc(doc(db, "staff", waiterId));
     if (!staffSnap.exists()) {
       return Response.json({ ok: false, error: "Staff not found" }, { status: 404 });

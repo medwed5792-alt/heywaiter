@@ -1,5 +1,4 @@
 import { NextRequest } from "next/server";
-import { mergeGuestProfiles } from "@/lib/guest-recognition";
 import type { RecognitionPlatform } from "@/lib/guest-recognition";
 
 const PLATFORMS: RecognitionPlatform[] = [
@@ -29,6 +28,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    const { mergeGuestProfiles } = await import("@/lib/guest-recognition");
     const result = await mergeGuestProfiles(
       primaryGuestId,
       platformId,

@@ -3,7 +3,6 @@
  * GET /api/venues/search?q=... — возвращает список venues с контактами.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminFirestore } from "@/lib/firebase-admin";
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +13,7 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+    const { getAdminFirestore } = await import("@/lib/firebase-admin");
     const firestore = getAdminFirestore();
     const snapshot = await firestore.collection("venues").get();
     const lower = q.toLowerCase();

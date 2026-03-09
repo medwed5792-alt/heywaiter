@@ -5,20 +5,10 @@ import { useEffect, useState, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
-declare global {
-  interface Window {
-    Telegram?: {
-      WebApp?: {
-        initDataUnsafe?: {
-          start_param?: string;
-          user?: { id?: number; first_name?: string; last_name?: string; username?: string };
-        };
-        ready?: () => void;
-        expand?: () => void;
-      };
-    };
-  }
-}
+/** Тип для Telegram WebApp в мини-приложении (start_param, user.id есть только здесь). */
+type TelegramWebAppInit = {
+  initDataUnsafe?: { start_param?: string; user?: { id?: number } };
+};
 
 /** Парсинг start_param: "test_1" → { venueId: "test", tableId: "1" }; также "v_venueId_t_tableId" */
 function parseStartParam(startParam: string): { venueId: string; tableId: string } | null {
@@ -43,7 +33,7 @@ function MiniAppContent() {
   const [fromTelegram, setFromTelegram] = useState(false);
 
   useEffect(() => {
-    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
+    const tg = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined) : undefined;
     const startParam = tg?.initDataUnsafe?.start_param;
     const fromQueryV = searchParams.get("v") ?? "";
     const fromQueryT = searchParams.get("t") ?? "";
@@ -110,7 +100,7 @@ function MiniAppContent() {
     if (!loaded || !firestoreDone) return;
     const v = (venueId || searchParams.get("v")) ?? "";
     const t = (tableId || searchParams.get("t")) ?? "";
-    const chatId = typeof window !== "undefined" ? window.Telegram?.WebApp?.initDataUnsafe?.user?.id : undefined;
+    const chatId = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined)?.initDataUnsafe?.user?.id : undefined;
     const params = new URLSearchParams(searchParams.toString());
     if (v) params.set("v", v);
     if (t) params.set("t", t);

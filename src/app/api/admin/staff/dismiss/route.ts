@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { collection, doc, getDoc, getDocs, updateDoc, setDoc, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import type { ExitReason, StaffCareerEntry } from "@/lib/types";
 
 /**
@@ -34,6 +32,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { collection, doc, getDoc, getDocs, updateDoc, setDoc, deleteDoc, query, where, serverTimestamp } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
     const staffRef = doc(db, "staff", staffId);
     const snap = await getDoc(staffRef);
     if (!snap.exists()) {

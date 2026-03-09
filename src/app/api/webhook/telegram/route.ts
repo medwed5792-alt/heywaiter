@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBotToken } from "@/lib/webhook/channels";
-import { handleTelegramClient } from "@/lib/webhook/handlers/telegramClient";
 
 /**
  * Обратная совместимость: POST /api/webhook/telegram → обрабатывается как Telegram Client Bot.
@@ -17,6 +16,7 @@ export async function POST(request: NextRequest) {
     );
   }
   try {
+    const { handleTelegramClient } = await import("@/lib/webhook/handlers/telegramClient");
     await handleTelegramClient(request, token);
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -3,7 +3,6 @@
  * Если >24ч и есть свободный стол — автоподтверждение. Если <24ч или нет стола — запрос ЛПР с контактом гостя.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminFirestore } from "@/lib/firebase-admin";
 
 const HOURS_AUTO_CONFIRM = 24;
 
@@ -22,6 +21,7 @@ export async function POST(request: NextRequest) {
     if (!venueId || !date) {
       return NextResponse.json({ error: "venueId and date required" }, { status: 400 });
     }
+    const { getAdminFirestore } = await import("@/lib/firebase-admin");
     const firestore = getAdminFirestore();
     const startAt = new Date(`${date}T${startTime ?? "12:00"}:00`);
     const now = new Date();

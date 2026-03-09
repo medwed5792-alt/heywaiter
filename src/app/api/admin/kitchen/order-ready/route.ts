@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
-import { notifyOrderReady } from "@/lib/bot-router";
+import { notifyOrderReadyEdge } from "@/lib/notify-order-ready-edge";
+
+export const runtime = "edge";
 
 /**
  * POST /api/admin/kitchen/order-ready
  * Тело: { orderId: string }
- * Обновляет заказ на status: 'ready' и отправляет гостю зеркальное уведомление в его канал (TG/VK/WA).
+ * Обновляет заказ на status: 'ready' и отправляет гостю уведомление (Edge, только fetch).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +15,7 @@ export async function POST(request: NextRequest) {
     if (!orderId) {
       return Response.json({ ok: false, error: "orderId required" }, { status: 400 });
     }
-    const result = await notifyOrderReady(orderId);
+    const result = await notifyOrderReadyEdge(orderId);
     if (!result.ok) {
       return Response.json({ ok: false, error: result.error }, { status: 400 });
     }

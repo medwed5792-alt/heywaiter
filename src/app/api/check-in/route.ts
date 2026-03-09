@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { ActiveSession, MessengerIdentity } from "@/lib/types";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // 30 мин
@@ -27,6 +26,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const { getAdminFirestore } = await import("@/lib/firebase-admin");
     const firestore = getAdminFirestore();
     const now = new Date();
     const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);

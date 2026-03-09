@@ -1,12 +1,14 @@
 import { NextRequest } from "next/server";
-import { notifyOrderReady } from "@/lib/bot-router";
+import { notifyOrderReadyEdge } from "@/lib/notify-order-ready-edge";
+
+export const runtime = "edge";
 
 const VENUE_ID = "current";
 
 /**
  * POST /api/admin/delivery/notify
  * Тело: { orderNumber: number }
- * Пульт выдачи: ввели номер → гостю уходит пуш в его соцсеть (зеркало канала).
+ * Пульт выдачи: ввели номер → гостю уходит пуш (Edge, только fetch).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -16,7 +18,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ ok: false, error: "Введите номер заказа" }, { status: 400 });
     }
     const orderId = `${VENUE_ID}_${orderNumber}`;
-    const result = await notifyOrderReady(orderId);
+    const result = await notifyOrderReadyEdge(orderId);
     if (!result.ok) {
       return Response.json({ ok: false, error: result.error }, { status: 400 });
     }
