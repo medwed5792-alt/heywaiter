@@ -47,11 +47,13 @@ function getOrCreateVisitorId(): string {
 
 export interface VisitorContextValue {
   visitorId: string | null;
+  setVisitorId: (id: string) => void;
   recordVisitorSession: (venueId: string, tableId: string) => Promise<void>;
 }
 
 const VisitorContext = createContext<VisitorContextValue>({
   visitorId: null,
+  setVisitorId: () => {},
   recordVisitorSession: async () => {},
 });
 
@@ -72,7 +74,22 @@ export function VisitorProvider({ children }: VisitorProviderProps) {
   const recordedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    setVisitorId(getOrCreateVisitorId());
+    const id = getOrCreateVisitorId();
+    setVisitorId(id);
+    if (id && process.env.NODE_ENV === "development") {
+      console.log("Visitor ID detected:", id);
+    }
+  }, []);
+
+  const setVisitorIdFromExternal = useCallback((id: string) => {
+    if (typeof window === "undefined" || !id) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, id);
+      setVisitorId(id);
+      if (process.env.NODE_ENV === "development") {
+        console.log("Visitor ID detected:", id);
+      }
+    } catch (_) {}
   }, []);
 
   // Анонимный вход для гостей (безопасность правил Firestore)
@@ -107,6 +124,7 @@ export function VisitorProvider({ children }: VisitorProviderProps) {
 
   const value: VisitorContextValue = {
     visitorId,
+    setVisitorId: setVisitorIdFromExternal,
     recordVisitorSession,
   };
 

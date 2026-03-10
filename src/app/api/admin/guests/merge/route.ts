@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest } from "next/server";
 import type { RecognitionPlatform } from "@/lib/guest-recognition";
 

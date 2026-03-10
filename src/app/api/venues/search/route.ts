@@ -2,6 +2,8 @@
  * Глобальный поиск заведений по названию и адресу (для кнопки «Поиск» в боте гостя).
  * GET /api/venues/search?q=... — возвращает список venues с контактами.
  */
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 
 const VENUE_ID = "current";
@@ -10,6 +12,9 @@ const VENUE_ID = "current";
  */
 export async function POST(request: NextRequest) {
   try {
+    const { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, addDoc } = await import("firebase/firestore");
+    const { db } = await import("@/lib/firebase");
+
     const body = await request.json();
     const staffId = body.staffId as string | undefined;
 
@@ -37,9 +42,6 @@ export async function POST(request: NextRequest) {
     if (body.onShift != null) payload.onShift = body.onShift;
     if (body.active != null) payload.active = body.active;
     if (body.globalScore != null) payload.globalScore = body.globalScore;
-
-    const { collection, doc, getDoc, setDoc, updateDoc, serverTimestamp, addDoc } = await import("firebase/firestore");
-    const { db } = await import("@/lib/firebase");
 
     let resolvedId: string;
 

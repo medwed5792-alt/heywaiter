@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest, NextResponse } from "next/server";
 import type { ExitReason, StaffCareerEntry } from "@/lib/types";
 

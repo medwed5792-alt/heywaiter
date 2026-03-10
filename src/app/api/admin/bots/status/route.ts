@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextResponse } from "next/server";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 import type { BotType } from "@/lib/webhook/channels";

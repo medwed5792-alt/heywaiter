@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { NextRequest } from "next/server";
 import { notifyOrderReadyEdge } from "@/lib/notify-order-ready-edge";
 

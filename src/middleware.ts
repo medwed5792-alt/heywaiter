@@ -35,7 +35,8 @@ export function middleware(request: NextRequest) {
   const role = request.cookies.get(ROLE_COOKIE)?.value as RouteRole | undefined;
   if (role !== requiredRole) {
     const url = request.nextUrl.clone();
-    url.pathname = "/check-in";
+    // Пользователь залогинен (Firebase), но роли в куках ещё нет — ведём на /profile или /auth, чтобы роль подтянулась из Firestore
+    url.pathname = "/profile";
     url.search = "";
     return NextResponse.redirect(url);
   }

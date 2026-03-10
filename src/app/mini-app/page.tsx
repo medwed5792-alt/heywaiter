@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useVisitor } from "@/components/providers/VisitorProvider";
 
 const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
 
@@ -28,6 +29,7 @@ function parseStartParam(startParam: string): { venueId: string; tableId: string
 function MiniAppContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { setVisitorId } = useVisitor();
   const [venueId, setVenueId] = useState<string>("");
   const [tableId, setTableId] = useState<string>("");
   const [venueSettings, setVenueSettings] = useState<Record<string, unknown> | null>(null);
@@ -47,9 +49,12 @@ function MiniAppContent() {
       if (parsed) {
         setVenueId(parsed.venueId);
         setTableId(parsed.tableId);
-        if (parsed.visitorId && typeof localStorage !== "undefined") {
+        if (parsed.visitorId) {
           try {
-            localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
+            }
+            setVisitorId(parsed.visitorId);
           } catch (_) {}
         }
         setFromTelegram(true);
