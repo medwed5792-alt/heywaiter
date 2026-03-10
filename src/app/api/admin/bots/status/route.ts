@@ -34,8 +34,8 @@ export async function GET() {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Firebase or config not ready";
     return NextResponse.json(
-      { error: message },
-      { status: 503 }
+      { status: "not_configured", error: message, bots: [] },
+      { status: 200 }
     );
   }
 }

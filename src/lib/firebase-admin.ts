@@ -15,7 +15,7 @@ function isEdgeRuntime(): boolean {
 
 function buildCredentialFromEnv(): { projectId: string; clientEmail: string; privateKey: string } | null {
   const projectId =
-    process.env.FIREBASE_PROJECT_ID ?? process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const rawKey = process.env.FIREBASE_PRIVATE_KEY;
   if (!projectId || !clientEmail || !rawKey) return null;
@@ -28,10 +28,14 @@ function getFirebaseAdmin(): { firestore: Firestore } {
     throw new Error("firebase-admin must not be used in the browser");
   }
   const admin = require("firebase-admin");
+  console.log(
+    "Available Env Keys:",
+    Object.keys(process.env).filter((key) => key.includes("FIREBASE"))
+  );
   const existingApps = admin.apps?.length ?? 0;
   if (existingApps === 0) {
     const projectId =
-      process.env.FIREBASE_PROJECT_ID ?? process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID;
     const opts: { projectId?: string; credential?: unknown } = {};
     if (projectId) opts.projectId = projectId;
 
@@ -46,7 +50,7 @@ function getFirebaseAdmin(): { firestore: Firestore } {
       // ADC: не передаём credential, используется путь из env
     }
     // Иначе инициализация с projectId или по умолчанию (ADC)
-    console.log("Firebase ID check:", process.env.FIREBASE_PROJECT_ID);
+    console.log("Firebase ID check:", projectId);
     if (Object.keys(opts).length > 0) {
       admin.initializeApp(opts);
     } else {
