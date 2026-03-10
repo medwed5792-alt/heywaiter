@@ -61,12 +61,8 @@ export async function POST(request: NextRequest) {
     const webhookUrl = `${baseUrl.replace(/\/$/, "")}${webhookPath}`;
 
     const setWebhookResult = await setTelegramWebhook(token, webhookUrl);
-    if (!setWebhookResult.ok) {
-      return NextResponse.json(
-        { ok: false, error: setWebhookResult.error || "Ошибка setWebhook" },
-        { status: 400 }
-      );
-    }
+    const webhookSet = setWebhookResult.ok;
+    // при ошибке (например "HTTPS URL must be provided" на localhost) всё равно сохраняем токен и username
 
     const updates: Record<string, string> = {};
     if (botType === "client") {
@@ -79,10 +75,21 @@ export async function POST(request: NextRequest) {
 
     await updateBotsConfig(updates);
 
+    if (!webhookSet) {
+      return NextResponse.json({
+        ok: true,
+        message:
+          "Настройки сохранены локально. Для активации Webhook нажмите «Тест связи» на Vercel (HTTPS).",
+        username: usernameWithAt,
+        webhookSet: false,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       message: "Бот инициализирован. Связь установлена успешно.",
       username: usernameWithAt,
+      webhookSet: true,
     });
   } catch (err) {
     console.error("[super/bots/setup]", err);

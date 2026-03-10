@@ -24,7 +24,12 @@ type BotStatus = { channel: string; botType: BotType; active: boolean; username?
  */
 export default function SuperBotsPage() {
   const [testing, setTesting] = useState<string | null>(null);
-  const [result, setResult] = useState<{ key: string; ok: boolean; message?: string } | null>(null);
+  const [result, setResult] = useState<{
+    key: string;
+    ok: boolean;
+    message?: string;
+    webhookSet?: boolean;
+  } | null>(null);
   const [statusList, setStatusList] = useState<BotStatus[]>([]);
   const [tokens, setTokens] = useState<Record<string, string>>({});
   const [notConfigured, setNotConfigured] = useState(false);
@@ -68,11 +73,13 @@ export default function SuperBotsPage() {
           ok?: boolean;
           error?: string;
           message?: string;
+          webhookSet?: boolean;
         };
         setResult({
           key,
           ok: res.ok && Boolean(data.ok),
           message: data.ok ? (data.message ?? "Активен") : (data.error ?? "Ошибка"),
+          webhookSet: data.webhookSet,
         });
         if (res.ok && data.ok) {
           setTokens((prev) => ({ ...prev, [key]: "" }));
@@ -191,7 +198,12 @@ export default function SuperBotsPage() {
                       </button>
                     </td>
                     <td className="p-3 text-sm">
-                      {res?.ok && <span className="text-green-600">{res.message}</span>}
+                      {res?.ok && res.webhookSet !== false && (
+                        <span className="text-green-600">{res.message}</span>
+                      )}
+                      {res?.ok && res.webhookSet === false && (
+                        <span className="text-amber-600">{res.message}</span>
+                      )}
                       {res && !res.ok && <span className="text-red-600">{res.message}</span>}
                     </td>
                   </tr>
