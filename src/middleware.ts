@@ -8,6 +8,18 @@ import type { NextRequest } from "next/server";
 
 const ROLE_COOKIE = "heywaiter_role";
 
+/** Пути, доступные всем без проверки роли (логин и API авторизации). */
+const AUTH_WHITELIST = [
+  "/super/login",
+  "/admin/login",
+  "/staff/login",
+] as const;
+
+function isAuthWhitelist(pathname: string): boolean {
+  if (pathname.startsWith("/api/auth/")) return true;
+  return AUTH_WHITELIST.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
 type RouteRole = "admin" | "super" | "staff";
 
 const PATH_ROLES: { path: string; role: RouteRole }[] = [
@@ -27,6 +39,11 @@ function getRequiredRole(pathname: string): RouteRole | null {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (isAuthWhitelist(pathname)) {
+    return NextResponse.next();
+  }
+
   const requiredRole = getRequiredRole(pathname);
   if (!requiredRole) {
     return NextResponse.next();
@@ -35,7 +52,6 @@ export function middleware(request: NextRequest) {
   const role = request.cookies.get(ROLE_COOKIE)?.value as RouteRole | undefined;
   if (role !== requiredRole) {
     const url = request.nextUrl.clone();
-    // Пользователь залогинен (Firebase), но роли в куках ещё нет — ведём на /profile или /auth, чтобы роль подтянулась из Firestore
     url.pathname = "/profile";
     url.search = "";
     return NextResponse.redirect(url);
@@ -45,5 +61,11 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/super/:path*", "/staff/:path*"],
+  // Статика (/_next/*, /favicon.ico и т.д.) не в matcher — middleware для них не вызывается
+  matcher: [
+    "/admin/:path*",
+    "/super/:path*",
+    "/staff/:path*",
+    "/api/auth/:path*",
+  ],
 };
