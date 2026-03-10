@@ -8,16 +8,13 @@ import type { NextRequest } from "next/server";
 
 const ROLE_COOKIE = "heywaiter_role";
 
-/** Пути, доступные всем без проверки роли (логин и API авторизации). */
-const AUTH_WHITELIST = [
-  "/super/login",
-  "/admin/login",
-  "/staff/login",
-] as const;
-
 function isAuthWhitelist(pathname: string): boolean {
-  if (pathname.startsWith("/api/auth/")) return true;
-  return AUTH_WHITELIST.some((p) => pathname === p || pathname.startsWith(p + "/"));
+  return (
+    pathname.startsWith("/super/login") ||
+    pathname.startsWith("/admin/login") ||
+    pathname.startsWith("/staff/login") ||
+    pathname.startsWith("/api/auth/")
+  );
 }
 
 type RouteRole = "admin" | "super" | "staff";
@@ -41,6 +38,7 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (isAuthWhitelist(pathname)) {
+    console.log("Middleware allowed path:", pathname);
     return NextResponse.next();
   }
 
