@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { registerWebhook } from "@/lib/webhook/auto-webhooks";
+import { getAppUrl } from "@/lib/webhook/utils";
 
 /**
  * POST /api/bots/set-webhook
@@ -35,11 +36,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const base =
-      baseUrl ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      process.env.TUNNEL_URL ||
-      "https://your-domain.com";
+    const base = baseUrl || getAppUrl();
 
     const result = await registerWebhook(
       channel,

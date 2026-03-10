@@ -13,6 +13,7 @@ import { NextRequest } from "next/server";
 import { collection, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
+import { getAppUrl } from "@/lib/webhook/utils";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -40,9 +41,7 @@ interface TelegramUpdate {
 }
 
 function getWebAppBaseUrl(): string {
-  return (
-    (process.env.NEXT_PUBLIC_APP_URL || process.env.TUNNEL_URL || "http://localhost:3000") as string
-  ).replace(/\/$/, "");
+  return getAppUrl();
 }
 
 /**

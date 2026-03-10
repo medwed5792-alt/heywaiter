@@ -9,19 +9,9 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { setTelegramWebhook } from "@/lib/webhook/auto-webhooks";
 import { updateBotsConfig } from "@/lib/webhook/bots-store";
+import { getAppUrl } from "@/lib/webhook/utils";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
-
-function getBaseUrl(): string {
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.TUNNEL_URL ||
-    "http://localhost:3000"
-  );
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,7 +53,7 @@ export async function POST(request: NextRequest) {
     const username = getMeData.result.username;
     const usernameWithAt = username ? `@${username}` : "";
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = getAppUrl();
     const webhookPath =
       botType === "client"
         ? "/api/webhook/telegram/client"
