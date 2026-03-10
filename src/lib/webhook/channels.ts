@@ -32,8 +32,13 @@ export function getBotToken(channel: string, botType: BotType): string | undefin
   const keys = ENV_KEYS[channel];
   if (!keys) return undefined;
   let token: string | undefined = process.env[keys[botType]];
-  if (!token && channel === "telegram" && botType === "client") {
-    token = process.env.TELEGRAM_BOT_TOKEN;
+  if (channel === "telegram") {
+    if (!token && botType === "client") {
+      token = process.env.TELEGRAM_BOT_TOKEN ?? process.env.TELEGRAM_TOKEN;
+    }
+    if (!token && botType === "staff") {
+      token = process.env.TELEGRAM_TOKEN;
+    }
   }
   return token;
 }

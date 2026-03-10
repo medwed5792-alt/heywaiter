@@ -3,8 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 import type { BotType } from "@/lib/webhook/channels";
-import { getBotToken } from "@/lib/webhook/channels";
-import { getBotsConfig, getBotTokenFromStore } from "@/lib/webhook/bots-store";
+import { getBotsConfig, getEffectiveBotToken } from "@/lib/webhook/bots-store";
 
 /**
  * GET /api/admin/bots/status
@@ -16,11 +15,7 @@ export async function GET() {
     const bots: { channel: string; botType: BotType; active: boolean; username?: string }[] = [];
     for (const channel of WEBHOOK_CHANNELS) {
       for (const botType of ["client", "staff"] as BotType[]) {
-        let token: string | undefined;
-        if (channel === "telegram") {
-          token = await getBotTokenFromStore(channel, botType);
-        }
-        if (!token) token = getBotToken(channel, botType);
+        const token = await getEffectiveBotToken(channel, botType);
         const username =
           channel === "telegram" && botType === "client"
             ? botsConfig.tg_client_username ?? undefined

@@ -13,12 +13,22 @@ function isEdgeRuntime(): boolean {
     process.env.NEXT_RUNTIME === "edge";
 }
 
+let _warnedMissingCredential = false;
+
 function buildCredentialFromEnv(): { projectId: string; clientEmail: string; privateKey: string } | null {
   const projectId =
     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const rawKey = process.env.FIREBASE_PRIVATE_KEY;
-  if (!projectId || !clientEmail || !rawKey) return null;
+  if (!projectId || !clientEmail || !rawKey) {
+    if (!_warnedMissingCredential && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      _warnedMissingCredential = true;
+      console.warn(
+        "[Firebase Admin] Запись в Firestore требует FIREBASE_CLIENT_EMAIL и FIREBASE_PRIVATE_KEY в .env.local (или GOOGLE_APPLICATION_CREDENTIALS)."
+      );
+    }
+    return null;
+  }
   const privateKey = rawKey.replace(/\\n/g, "\n");
   return { projectId, clientEmail, privateKey };
 }

@@ -1,9 +1,11 @@
 /**
  * Чтение/запись настроек ботов в Firestore (system_settings/bots).
+ * Приоритет: Firestore (system_settings/bots) → env (TELEGRAM_BOT_TOKEN / TELEGRAM_TOKEN).
  * Только для сервера (API routes) — использует firebase-admin.
  */
 
 import type { BotType } from "@/lib/webhook/channels";
+import { getBotToken } from "@/lib/webhook/channels";
 
 const BOTS_DOC_PATH = "system_settings/bots";
 
@@ -35,6 +37,18 @@ export async function getBotTokenFromStore(
   const config = await getBotsConfig();
   if (botType === "client") return config.tg_client_token ?? undefined;
   return config.tg_staff_token ?? undefined;
+}
+
+/**
+ * Эффективный токен: сначала Firestore (system_settings/bots), при пустоте — env (TELEGRAM_BOT_TOKEN / TELEGRAM_TOKEN).
+ */
+export async function getEffectiveBotToken(
+  channel: string,
+  botType: BotType
+): Promise<string | undefined> {
+  const fromStore = await getBotTokenFromStore(channel, botType);
+  if (fromStore) return fromStore;
+  return getBotToken(channel, botType);
 }
 
 export async function getBotUsernameFromStore(

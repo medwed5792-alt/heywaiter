@@ -27,12 +27,19 @@ export default function SuperBotsPage() {
   const [result, setResult] = useState<{ key: string; ok: boolean; message?: string } | null>(null);
   const [statusList, setStatusList] = useState<BotStatus[]>([]);
   const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [notConfigured, setNotConfigured] = useState(false);
 
   const fetchStatus = useCallback(() => {
-    fetch("/api/admin/bots/status")
+    fetch("/api/admin/bots/status", { cache: "no-store" })
       .then((r) => r.json())
-      .then((data: { bots?: BotStatus[] }) => setStatusList(data.bots ?? []))
-      .catch(() => setStatusList([]));
+      .then((data: { bots?: BotStatus[]; status?: string }) => {
+        setStatusList(data.bots ?? []);
+        setNotConfigured(data.status === "not_configured");
+      })
+      .catch(() => {
+        setStatusList([]);
+        setNotConfigured(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -113,6 +120,13 @@ export default function SuperBotsPage() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Настройки ботов</h2>
+      {notConfigured && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Для записи в Firestore добавьте в <code className="rounded bg-amber-100 px-1">.env.local</code> переменные{" "}
+          <code className="rounded bg-amber-100 px-1">FIREBASE_CLIENT_EMAIL</code> и{" "}
+          <code className="rounded bg-amber-100 px-1">FIREBASE_PRIVATE_KEY</code> (сервисный аккаунт Firebase).
+        </div>
+      )}
       <p className="mt-2 text-sm text-gray-600">
         Для Telegram: введите токен бота и нажмите «Тест связи» — система проверит токен, установит webhook и сохранит настройки в базу. Остальные каналы — через переменные окружения.
       </p>
