@@ -37,6 +37,11 @@ function getRequiredRole(pathname: string): RouteRole | null {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Исключения в самом начале: логин, API авторизации и статика — без проверки ролей
+  if (pathname.includes("/super/login")) return NextResponse.next();
+  if (pathname.startsWith("/api/auth/")) return NextResponse.next();
+  if (pathname.startsWith("/_next/")) return NextResponse.next();
+
   if (isAuthWhitelist(pathname)) {
     console.log("Middleware allowed path:", pathname);
     return NextResponse.next();
