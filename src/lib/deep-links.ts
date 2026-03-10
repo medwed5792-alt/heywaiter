@@ -6,20 +6,37 @@
 import type { MessengerChannel } from "./types";
 
 const BOT_TELEGRAM = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "HeyWaiter_bot";
+const TELEGRAM_MINIAPP_NAME = process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "heywaiter";
 const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
 const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
 const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
 
+/**
+ * Ссылка для открытия Telegram Mini App в формате startapp (параметры пробрасываются в бота).
+ * Формат: https://t.me/BotUsername/AppName?startapp=v_venueId_t_tableId_vid_visitorId
+ */
+export function buildTelegramStartAppLink(
+  venueId: string,
+  tableId: string,
+  visitorId: string
+): string {
+  const payload = `v_${venueId}_t_${tableId}_vid_${visitorId}`;
+  return `https://t.me/${BOT_TELEGRAM}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
+}
+
 export function buildDeepLink(
   channel: MessengerChannel,
   venueId: string,
-  tableId: string
+  tableId: string,
+  visitorId?: string | null
 ): string {
-  const payload = `v_${venueId}_t_${tableId}`;
+  const payload = visitorId
+    ? `v_${venueId}_t_${tableId}_vid_${visitorId}`
+    : `v_${venueId}_t_${tableId}`;
 
   switch (channel) {
     case "telegram":
-      return `tg://resolve?domain=${BOT_TELEGRAM}&start=${payload}`;
+      return `https://t.me/${BOT_TELEGRAM}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
     case "whatsapp":
       const text = encodeURIComponent(`start ${payload}`);
       return BOT_WHATSAPP

@@ -5,15 +5,19 @@ import { useEffect, useState, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
+const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
+
 /** Тип для Telegram WebApp в мини-приложении (start_param, user.id есть только здесь). */
 type TelegramWebAppInit = {
   initDataUnsafe?: { start_param?: string; user?: { id?: number } };
 };
 
-/** Парсинг start_param: "test_1" → { venueId: "test", tableId: "1" }; также "v_venueId_t_tableId" */
-function parseStartParam(startParam: string): { venueId: string; tableId: string } | null {
+/** Парсинг start_param: "v_venueId_t_tableId" или "v_venueId_t_tableId_vid_visitorId" */
+function parseStartParam(startParam: string): { venueId: string; tableId: string; visitorId?: string } | null {
   const s = startParam?.trim();
   if (!s) return null;
+  const withVid = s.match(/^v_([^_]+)_t_([^_]+)_vid_(.+)$/);
+  if (withVid) return { venueId: withVid[1], tableId: withVid[2], visitorId: withVid[3] };
   const vT = s.match(/^v_([^_]+)_t_(.+)$/);
   if (vT) return { venueId: vT[1], tableId: vT[2] };
   const parts = s.split("_");
@@ -43,15 +47,20 @@ function MiniAppContent() {
       if (parsed) {
         setVenueId(parsed.venueId);
         setTableId(parsed.tableId);
+        if (parsed.visitorId && typeof localStorage !== "undefined") {
+          try {
+            localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
+          } catch (_) {}
+        }
         setFromTelegram(true);
       } else {
         setLoaded(true);
         setFirestoreDone(true);
       }
     }
-    if (fromQueryV && fromQueryT && !startParam) {
+    if (fromQueryV && !startParam) {
       setVenueId(fromQueryV);
-      setTableId(fromQueryT);
+      if (fromQueryT) setTableId(fromQueryT);
     }
     if (!startParam && !fromQueryV) {
       setLoaded(true);

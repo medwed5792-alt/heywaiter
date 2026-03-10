@@ -23,6 +23,7 @@ import { getCheckInCopy } from "@/lib/i18n-checkin";
 import { buildDeepLink, messengerLabels } from "@/lib/deep-links";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
+import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 
@@ -52,6 +53,7 @@ function CheckInContent() {
   const router = useRouter();
   const tableId = searchParams.get("t") ?? "";
   const venueId = searchParams.get("v") ?? "";
+  const { visitorId, recordVisitorSession } = useVisitor();
 
   const [locale, setLocale] = useState(getBrowserLocale());
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict">("idle");
@@ -60,6 +62,13 @@ function CheckInContent() {
   useEffect(() => {
     setLocale(getBrowserLocale());
   }, []);
+
+  // При первом визите на /check-in с валидными v и t — записать сессию в Firestore
+  useEffect(() => {
+    if (venueId && tableId && visitorId) {
+      recordVisitorSession(venueId, tableId);
+    }
+  }, [venueId, tableId, visitorId, recordVisitorSession]);
 
   useEffect(() => {
     if (cooldownLeft <= 0) return;
@@ -145,7 +154,7 @@ function CheckInContent() {
             createdAt: serverTimestamp(),
           });
           setStatus("success");
-          window.location.href = buildDeepLink(channel, venueId, tableId);
+          window.location.href = buildDeepLink(channel, venueId, tableId, visitorId ?? undefined);
         }
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
       } catch (err) {
@@ -153,7 +162,7 @@ function CheckInContent() {
         setStatus("idle");
       }
     },
-    [venueId, tableId]
+    [venueId, tableId, visitorId]
   );
 
   const copy = useMemo(() => getCheckInCopy(locale), [locale]);

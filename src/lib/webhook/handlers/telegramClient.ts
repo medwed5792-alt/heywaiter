@@ -3,7 +3,7 @@
  * Вызывается из универсального роутера api/webhook/[channel]/[botType].
  *
  * Mini App Launch: при /start с Deep Link бот сразу отправляет приветствие и Inline Keyboard
- * с кнопкой «🚀 Открыть пульт» (web_app → /check-in/panel или /mini-app с параметрами).
+ * с кнопкой «🚀 Открыть пульт» (web_app → /mini-app с параметрами v, t, vid).
  * setChatMenuButton задаёт постоянную кнопку «Пульт»/«Меню» слева от поля ввода.
  *
  * Авто-открытие: если в BotFather создано расширение "Mini App", можно использовать
@@ -159,7 +159,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   const parsed = parseStartPayload(message.text);
   if (!parsed) {
-    const webAppUrl = `${baseUrl}/check-in/panel?chatId=${chatId}&platform=telegram`;
+    const webAppUrl = `${baseUrl}/mini-app?chatId=${chatId}&platform=telegram`;
     await sendTelegram(token, "sendMessage", {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
@@ -188,7 +188,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const venueType = venueData.venueType as string | undefined;
 
   if (venueType === "fast_food") {
-    const webAppUrl = `${baseUrl}/check-in/panel?v=${venueId}&chatId=${chatId}&platform=telegram`;
+    const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&chatId=${chatId}&platform=telegram`;
     await sendTelegram(token, "sendMessage", {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
@@ -210,7 +210,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   }
 
   const role = kind === "OWN" ? "vip" : "guest";
-  const webAppUrl = `${baseUrl}/check-in/panel?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}`;
+  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}`;
 
   if (kind === "OWN" && guest) {
     await addDoc(collection(db, "activeSessions"), {
