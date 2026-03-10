@@ -7,7 +7,6 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ["firebase-admin", "@grpc/grpc-js", "undici"],
   },
-  transpilePackages: ["undici"],
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals = [...(config.externals || []), "@grpc/grpc-js", "undici"];
