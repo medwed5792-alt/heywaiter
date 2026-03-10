@@ -2,6 +2,8 @@
  * Firebase Admin — только для сервера (API routes, Server Actions).
  * Инициализация по требованию; credentials из env или default (GCP).
  */
+require("dotenv").config({ path: ".env.local" });
+
 import type { Firestore } from "firebase-admin/firestore";
 
 let adminFirestore: Firestore | null = null;
@@ -44,6 +46,7 @@ function getFirebaseAdmin(): { firestore: Firestore } {
       // ADC: не передаём credential, используется путь из env
     }
     // Иначе инициализация с projectId или по умолчанию (ADC)
+    console.log("Firebase ID check:", process.env.FIREBASE_PROJECT_ID);
     if (Object.keys(opts).length > 0) {
       admin.initializeApp(opts);
     } else {
