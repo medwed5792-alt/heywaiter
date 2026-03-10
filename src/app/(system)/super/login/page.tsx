@@ -4,8 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 const SUPERADMIN_ROLE_KEY = "heywaiter_admin_role";
+const ROLE_COOKIE = "heywaiter_role";
 const VALID_LOGIN = "admin777";
 const VALID_PASSWORD = "heywaiter2026";
+
+/** Установка куки роли для Middleware (path=/, 7 дней). */
+function setRoleCookie(value: string) {
+  if (typeof document === "undefined") return;
+  const maxAge = 60 * 60 * 24 * 7;
+  document.cookie = `${ROLE_COOKIE}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; SameSite=Lax`;
+}
 
 /**
  * Страница входа в Интерфейс №4 (Кабинет Супер-Админа).
@@ -23,8 +31,9 @@ export default function SuperLoginPage() {
     if (login.trim() === VALID_LOGIN && password === VALID_PASSWORD) {
       if (typeof window !== "undefined") {
         localStorage.setItem(SUPERADMIN_ROLE_KEY, "superadmin");
+        setRoleCookie("super");
       }
-      router.push("/super/bots");
+      router.push("/super/dashboard");
     } else {
       setError("Доступ запрещен. Обратитесь к главному администратору.");
     }
