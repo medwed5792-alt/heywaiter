@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBotToken } from "@/lib/webhook/channels";
+import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 /**
  * Обратная совместимость: POST /api/webhook/telegram → обрабатывается как Telegram Client Bot.
- * Для новой схемы используйте POST /api/webhook/telegram/client.
+ * Токен из Firestore (system_settings/bots) или env.
  */
 export async function POST(request: NextRequest) {
-  const token =
-    getBotToken("telegram", "client") ||
-    (process.env.TELEGRAM_BOT_TOKEN as string);
+  let token = await getBotTokenFromStore("telegram", "client");
+  if (!token) token = getBotToken("telegram", "client") || process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     return NextResponse.json(
       { error: "TELEGRAM_BOT_TOKEN or TELEGRAM_CLIENT_TOKEN not set" },

@@ -4,10 +4,12 @@ import {
   isKnownChannel,
   isKnownBotType,
 } from "@/lib/webhook/channels";
+import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 /**
  * Универсальный роутер для 14 ботов: 7 каналов × 2 типа (Client + Staff).
  * POST /api/webhook/telegram/client, /api/webhook/telegram/staff, ...
+ * Токен Telegram берётся из Firestore (system_settings/bots) или env.
  */
 export async function POST(
   request: NextRequest,
@@ -30,7 +32,11 @@ export async function POST(
     );
   }
 
-  const token = getBotToken(channel, botType);
+  let token: string | undefined;
+  if (channel === "telegram") {
+    token = await getBotTokenFromStore(channel, botType as "client" | "staff");
+  }
+  if (!token) token = getBotToken(channel, botType as "client" | "staff");
   if (!token) {
     console.warn("[webhook] No token for", channel, botType);
     return NextResponse.json(

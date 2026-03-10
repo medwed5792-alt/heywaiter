@@ -10,6 +10,8 @@ import { useEffect, useMemo, Suspense, useState, useCallback } from "react";
 import { MessageCircle } from "lucide-react";
 import {
   collection,
+  doc,
+  getDoc,
   query,
   where,
   getDocs,
@@ -58,9 +60,22 @@ function CheckInContent() {
   const [locale, setLocale] = useState(getBrowserLocale());
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict">("idle");
   const [cooldownLeft, setCooldownLeft] = useState(0);
+  const [tgClientUsername, setTgClientUsername] = useState<string | null>(null);
 
   useEffect(() => {
     setLocale(getBrowserLocale());
+  }, []);
+
+  useEffect(() => {
+    getDoc(doc(db, "system_settings", "bots"))
+      .then((snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          const username = data?.tg_client_username;
+          setTgClientUsername(typeof username === "string" ? username : null);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // При первом визите на /check-in с валидными v и t — записать сессию в Firestore
@@ -154,7 +169,9 @@ function CheckInContent() {
             createdAt: serverTimestamp(),
           });
           setStatus("success");
-          window.location.href = buildDeepLink(channel, venueId, tableId, visitorId ?? undefined);
+          window.location.href = buildDeepLink(channel, venueId, tableId, visitorId ?? undefined, {
+            telegramUsername: tgClientUsername ?? undefined,
+          });
         }
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
       } catch (err) {
@@ -162,7 +179,7 @@ function CheckInContent() {
         setStatus("idle");
       }
     },
-    [venueId, tableId, visitorId]
+    [venueId, tableId, visitorId, tgClientUsername]
   );
 
   const copy = useMemo(() => getCheckInCopy(locale), [locale]);

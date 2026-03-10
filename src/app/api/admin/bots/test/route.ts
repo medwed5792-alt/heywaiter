@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { getBotToken } from "@/lib/webhook/channels";
 import { isKnownChannel } from "@/lib/webhook/channels";
 import { isKnownBotType } from "@/lib/webhook/channels";
+import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -11,7 +12,7 @@ const TELEGRAM_API = "https://api.telegram.org/bot";
  * POST /api/admin/bots/test
  * Тело: { channel: string, botType: "client" | "staff" }
  * Проверяет связь с ботом: для Telegram — getMe; при успехе возвращает ok.
- * Сообщение "HeyWaiter: Связь установлена успешно!" показывается в UI после ответа.
+ * Токен берётся из Firestore (system_settings/bots) или env.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +25,11 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const token = getBotToken(channel, botType);
+    let token: string | undefined;
+    if (channel === "telegram") {
+      token = await getBotTokenFromStore(channel, botType as "client" | "staff");
+    }
+    if (!token) token = getBotToken(channel, botType as "client" | "staff");
     if (!token) {
       return Response.json(
         { ok: false, error: "Токен не настроен для этого канала и типа бота" },

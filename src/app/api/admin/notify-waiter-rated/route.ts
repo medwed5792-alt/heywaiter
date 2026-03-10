@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { getBotToken } from "@/lib/webhook/channels";
+import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -42,7 +43,8 @@ export async function POST(request: NextRequest) {
     if (!tgId) {
       return Response.json({ ok: false, error: "Staff has no Telegram ID" }, { status: 400 });
     }
-    const token = getBotToken("telegram", "staff") || process.env.TELEGRAM_STAFF_TOKEN;
+    let token = await getBotTokenFromStore("telegram", "staff");
+    if (!token) token = getBotToken("telegram", "staff") || process.env.TELEGRAM_STAFF_TOKEN;
     if (!token) {
       return Response.json({ ok: false, error: "Staff bot token not configured" }, { status: 500 });
     }
