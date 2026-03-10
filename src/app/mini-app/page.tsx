@@ -40,7 +40,7 @@ function MiniAppContent() {
 
   useEffect(() => {
     const tg = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined) : undefined;
-    const startParam = tg?.initDataUnsafe?.start_param;
+    const startParam = tg?.initDataUnsafe?.start_param ?? "";
     const fromQueryV = searchParams.get("v") ?? "";
     const fromQueryT = searchParams.get("t") ?? "";
 
@@ -118,6 +118,14 @@ function MiniAppContent() {
     const params = new URLSearchParams(searchParams.toString());
     if (v) params.set("v", v);
     if (t) params.set("t", t);
+    const vid = (() => {
+      try {
+        return typeof localStorage !== "undefined" ? localStorage.getItem(VISITOR_STORAGE_KEY) : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (vid) params.set("vid", vid);
     if (chatId) params.set("chatId", String(chatId));
     if (!params.has("platform")) params.set("platform", "telegram");
     router.replace(`/check-in/panel?${params.toString()}`);

@@ -14,6 +14,8 @@ interface GuestCallPanelProps {
   venueId: string;
   tableId: string;
   sessionId?: string;
+  /** visitorId из Mini App (start_param) для POST /api/notifications/call-waiter */
+  visitorId?: string | null;
   /** Сессия открыта (для Escape Alert: гость покинул зону) */
   sessionOpen?: boolean;
   /** PRO: показывать кнопку «Переводчик» */
@@ -24,6 +26,7 @@ export function GuestCallPanel({
   venueId,
   tableId,
   sessionId,
+  visitorId,
   sessionOpen = true,
   isPro = false,
 }: GuestCallPanelProps) {
@@ -51,21 +54,33 @@ export function GuestCallPanel({
       }
       setCallingRole(role);
       try {
-        await createTargetedNotification(
-          venueId,
-          tableId,
-          role,
-          `Вызов: ${getRoleLabel(role)}, стол №${tableId}`,
-          sessionId
-        );
+        if (role === "waiter") {
+          const res = await fetch("/api/notifications/call-waiter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ venueId, tableId, visitorId: visitorId ?? undefined }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error((data as { error?: string }).error ?? "Ошибка вызова");
+          }
+        } else {
+          await createTargetedNotification(
+            venueId,
+            tableId,
+            role,
+            `Вызов: ${getRoleLabel(role)}, стол №${tableId}`,
+            sessionId
+          );
+        }
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
       } catch (e) {
-        console.error("createTargetedNotification error:", e);
+        console.error("createTargetedNotification / call-waiter error:", e);
       } finally {
         setCallingRole(null);
       }
     },
-    [venueId, tableId, sessionId, startGeoFencing]
+    [venueId, tableId, sessionId, visitorId, startGeoFencing]
   );
 
   const handleRequestBill = useCallback(async () => {

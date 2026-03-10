@@ -6,7 +6,8 @@
 import type { MessengerChannel } from "./types";
 
 const BOT_TELEGRAM = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "HeyWaiter_bot";
-const TELEGRAM_MINIAPP_NAME = process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "heywaiter";
+/** Короткое имя Mini App в Telegram (например "waiter") — открытие без перехода в чат. */
+const TELEGRAM_MINIAPP_NAME = process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter";
 const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
 const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
 const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
@@ -20,8 +21,8 @@ function telegramBotUsername(override?: string | null): string {
 }
 
 /**
- * Ссылка для открытия Telegram Mini App в формате startapp (параметры пробрасываются в бота).
- * Формат: https://t.me/BotUsername/AppName?startapp=v_venueId_t_tableId_vid_visitorId
+ * Ссылка для открытия Telegram Mini App (короткое имя "waiter").
+ * Формат: https://t.me/BotUsername/waiter?startapp=v_venueId_t_tableId_vid_visitorId
  */
 export function buildTelegramStartAppLink(
   venueId: string,

@@ -7,6 +7,7 @@ import { db } from "@/lib/firebase";
 import { GuestCallPanel } from "@/components/guest/GuestCallPanel";
 import { GuestMainMenu } from "@/components/guest/GuestMainMenu";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
+import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 
 /**
@@ -63,6 +64,7 @@ function PanelContent() {
     );
   }
 
+  const vidFromUrl = searchParams.get("vid") ?? null;
   return (
     <FullServicePanel
       venueId={venueId}
@@ -71,6 +73,7 @@ function PanelContent() {
       chatId={chatId}
       platform={platform}
       isPro={isPro}
+      vidFromUrl={vidFromUrl}
     />
   );
 }
@@ -82,6 +85,7 @@ function FullServicePanel({
   chatId,
   platform,
   isPro,
+  vidFromUrl,
 }: {
   venueId: string;
   tableId: string;
@@ -89,8 +93,11 @@ function FullServicePanel({
   chatId: string;
   platform: string;
   isPro: boolean;
+  vidFromUrl?: string | null;
 }) {
+  const { visitorId } = useVisitor();
   const checkInDone = useRef(false);
+  const effectiveVisitorId = visitorId || vidFromUrl || null;
   useEffect(() => {
     if (checkInDone.current || !venueId || !tableId) return;
     checkInDone.current = true;
@@ -137,6 +144,7 @@ function FullServicePanel({
           venueId={venueId}
           tableId={tableId}
           sessionId={sessionId}
+          visitorId={effectiveVisitorId}
           isPro={isPro}
         />
         <VenueMenuBlock venueId={venueId} />
