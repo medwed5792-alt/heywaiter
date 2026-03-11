@@ -186,6 +186,12 @@ export default function TeamPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      console.log("TEAM_PAGE_VERSION: 2.0_GROUPS_ADDED");
+    }
+  }, []);
+
+  useEffect(() => {
     (async () => {
       const [staffSnap, hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
         getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
