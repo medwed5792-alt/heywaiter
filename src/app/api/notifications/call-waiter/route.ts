@@ -100,9 +100,11 @@ export async function POST(request: NextRequest) {
       : `Вызов официанта, стол №${tableId}`;
 
     const tgIds = await getTelegramIdsForStaff(firestore, targetUids);
+    // Только Staff Bot: Firestore (tg_staff_token) → env TELEGRAM_STAFF_TOKEN. Клиентский токен не используем.
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
-    const staffToken = await getBotTokenFromStore("telegram", "staff");
-    const token = staffToken || process.env.TELEGRAM_STAFF_TOKEN;
+    const token =
+      (await getBotTokenFromStore("telegram", "staff")) ||
+      process.env.TELEGRAM_STAFF_TOKEN;
     if (token && tgIds.size > 0) {
       for (const chatId of tgIds) {
         try {
