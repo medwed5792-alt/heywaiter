@@ -78,6 +78,20 @@ function getGroupAndCallCategory(position: string): { group: StaffGroup; call_ca
   return { group, call_category };
 }
 
+/** Группа сотрудника: из поля group или по position через SERVICE_ROLE_GROUP. */
+function getStaffGroup(staff: Staff): StaffGroup | null {
+  if (staff.group) return staff.group;
+  return getGroupAndCallCategory(staff.position ?? "")?.group ?? null;
+}
+
+const GROUP_FILTER_OPTIONS: { value: "" | StaffGroup; label: string }[] = [
+  { value: "", label: "Все группы" },
+  { value: "lpr", label: "ЛПР" },
+  { value: "hall", label: "Зал" },
+  { value: "kitchen", label: "Кухня" },
+  { value: "service", label: "Сервис" },
+];
+
 function StaffRow({
   staff,
   onEdit,
@@ -161,6 +175,7 @@ export default function TeamPage() {
   const [halls, setHalls] = useState<{ id: string; name: string }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [nameSearch, setNameSearch] = useState("");
+  const [groupFilter, setGroupFilter] = useState<"" | StaffGroup>("");
   const [positionFilter, setPositionFilter] = useState<string>("");
   const [tableFilterId, setTableFilterId] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"all" | "on_shift">("all");
@@ -193,11 +208,19 @@ export default function TeamPage() {
   const filteredStaff = staffList.filter((s) => {
     const name = (s.firstName ?? "") + " " + (s.lastName ?? "") + " " + (s.identity?.displayName ?? "") + " " + (s.identity?.name ?? "");
     if (nameSearch.trim() && !name.toLowerCase().includes(nameSearch.trim().toLowerCase())) return false;
+    if (groupFilter) {
+      const sGroup = getStaffGroup(s);
+      if (sGroup !== groupFilter) return false;
+    }
     if (positionFilter && (s.position ?? "") !== positionFilter) return false;
     if (tableFilterId && !(s.assignedTableIds ?? []).includes(tableFilterId)) return false;
     if (statusFilter === "on_shift" && s.onShift !== true) return false;
     return true;
   });
+
+  const positionOptionsForFilter = groupFilter
+    ? (POSITION_GROUPS_V2.find((g) => g.groupId === groupFilter)?.roles ?? [])
+    : ALL_POSITIONS_FLAT;
 
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
@@ -252,6 +275,27 @@ export default function TeamPage() {
           className="rounded border border-gray-300 px-3 py-1.5 text-sm w-44"
         />
         <label className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Группа:</span>
+          <select
+            className="rounded border border-gray-300 px-2 py-1.5 text-sm"
+            value={groupFilter}
+            onChange={(e) => {
+              const v = e.target.value as "" | StaffGroup;
+              setGroupFilter(v);
+              if (v && positionFilter) {
+                const allowed = POSITION_GROUPS_V2.find((g) => g.groupId === v)?.roles ?? [];
+                if (!allowed.some((r) => r.value === positionFilter)) setPositionFilter("");
+              }
+            }}
+          >
+            {GROUP_FILTER_OPTIONS.map((o) => (
+              <option key={o.value || "all"} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
           <Briefcase className="h-4 w-4 text-gray-500" />
           <span className="text-gray-600">Должность:</span>
           <select
@@ -260,7 +304,7 @@ export default function TeamPage() {
             onChange={(e) => setPositionFilter(e.target.value)}
           >
             <option value="">Все</option>
-            {ALL_POSITIONS_FLAT.map((o) => (
+            {positionOptionsForFilter.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
