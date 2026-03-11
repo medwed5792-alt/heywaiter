@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Settings, Radio, Key } from "lucide-react";
+import { Settings, Radio, Key, Users } from "lucide-react";
 import { SUPER_TABS } from "@/lib/rbac";
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  catalog: Users,
   bots: Settings,
   infrastructure: Key,
   system: Radio,

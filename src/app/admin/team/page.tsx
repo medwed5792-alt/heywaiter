@@ -150,7 +150,7 @@ function StaffRow({
             className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
             onClick={() => onDismiss(staff)}
           >
-            Удалить
+            Отвязать
           </button>
         )}
       </td>
@@ -193,21 +193,33 @@ export default function TeamPage() {
 
   useEffect(() => {
     (async () => {
-      const [staffSnap, hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
-        getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
-        getDocs(collection(db, "venues", VENUE_ID, "halls")),
-        getDocs(collection(db, "venues", VENUE_ID, "tables")),
-        getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
-      ]);
-      setStaffList(staffSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
-      setHalls(hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "" })));
-      const fromSub = tablesFromSub.docs.map((d) => {
-        const data = d.data();
-        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined };
-      });
-      const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }));
-      setTables(fromSub.length ? fromSub : fromRoot);
-      setLoaded(true);
+      try {
+        const [teamRes, hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
+          fetch("/api/admin/team"),
+          getDocs(collection(db, "venues", VENUE_ID, "halls")),
+          getDocs(collection(db, "venues", VENUE_ID, "tables")),
+          getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
+        ]);
+        const teamData = await teamRes.json();
+        if (teamRes.ok && Array.isArray(teamData.staff)) {
+          setStaffList(teamData.staff as Staff[]);
+        } else if (!teamRes.ok) {
+          const fallback = await getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID)));
+          setStaffList(fallback.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
+        }
+        setHalls(hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "" })));
+        const fromSub = tablesFromSub.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined };
+        });
+        const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }));
+        setTables(fromSub.length ? fromSub : fromRoot);
+      } catch (_e) {
+        const fallback = await getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID)));
+        setStaffList(fallback.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
+      } finally {
+        setLoaded(true);
+      }
     })();
   }, []);
 
@@ -269,7 +281,7 @@ export default function TeamPage() {
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Команда</h2>
       <p className="mt-2 text-sm text-gray-600">
-        Управление штатом: HR-профиль, закрепление за столами. При сохранении данные синхронизируются с global_staff. При удалении обязательны причина и оценка.
+        Управление штатом заведения: только сотрудники, привязанные к этому venue. «Отвязать» — снятие связи с заведением (причина увольнения сохраняется в глобальный профиль в архив).
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -418,9 +430,9 @@ export default function TeamPage() {
       {dismissModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="dismiss-title">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-            <h3 id="dismiss-title" className="font-semibold text-gray-900">Подтверждение удаления: {dismissName}</h3>
+            <h3 id="dismiss-title" className="font-semibold text-gray-900">Отвязать от заведения: {dismissName}</h3>
             <p className="mt-1 text-sm text-gray-600">
-              Обязательно укажите причину увольнения и оценку от ЛПР (1–5). Данные обновят globalScore и синхронизируются с Биржей труда (global_staff).
+              Укажите причину увольнения и оценку (1–5). Связь с заведением будет снята (status: former), запись сохранится в глобальный профиль сотрудника в архив. Профиль остаётся в каталоге для Супер-админа.
             </p>
             <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения</label>
             <select
@@ -462,7 +474,7 @@ export default function TeamPage() {
                 onClick={handleDismissSubmit}
                 disabled={loading}
               >
-                {loading ? "Сохранение…" : "Удалить"}
+                {loading ? "Сохранение…" : "Отвязать"}
               </button>
             </div>
           </div>

@@ -302,9 +302,46 @@ export interface StaffCareerEntry {
   rating?: number;
 }
 
-/** Цифровой паспорт сотрудника (Биржа труда). Синхронизируется с global_staff для Супер-Админа. */
+/** Связь сотрудника с заведением (коллекция global_users). */
+export type AffiliationStatus = "active" | "former";
+
+export interface Affiliation {
+  venueId: string;
+  /** Должность (ключ: sommelier, waiter, …) */
+  role: string;
+  status: AffiliationStatus;
+  position?: string;
+  onShift?: boolean;
+  assignedTableIds?: string[];
+}
+
+/** Глобальный профиль сотрудника (коллекция global_users). Один документ на человека. */
+export interface GlobalUser {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  gender?: string;
+  birthDate?: string;
+  photoUrl?: string;
+  phone?: string;
+  identity?: MessengerIdentity;
+  primaryChannel?: MessengerChannel;
+  tgId?: string;
+  /** Связи с заведениями */
+  affiliations: Affiliation[];
+  /** История работы (архив при увольнении) */
+  careerHistory?: StaffCareerEntry[];
+  globalScore?: number;
+  guestRating?: number;
+  venueRating?: number;
+  updatedAt?: unknown;
+}
+
+/** Цифровой паспорт сотрудника (вид в контексте заведения). Для /admin/team собирается из global_users + staff. */
 export interface Staff {
   id: string;
+  /** ID в global_users (при новой схеме). id может быть составным venueId_userId. */
+  userId?: string;
   venueId: string;
   role: Role;
   /** Роль обслуживания для таргетированных уведомлений */

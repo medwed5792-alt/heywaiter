@@ -42,6 +42,7 @@ export interface SuperTab {
 }
 
 export const SUPER_TABS: readonly SuperTab[] = [
+  { id: "catalog", label: "Каталог персонала", path: "/super/catalog" },
   { id: "bots", label: "Настройки ботов", path: "/super/bots" },
   { id: "infrastructure", label: "Инфраструктура / API Ключи", path: "/super/infrastructure" },
   { id: "system", label: "Система", path: "/super/system" },
