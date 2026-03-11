@@ -12,15 +12,17 @@ import {
 import { db } from "@/lib/firebase";
 import type { ServiceRole } from "@/lib/types";
 
-/** Роли, которые показываем гостю кнопкой (обслуживание + спец) */
+/** Роли, которые показываем гостю кнопкой (Зал + Сервис: вызов официанта, счёта, охраны и т.д.) */
 export const GUEST_VISIBLE_ROLES: ServiceRole[] = [
   "waiter",
   "sommelier",
   "hookah",
   "bartender",
   "runner",
+  "tea_master",
   "animator",
   "security",
+  "hostess",
 ];
 
 const ROLE_LABELS: Record<ServiceRole, string> = {
@@ -29,15 +31,18 @@ const ROLE_LABELS: Record<ServiceRole, string> = {
   hookah: "Кальянщик",
   bartender: "Бармен",
   runner: "Раннер",
+  tea_master: "Чайный мастер",
   animator: "Аниматор",
   security: "Охрана",
-  chef: "Повар",
+  hostess: "Хостес",
+  chef: "Шеф-повар",
   sous_chef: "Су-шеф",
-  cook: "Кук",
+  cook: "Повар",
+  pastry_chef: "Кондитер",
   cleaner: "Уборка",
   dishwasher: "Посудомойка",
   owner: "Владелец",
-  director: "Директор",
+  director: "Управляющий",
   manager: "Менеджер",
   administrator: "Администратор",
 };

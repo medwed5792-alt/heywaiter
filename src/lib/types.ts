@@ -41,45 +41,63 @@ export interface MessengerIdentity {
 /** Роль персонала (staff) — привязка к platformId через код ЛПР */
 export type StaffRole = "waiter" | "manager" | "security";
 
-/** Роли обслуживания: вызов из мини-приложения гостя (кнопки по смене) */
+/** Роли обслуживания: вызов из мини-приложения гостя (кнопки по смене). v2: ЛПР, Зал, Кухня, Сервис. */
 export type ServiceRole =
   | "waiter"
   | "sommelier"
   | "hookah"
   | "bartender"
   | "runner"
+  | "tea_master"
   | "animator"
   | "chef"
   | "sous_chef"
   | "cook"
+  | "pastry_chef"
   | "cleaner"
   | "dishwasher"
   | "security"
+  | "hostess"
   | "owner"
   | "director"
   | "manager"
   | "administrator";
 
-/** Группы персонала (RBAC): ЛПР, Обслуживание, Кухня, Вспомогательный, Спец */
-export type StaffGroup = "lpr" | "service" | "kitchen" | "aux" | "spec";
+/** Группы персонала v2: ЛПР (Администрация), Зал (Обслуживание), Кухня (Производство), Сервис (Поддержка). */
+export type StaffGroup = "lpr" | "hall" | "kitchen" | "service" | "aux" | "spec";
 
 export const SERVICE_ROLE_GROUP: Record<ServiceRole, StaffGroup> = {
   owner: "lpr",
   director: "lpr",
   manager: "lpr",
   administrator: "lpr",
-  waiter: "service",
-  sommelier: "service",
-  hookah: "service",
-  bartender: "service",
-  runner: "service",
+  waiter: "hall",
+  sommelier: "hall",
+  hookah: "hall",
+  bartender: "hall",
+  runner: "hall",
+  tea_master: "hall",
   animator: "spec",
-  security: "spec",
+  security: "service",
+  hostess: "service",
   chef: "kitchen",
   sous_chef: "kitchen",
   cook: "kitchen",
-  cleaner: "aux",
+  pastry_chef: "kitchen",
+  cleaner: "service",
   dishwasher: "aux",
+};
+
+/** Тег для маршрутизации вызовов из Telegram (по группе сотрудника). */
+export type CallCategory = "lpr_call" | "order_call" | "kitchen_call" | "service_call";
+
+export const STAFF_GROUP_CALL_CATEGORY: Record<StaffGroup, CallCategory> = {
+  lpr: "lpr_call",
+  hall: "order_call",
+  kitchen: "kitchen_call",
+  service: "service_call",
+  aux: "service_call",
+  spec: "order_call",
 };
 
 /** ЛПР — всегда получают уведомления для контроля KPI */
@@ -302,8 +320,12 @@ export interface Staff {
   /** Глобальный рейтинг 0–5 (из глобальной коллекции / пересчёт при увольнении) */
   globalScore?: number;
   skills?: string[];
-  /** Текущая должность */
+  /** Текущая должность (техн. ключ роли: waiter, chef, …) */
   position?: string;
+  /** Группа должности (lpr, hall, kitchen, service) для UI и маршрутизации */
+  group?: StaffGroup;
+  /** Тег маршрутизации вызовов из Telegram: order_call, service_call, kitchen_call, lpr_call */
+  call_category?: CallCategory;
   /** Активен в заведении (false = уволен) */
   active?: boolean;
   /** HR-профиль: личные данные */

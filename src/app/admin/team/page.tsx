@@ -5,8 +5,9 @@ import toast from "react-hot-toast";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
-import type { ExitReason, Staff } from "@/lib/types";
+import type { ExitReason, Staff, StaffGroup, CallCategory } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
+import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
 const VENUE_ID = "current";
 
@@ -18,18 +19,64 @@ const EXIT_REASONS: { value: ExitReason; label: string }[] = [
   { value: "other", label: "Другое" },
 ];
 
-const POSITION_OPTIONS: { value: ServiceRole | ""; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "waiter", label: "Официант" },
-  { value: "sommelier", label: "Сомелье" },
-  { value: "bartender", label: "Бармен" },
-  { value: "chef", label: "Шеф-повар" },
-  { value: "cook", label: "Повар" },
-  { value: "manager", label: "Менеджер" },
-  { value: "security", label: "Охрана" },
-  { value: "runner", label: "Раннер" },
-  { value: "cleaner", label: "Уборщик" },
+/** Иерархия должностей v2: группа → список ролей с подписями. */
+const POSITION_GROUPS_V2: { groupId: StaffGroup; groupLabel: string; roles: { value: ServiceRole; label: string }[] }[] = [
+  {
+    groupId: "lpr",
+    groupLabel: "ЛПР (Администрация)",
+    roles: [
+      { value: "owner", label: "Владелец" },
+      { value: "director", label: "Управляющий" },
+      { value: "administrator", label: "Администратор" },
+      { value: "manager", label: "Менеджер" },
+    ],
+  },
+  {
+    groupId: "hall",
+    groupLabel: "Зал (Обслуживание)",
+    roles: [
+      { value: "waiter", label: "Официант" },
+      { value: "bartender", label: "Бармен" },
+      { value: "runner", label: "Раннер" },
+      { value: "hookah", label: "Кальянщик" },
+      { value: "sommelier", label: "Сомелье" },
+      { value: "tea_master", label: "Чайный мастер" },
+    ],
+  },
+  {
+    groupId: "kitchen",
+    groupLabel: "Кухня (Производство)",
+    roles: [
+      { value: "chef", label: "Шеф-повар" },
+      { value: "cook", label: "Повар" },
+      { value: "pastry_chef", label: "Кондитер" },
+    ],
+  },
+  {
+    groupId: "service",
+    groupLabel: "Сервис (Поддержка)",
+    roles: [
+      { value: "cleaner", label: "Уборка" },
+      { value: "security", label: "Охрана" },
+      { value: "hostess", label: "Хостес" },
+    ],
+  },
 ];
+
+/** Плоский список всех должностей для фильтра и отображения. */
+const ALL_POSITIONS_FLAT = POSITION_GROUPS_V2.flatMap((g) => g.roles);
+
+function getPositionLabel(position: string): string {
+  const found = ALL_POSITIONS_FLAT.find((r) => r.value === position);
+  return found?.label ?? position || "—";
+}
+
+function getGroupAndCallCategory(position: string): { group: StaffGroup; call_category: CallCategory } | null {
+  const group = SERVICE_ROLE_GROUP[position as ServiceRole];
+  if (!group) return null;
+  const call_category = STAFF_GROUP_CALL_CATEGORY[group];
+  return { group, call_category };
+}
 
 function StaffRow({
   staff,
@@ -213,7 +260,7 @@ export default function TeamPage() {
             onChange={(e) => setPositionFilter(e.target.value)}
           >
             <option value="">Все</option>
-            {POSITION_OPTIONS.filter((o) => o.value).map((o) => (
+            {ALL_POSITIONS_FLAT.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -291,7 +338,7 @@ export default function TeamPage() {
                     staff={s}
                     onEdit={setEditingStaff}
                     onDismiss={handleDismiss}
-                    positionLabel={POSITION_OPTIONS.find((o) => o.value === (s.position ?? ""))?.label ?? (s.position ?? "—")}
+                    positionLabel={getPositionLabel(s.position ?? "")}
                   />
                 ))
               )}
@@ -409,6 +456,9 @@ function StaffFormModal({
   const [position, setPosition] = useState(staff.position ?? "");
   const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
   const [saving, setSaving] = useState(false);
+  const groupAndCall = position ? getGroupAndCallCategory(position) : null;
+  const group = groupAndCall?.group ?? (staff.group as StaffGroup | undefined);
+  const call_category = groupAndCall?.call_category ?? (staff.call_category as CallCategory | undefined);
 
   const displayName = (staff.identity?.displayName ?? [firstName, lastName].filter(Boolean).join(" ")) || "Имя для уведомлений";
 
@@ -428,6 +478,8 @@ function StaffFormModal({
           phone: phone.trim() || undefined,
           tgId: tgId.trim() || undefined,
           position: position || undefined,
+          group: group ?? (position ? getGroupAndCallCategory(position)?.group : undefined),
+          call_category: call_category ?? (position ? getGroupAndCallCategory(position)?.call_category : undefined),
           assignedTableIds: assignedTableIds,
           identity: staff.identity ? { ...staff.identity, externalId: tgId.trim() || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: tgId.trim(), locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
           primaryChannel: staff.primaryChannel ?? "telegram",
@@ -442,6 +494,8 @@ function StaffFormModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
       const savedId = data.staffId ?? staff.id;
+      const nextGroup = position ? getGroupAndCallCategory(position)?.group : undefined;
+      const nextCallCategory = position ? getGroupAndCallCategory(position)?.call_category : undefined;
       onSaved({
         ...(savedId ? { id: savedId } : {}),
         firstName: firstName.trim() || undefined,
@@ -452,6 +506,8 @@ function StaffFormModal({
         phone: phone.trim() || undefined,
         tgId: tgId.trim() || undefined,
         position: position || undefined,
+        group: nextGroup,
+        call_category: nextCallCategory,
         assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
       });
       toast.success("Сохранено");
@@ -524,10 +580,15 @@ function StaffFormModal({
             <label>
               <span className="block text-xs text-gray-600">Должность</span>
               <select value={position} onChange={(e) => setPosition(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm">
-                {POSITION_OPTIONS.map((o) => (
-                  <option key={o.value || "empty"} value={o.value}>
-                    {o.label}
-                  </option>
+                <option value="">—</option>
+                {POSITION_GROUPS_V2.map((group) => (
+                  <optgroup key={group.groupId} label={group.groupLabel}>
+                    {group.roles.map((r) => (
+                      <option key={r.value} value={r.value}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </label>
