@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useMemo, useState, useEffect, useRef } from "react";
 import { collection, doc, getDoc, getDocs, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { GuestCallPanel } from "@/components/guest/GuestCallPanel";
+import { GuestModePanel } from "@/components/guest/GuestModePanel";
 import { GuestMainMenu } from "@/components/guest/GuestMainMenu";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
@@ -122,12 +122,12 @@ function FullServicePanel({
   }, [venueId, tableId, chatId, platform]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      <div className="mx-auto max-w-md">
+    <main className="min-h-screen bg-slate-50 p-4 md:p-6">
+      <div className="mx-auto max-w-lg">
         <DebugPanelTrigger>
           {({ onClick }) => (
             <h1
-              className="mb-4 text-lg font-bold text-gray-900 cursor-pointer select-none"
+              className="mb-3 text-lg font-bold text-gray-900 cursor-pointer select-none md:mb-4"
               onClick={onClick}
               role="button"
               tabIndex={0}
@@ -137,15 +137,10 @@ function FullServicePanel({
             </h1>
           )}
         </DebugPanelTrigger>
-        <p className="mb-4 text-sm text-gray-500">
-          Стол №{tableId}. Кнопки показываются только если сотрудник на смене.
-        </p>
-        <GuestCallPanel
+        <GuestModePanel
           venueId={venueId}
           tableId={tableId}
-          sessionId={sessionId}
           visitorId={effectiveVisitorId}
-          isPro={isPro}
         />
         <VenueMenuBlock venueId={venueId} />
       </div>
