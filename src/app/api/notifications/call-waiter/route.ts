@@ -8,8 +8,8 @@ import { LPR_ROLES } from "@/lib/types";
 
 /**
  * POST /api/notifications/call-waiter
- * Вызов официанта из Mini App: создаёт уведомление в staffNotifications,
- * таргетирует официантов и ЛПР заведения. Токен персонал-бота берётся из Firestore (system_settings/bots).
+ * Вызов официанта из Mini App: создаёт уведомление в staffNotifications.
+ * Уведомления в Telegram уходят только сотрудникам, у которых onShift === true для данного venueId.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -30,9 +30,16 @@ export async function POST(request: NextRequest) {
     const assignedId = await getAssignedStaffForTable(firestore, venueId, tableId, "waiter");
     const lprIds = await getLprStaffIds(firestore, venueId);
     const waiterIds = await getStaffIdsByRoleOnShift(firestore, venueId, "waiter");
-    const targetUids = assignedId
-      ? Array.from(new Set([assignedId, ...lprIds]))
-      : Array.from(new Set([...waiterIds, ...lprIds]));
+    const assignedOnShift = assignedId
+      ? await isStaffOnShift(firestore, assignedId, venueId)
+      : false;
+    const targetUids = Array.from(
+      new Set([
+        ...(assignedOnShift && assignedId ? [assignedId] : []),
+        ...waiterIds,
+        ...lprIds,
+      ])
+    );
 
     const message = `Вызов официанта, стол №${tableId}`;
     await firestore.collection("staffNotifications").add({
@@ -56,6 +63,18 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** Проверяет, что сотрудник (staffId) на смене для данного venueId. */
+async function isStaffOnShift(
+  firestore: Firestore,
+  staffId: string,
+  venueId: string
+): Promise<boolean> {
+  const snap = await firestore.collection("staff").doc(staffId).get();
+  if (!snap.exists) return false;
+  const d = snap.data();
+  return (d?.venueId === venueId && d?.onShift === true) || false;
 }
 
 async function getAssignedStaffForTable(
