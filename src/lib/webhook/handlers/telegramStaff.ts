@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 import { collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { closeTableAndNotifyGuest, sosFanOut } from "@/lib/bot-router";
+import { getAppUrl } from "@/lib/webhook/utils";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -166,18 +167,19 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Подсказка + кнопка SOS. Для сети (venueIds) — только [Дата] | [Время смены: От - До] | [Название заведения]
+  // Подсказка + кнопка SOS + вход в Staff Workspace (bot=staff → только кабинет персонала)
   const staffData = await getStaffByTgId(String(fromId));
   let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
-  const inlineKeyboard: { text: string; callback_data?: string }[][] = [[{ text: "🚨 SOS", callback_data: "sos" }]];
+  const baseUrl = getAppUrl();
+  const staffAppUrl = `${baseUrl}/mini-app?bot=staff`;
+  const inlineKeyboard: { text: string; callback_data?: string; web_app?: { url: string } }[][] = [
+    [{ text: "🚨 SOS", callback_data: "sos" }, { text: "📱 Открыть пульт", web_app: { url: staffAppUrl } }],
+  ];
 
   if (staffData?.venueIds?.length) {
     const todayShift = await getTodayShiftVenue(staffData.staffId);
     if (todayShift?.name) {
-      const timePart = todayShift.startTime && todayShift.endTime
-        ? `${todayShift.startTime} – ${todayShift.endTime}`
-        : "—";
-      replyText = `${todayShift.date} | ${timePart} | ${todayShift.name}\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
+      replyText = `${todayISO()} | — | ${todayShift.name}\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
     }
   }
 

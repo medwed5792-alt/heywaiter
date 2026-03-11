@@ -1,12 +1,23 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
+import { haversineDistanceM } from "@/lib/geo";
+import {
+  StaffVenuePicker,
+  getStaffVenueFromSession,
+  setStaffVenueInSession,
+} from "@/components/staff/StaffVenuePicker";
 
 const DEFAULT_VENUE_ID = "current";
 const POLL_MS = 8000;
 const NOTIFICATIONS_POLL_MS = 5000;
+const GEO_OPTIONS: PositionOptions = {
+  enableHighAccuracy: false,
+  maximumAge: 30_000,
+  timeout: 10_000,
+};
 
 type Tab = "work" | "cabinet";
 
@@ -32,6 +43,18 @@ interface NotificationItem {
   createdAt: string | null;
 }
 
+interface VenueOption {
+  venueId: string;
+  name: string;
+}
+
+interface VenueGeo {
+  lat: number;
+  lng: number;
+  radius: number;
+  configured: boolean;
+}
+
 function formatTime(iso: string | null): string {
   if (!iso) return "—";
   try {
@@ -44,7 +67,11 @@ function formatTime(iso: string | null): string {
 
 export default function MiniAppStaffPage() {
   const searchParams = useSearchParams();
-  const venueId = (searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID);
+  const router = useRouter();
+  const rawVenue = searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID;
+  const [venueId, setVenueId] = useState<string>(rawVenue);
+  const [venuesList, setVenuesList] = useState<VenueOption[]>([]);
+  const [venuePickerShown, setVenuePickerShown] = useState(false);
   const [tab, setTab] = useState<Tab>("work");
   const [userId, setUserId] = useState<string | null>(null);
   const [staffId, setStaffId] = useState<string | null>(null);
@@ -53,8 +80,14 @@ export default function MiniAppStaffPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [venueGeo, setVenueGeo] = useState<VenueGeo | null>(null);
+  const [geoBlocked, setGeoBlocked] = useState(false);
+  const [geoMessage, setGeoMessage] = useState<string | null>(null);
+  const [geoLoading, setGeoLoading] = useState(false);
 
-  const fetchMe = useCallback(async () => {
+  const effectiveVenueId = venueId && venueId !== DEFAULT_VENUE_ID ? venueId : null;
+
+  const fetchMe = useCallback(async (vid: string) => {
     const telegramId = getTelegramUserId();
     if (!telegramId) {
       setError("Откройте приложение из Telegram");
@@ -63,7 +96,7 @@ export default function MiniAppStaffPage() {
     }
     try {
       const res = await fetch(
-        `/api/staff/me?venueId=${encodeURIComponent(venueId)}&telegramId=${encodeURIComponent(telegramId)}`
+        `/api/staff/me?venueId=${encodeURIComponent(vid)}&telegramId=${encodeURIComponent(telegramId)}`
       );
       const data = await res.json();
       if (!res.ok) {
@@ -80,7 +113,7 @@ export default function MiniAppStaffPage() {
     } finally {
       setLoading(false);
     }
-  }, [venueId]);
+  }, []);
 
   const fetchNotifications = useCallback(async () => {
     if (!staffId) return;
@@ -95,17 +128,60 @@ export default function MiniAppStaffPage() {
     } catch (_e) {
       // ignore
     }
-  }, [staffId, venueId]);
+  }, [staffId, effectiveVenueId]);
+
+  // Мульти-заведения: при v=current запрашиваем список, при одном — подставляем, при нескольких — экран выбора
+  useEffect(() => {
+    const telegramId = getTelegramUserId();
+    if (!telegramId) return;
+    if (rawVenue && rawVenue !== DEFAULT_VENUE_ID) {
+      setVenueId(rawVenue);
+      setVenuePickerShown(false);
+      setLoading(true);
+      fetchMe(rawVenue);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/staff/venues?telegramId=${encodeURIComponent(telegramId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (cancelled) return;
+      const list: VenueOption[] = data.venues ?? [];
+      setVenuesList(list);
+      if (list.length === 0) {
+        setError("Нет привязанных заведений");
+        setLoading(false);
+        return;
+      }
+      if (list.length === 1) {
+        const id = list[0].venueId;
+        setStaffVenueInSession(id);
+        setVenueId(id);
+        setLoading(true);
+        router.replace(`/mini-app/staff?${new URLSearchParams({ v: id }).toString()}`);
+        fetchMe(id);
+        return;
+      }
+      const sessionVenue = getStaffVenueFromSession();
+      const inList = sessionVenue && list.some((v) => v.venueId === sessionVenue);
+      if (inList && sessionVenue) {
+        setVenueId(sessionVenue);
+        setVenuePickerShown(false);
+        setLoading(true);
+        fetchMe(sessionVenue);
+        return;
+      }
+      setVenuePickerShown(true);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [rawVenue, router, fetchMe]);
 
   useEffect(() => {
-    fetchMe();
-  }, [fetchMe]);
-
-  useEffect(() => {
-    if (!userId || loading) return;
-    const t = setInterval(fetchMe, POLL_MS);
+    if (!userId || loading || !effectiveVenueId) return;
+    const t = setInterval(() => fetchMe(effectiveVenueId), POLL_MS);
     return () => clearInterval(t);
-  }, [userId, loading, fetchMe]);
+  }, [userId, loading, effectiveVenueId, fetchMe]);
 
   useEffect(() => {
     fetchNotifications();
@@ -114,9 +190,93 @@ export default function MiniAppStaffPage() {
     return () => clearInterval(t);
   }, [staffId, fetchNotifications]);
 
+  // Гео-валидация: загрузка настроек заведения и проверка дистанции (Haversine)
+  useEffect(() => {
+    if (!effectiveVenueId || onShift) {
+      setVenueGeo(null);
+      setGeoBlocked(false);
+      setGeoMessage(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setGeoLoading(true);
+      try {
+        const res = await fetch(`/api/venues/${encodeURIComponent(effectiveVenueId)}/geo`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || !data?.configured) {
+          setVenueGeo(null);
+          setGeoBlocked(false);
+          setGeoMessage(null);
+          setGeoLoading(false);
+          return;
+        }
+        setVenueGeo({
+          lat: data.lat,
+          lng: data.lng,
+          radius: data.radius ?? 100,
+          configured: true,
+        });
+        if (typeof navigator === "undefined" || !navigator.geolocation) {
+          setGeoBlocked(false);
+          setGeoMessage(null);
+          setGeoLoading(false);
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (cancelled) return;
+            const dist = haversineDistanceM(
+              pos.coords.latitude,
+              pos.coords.longitude,
+              data.lat,
+              data.lng
+            );
+            const radius = data.radius ?? 100;
+            if (dist > radius) {
+              setGeoBlocked(true);
+              setGeoMessage(
+                `Вы вне зоны заведения (радиус: ${radius} м). Подойдите ближе, чтобы начать смену.`
+              );
+            } else {
+              setGeoBlocked(false);
+              setGeoMessage(null);
+            }
+            setGeoLoading(false);
+          },
+          () => {
+            if (!cancelled) {
+              setGeoBlocked(false);
+              setGeoMessage(null);
+              setGeoLoading(false);
+            }
+          },
+          GEO_OPTIONS
+        );
+      } catch {
+        if (!cancelled) setGeoLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [effectiveVenueId, onShift]);
+
+  const handleVenueSelect = useCallback(
+    (selectedId: string) => {
+      setStaffVenueInSession(selectedId);
+      setVenueId(selectedId);
+      setVenuePickerShown(false);
+      router.replace(`/mini-app/staff?${new URLSearchParams({ v: selectedId }).toString()}`);
+      setLoading(true);
+      fetchMe(selectedId);
+    },
+    [router, fetchMe]
+  );
+
   const handleShiftAction = async () => {
     if (actionLoading) return;
     if (!staffId && !userId) return;
+    if (!onShift && geoBlocked) return;
     setActionLoading(true);
     try {
       const res = await fetch("/api/staff/shift", {
@@ -124,7 +284,7 @@ export default function MiniAppStaffPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(staffId && { staffId }),
-          ...(userId && !staffId && { userId, venueId }),
+          ...(userId && !staffId && { userId, venueId: effectiveVenueId ?? venueId }),
           action: onShift ? "stop" : "start",
         }),
       });
@@ -132,7 +292,7 @@ export default function MiniAppStaffPage() {
       if (!res.ok) throw new Error(data.error || "Ошибка");
       setOnShift(data.onShift === true);
       setError(null);
-      fetchMe();
+      if (effectiveVenueId) fetchMe(effectiveVenueId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка смены");
     } finally {
@@ -142,6 +302,15 @@ export default function MiniAppStaffPage() {
 
   if (typeof window !== "undefined" && (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp) {
     (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp?.ready?.();
+  }
+
+  if (venuePickerShown && venuesList.length > 1) {
+    return (
+      <StaffVenuePicker
+        venues={venuesList}
+        onSelect={handleVenueSelect}
+      />
+    );
   }
 
   if (loading) {
@@ -202,19 +371,24 @@ export default function MiniAppStaffPage() {
               {error && (
                 <p className="mt-2 text-sm text-red-600">{error}</p>
               )}
+              {!onShift && geoMessage && (
+                <p className="mt-2 text-sm text-amber-700">{geoMessage}</p>
+              )}
               <button
                 type="button"
                 onClick={handleShiftAction}
-                disabled={actionLoading}
+                disabled={actionLoading || (!onShift && (geoBlocked || geoLoading))}
                 className={`mt-4 w-full rounded-xl py-4 text-base font-semibold text-white transition-opacity disabled:opacity-50 ${
                   onShift ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700"
                 }`}
               >
                 {actionLoading
                   ? "…"
-                  : onShift
-                    ? "Завершить смену"
-                    : "Начать смену"}
+                  : geoLoading && !onShift
+                    ? "Проверка геолокации…"
+                    : onShift
+                      ? "Завершить смену"
+                      : "Начать смену"}
               </button>
             </section>
 

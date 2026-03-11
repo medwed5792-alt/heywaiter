@@ -200,9 +200,10 @@ function MiniAppContent() {
     const v = (venueId || searchParams.get("v")) ?? "";
     const t = (tableId || searchParams.get("t")) ?? "";
     const role = searchParams.get("role") ?? "";
-
-    // Жёсткое разделение: при наличии t — всегда гость; иначе при role=staff — кабинет персонала
-    if (role === "staff" && !t && !tableId) {
+    const bot = searchParams.get("bot") ?? "";
+    // Контекст по точке входа: @waitertalk_bot (Staff) передаёт bot=staff → кабинет; @HeyWaiter_bot — всегда гость (при t — 2 кнопки)
+    const isStaffEntry = bot === "staff" || role === "staff";
+    if (isStaffEntry && !t && !tableId) {
       router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
       return;
     }

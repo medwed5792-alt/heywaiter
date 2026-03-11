@@ -11,9 +11,9 @@ import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 
 /**
- * Транзитный шлюз для ГОСТЯ. Только параметры v (venueId) и t (стол).
- * UI персонала не показывается; при наличии t всегда гостевой пульт (2 кнопки).
- * Fast Food: ?v=venueId&orderId=XXX. Параметр заведения строго v, не vid.
+ * Транзитный шлюз для ГОСТЯ. По ссылке /check-in/panel?v=...&t=... принудительно
+ * открывается гостевой интерфейс (2 кнопки: Вызов, Счёт), игнорируя рабочие статусы пользователя.
+ * Параметр заведения строго v (venueId), не vid. Fast Food: ?v=venueId&orderId=XXX.
  */
 function PanelContent() {
   const searchParams = useSearchParams();
