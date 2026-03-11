@@ -44,7 +44,7 @@ function formatTime(iso: string | null): string {
 
 export default function MiniAppStaffPage() {
   const searchParams = useSearchParams();
-  const venueId = searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID;
+  const venueId = (searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID);
   const [tab, setTab] = useState<Tab>("work");
   const [userId, setUserId] = useState<string | null>(null);
   const [staffId, setStaffId] = useState<string | null>(null);

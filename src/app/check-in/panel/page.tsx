@@ -11,27 +11,25 @@ import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 
 /**
- * Mini App гостя.
- * Сценарий QR (v=ID, t=ID): сразу пульт вызова.
- * Сценарий «Из дома» (без v/t): главное меню — Сканер, Монитор, Бронирование, Акции, Рейтинг, Поиск, Связаться.
- * Fast Food: ?v=venueId&orderId=XXX — Статус заказа и Меню. Масштаб 75% в globals.css.
+ * Транзитный шлюз для ГОСТЯ. Только параметры v (venueId) и t (стол).
+ * UI персонала не показывается; при наличии t всегда гостевой пульт (2 кнопки).
+ * Fast Food: ?v=venueId&orderId=XXX. Параметр заведения строго v, не vid.
  */
 function PanelContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const venueId = searchParams.get("v") ?? "";
-  const tableId = searchParams.get("t") ?? "";
+  const venueId = (searchParams.get("v") ?? "").trim();
+  const tableId = (searchParams.get("t") ?? "").trim();
   const orderId = searchParams.get("orderId") ?? "";
   const chatId = searchParams.get("chatId") ?? "";
   const platform = searchParams.get("platform") ?? "telegram";
-  const role = searchParams.get("role") ?? "guest";
-  const isPro = role === "vip";
 
   const isFastFood = Boolean(venueId && (orderId || chatId));
   const isFullService = Boolean(venueId && tableId);
   const isValid = isFastFood || isFullService;
   const isDirectAccess = !venueId && !tableId && !orderId;
 
+  // Персонал сюда не попадает: при role=staff и отсутствии t mini-app редиректит на /mini-app/staff
   const sessionId = useMemo(() => searchParams.get("sessionId") ?? undefined, [searchParams]);
 
   if (isDirectAccess) {
@@ -64,7 +62,7 @@ function PanelContent() {
     );
   }
 
-  const vidFromUrl = searchParams.get("vid") ?? null;
+  const visitorIdFromUrl = searchParams.get("vid") ?? null;
   return (
     <FullServicePanel
       venueId={venueId}
@@ -72,8 +70,7 @@ function PanelContent() {
       sessionId={sessionId}
       chatId={chatId}
       platform={platform}
-      isPro={isPro}
-      vidFromUrl={vidFromUrl}
+      visitorIdFromUrl={visitorIdFromUrl}
     />
   );
 }
@@ -84,20 +81,18 @@ function FullServicePanel({
   sessionId,
   chatId,
   platform,
-  isPro,
-  vidFromUrl,
+  visitorIdFromUrl,
 }: {
   venueId: string;
   tableId: string;
   sessionId: string | undefined;
   chatId: string;
   platform: string;
-  isPro: boolean;
-  vidFromUrl?: string | null;
+  visitorIdFromUrl?: string | null;
 }) {
   const { visitorId } = useVisitor();
   const checkInDone = useRef(false);
-  const effectiveVisitorId = visitorId || vidFromUrl || null;
+  const effectiveVisitorId = visitorId || visitorIdFromUrl || null;
   useEffect(() => {
     if (checkInDone.current || !venueId || !tableId) return;
     checkInDone.current = true;

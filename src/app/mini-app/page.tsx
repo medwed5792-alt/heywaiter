@@ -199,20 +199,26 @@ function MiniAppContent() {
     if (!loaded || !firestoreDone) return;
     const v = (venueId || searchParams.get("v")) ?? "";
     const t = (tableId || searchParams.get("t")) ?? "";
+    const role = searchParams.get("role") ?? "";
+
+    // Жёсткое разделение: при наличии t — всегда гость; иначе при role=staff — кабинет персонала
+    if (role === "staff" && !t && !tableId) {
+      router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
+      return;
+    }
+
+    if (!v || !t) return;
+
     const chatId = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined)?.initDataUnsafe?.user?.id : undefined;
-    const params = new URLSearchParams(searchParams.toString());
-    if (v) params.set("v", v);
-    if (t) params.set("t", t);
-    const vid = (() => {
-      try {
-        return typeof localStorage !== "undefined" ? localStorage.getItem(VISITOR_STORAGE_KEY) : null;
-      } catch {
-        return null;
-      }
-    })();
-    if (vid) params.set("vid", vid);
+    const params = new URLSearchParams();
+    params.set("v", v);
+    params.set("t", t);
+    try {
+      const vid = typeof localStorage !== "undefined" ? localStorage.getItem(VISITOR_STORAGE_KEY) : null;
+      if (vid) params.set("vid", vid);
+    } catch (_) {}
     if (chatId) params.set("chatId", String(chatId));
-    if (!params.has("platform")) params.set("platform", "telegram");
+    params.set("platform", searchParams.get("platform") || "telegram");
     router.replace(`/check-in/panel?${params.toString()}`);
   }, [loaded, firestoreDone, venueId, tableId, searchParams, router]);
 
