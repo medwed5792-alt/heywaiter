@@ -3,34 +3,10 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import type { Firestore } from "firebase-admin/firestore";
+import { findExistingUserIdByIdentities } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 
 const VENUE_ID = "current";
-
-/**
- * Ищет существующий global_users по одному из идентификаторов (identities.tg, .email, .phone).
- * Возвращает userId первого найденного документа или null.
- */
-async function findExistingUserIdByIdentities(
-  firestore: Firestore,
-  identities: UnifiedIdentities
-): Promise<string | null> {
-  const keys = ["tg", "email", "phone", "wa", "vk"] as const;
-  for (const key of keys) {
-    const value = identities[key];
-    if (!value || typeof value !== "string" || !value.trim()) continue;
-    const snap = await firestore
-      .collection("global_users")
-      .where(`identities.${key}`, "==", value.trim())
-      .limit(1)
-      .get();
-    if (!snap.empty) {
-      return snap.docs[0].id;
-    }
-  }
-  return null;
-}
 
 /**
  * POST /api/admin/staff/upsert
@@ -149,7 +125,7 @@ export async function POST(request: NextRequest) {
 
     let existingUserId: string | null = null;
     if (Object.keys(identities).length > 0) {
-      existingUserId = await findExistingUserIdByIdentities(firestore, identities);
+      existingUserId = await findExistingUserIdByIdentities(identities);
     }
 
     const affiliation: Affiliation = {
