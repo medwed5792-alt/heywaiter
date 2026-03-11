@@ -7,6 +7,17 @@ import { db } from "@/lib/firebase";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 
 const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
+const MINIAPP_CACHE_VENUE = "heywaiter_miniapp_venue_id";
+const MINIAPP_CACHE_TABLE = "heywaiter_miniapp_table_id";
+
+/** Очистка закэшированных venue/table из localStorage при новом start_param */
+function clearMiniappCache(): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(MINIAPP_CACHE_VENUE);
+    localStorage.removeItem(MINIAPP_CACHE_TABLE);
+  } catch (_) {}
+}
 
 /** Тип для Telegram WebApp в мини-приложении (start_param, user.id есть только здесь). */
 type TelegramWebAppInit = {
@@ -46,11 +57,22 @@ function MiniAppContent() {
   const [fromTelegram, setFromTelegram] = useState(false);
   const lastAppliedStartParam = useRef<string>("");
 
+  const forceResetTableAndLoad = useCallback((newVenueId: string, newTableId: string) => {
+    lastAppliedStartParam.current = "";
+    setVenueId(newVenueId);
+    setTableId(newTableId);
+    setVenueSettings(null);
+    setTableSettings(null);
+    setFirestoreDone(false);
+    setFromTelegram(true);
+  }, []);
+
   const applyStartParam = useCallback((startParam: string) => {
     if (!startParam.trim()) return false;
     const parsed = parseStartParam(startParam);
     if (!parsed) return false;
     lastAppliedStartParam.current = startParam;
+    clearMiniappCache();
     setVenueId(parsed.venueId);
     setTableId(parsed.tableId);
     setVenueSettings(null);
@@ -76,8 +98,12 @@ function MiniAppContent() {
 
   useEffect(() => {
     const startParam = getStartParam();
-    const fromQueryV = searchParams.get("v") ?? "";
-    const fromQueryT = searchParams.get("t") ?? "";
+    const fromQueryV = (searchParams.get("v") ?? "").trim();
+    const fromQueryT = (searchParams.get("t") ?? "").trim();
+
+    if (typeof window !== "undefined" && startParam) {
+      clearMiniappCache();
+    }
 
     if (startParam) {
       const applied = applyStartParam(startParam);
@@ -85,15 +111,18 @@ function MiniAppContent() {
         setLoaded(true);
         setFirestoreDone(true);
       }
-    } else if (fromQueryV) {
-      setVenueId(fromQueryV);
-      if (fromQueryT) setTableId(fromQueryT);
+    } else if (fromQueryV || fromQueryT) {
+      const newV = fromQueryV || venueId;
+      const newT = fromQueryT || tableId;
+      if (newV !== venueId || newT !== tableId) {
+        forceResetTableAndLoad(newV, newT);
+      }
     } else {
       setLoaded(true);
       setFirestoreDone(true);
     }
     setLoaded(true);
-  }, [searchParams, applyStartParam]);
+  }, [searchParams, applyStartParam, forceResetTableAndLoad, venueId, tableId]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -106,7 +135,7 @@ function MiniAppContent() {
   }, [applyStartParam]);
 
   useEffect(() => {
-    if (!venueId) {
+    if (!venueId && !tableId) {
       setFirestoreDone(true);
       return;
     }
@@ -115,23 +144,46 @@ function MiniAppContent() {
     let cancelled = false;
     (async () => {
       try {
-        const venueSnap = await getDoc(doc(db, "venues", venueId));
-        if (cancelled) return;
-        if (venueSnap.exists()) {
-          setVenueSettings(venueSnap.data() as Record<string, unknown>);
+        let resolvedVenueId = venueId;
+        if (venueId) {
+          const venueSnap = await getDoc(doc(db, "venues", venueId));
+          if (cancelled) return;
+          if (venueSnap.exists()) {
+            setVenueSettings(venueSnap.data() as Record<string, unknown>);
+          }
         }
         if (tableId) {
-          const tablesSnap = await getDocs(
-            query(
-              collection(db, "tables"),
-              where("venueId", "==", venueId),
-              where("tableId", "==", tableId)
-            )
-          );
+          let tableData: Record<string, unknown> | null = null;
+          const byDocId = await getDoc(doc(db, "tables", tableId));
           if (cancelled) return;
-          const first = tablesSnap.docs[0];
-          if (first?.exists()) {
-            setTableSettings(first.data() as Record<string, unknown>);
+          if (byDocId.exists()) {
+            tableData = byDocId.data() as Record<string, unknown>;
+            const docVenueId = tableData?.venueId as string | undefined;
+            if (docVenueId && !resolvedVenueId) {
+              resolvedVenueId = docVenueId;
+              setVenueId(docVenueId);
+              const venueSnap = await getDoc(doc(db, "venues", docVenueId));
+              if (!cancelled && venueSnap.exists()) {
+                setVenueSettings(venueSnap.data() as Record<string, unknown>);
+              }
+            }
+          }
+          if (!tableData && resolvedVenueId) {
+            const tablesSnap = await getDocs(
+              query(
+                collection(db, "tables"),
+                where("venueId", "==", resolvedVenueId),
+                where("tableId", "==", tableId)
+              )
+            );
+            if (cancelled) return;
+            const first = tablesSnap.docs[0];
+            if (first?.exists()) {
+              tableData = first.data() as Record<string, unknown>;
+            }
+          }
+          if (tableData) {
+            setTableSettings(tableData);
           }
         }
       } catch (e) {
@@ -167,10 +219,14 @@ function MiniAppContent() {
   const venueName = (venueSettings?.name as string) ?? venueId;
   const tableNumber = (tableSettings?.tableNumber as number) ?? tableId;
 
+  const isLoadingTable = Boolean(tableId && !firestoreDone);
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6" style={{ zoom: 0.75 }}>
       <p className="text-gray-500">
-        {fromTelegram && venueId ? (
+        {isLoadingTable ? (
+          "Загрузка стола…"
+        ) : fromTelegram && venueId ? (
           <>Загрузка {venueName}{tableId ? ` · Стол ${tableNumber || tableId}` : ""}…</>
         ) : (
           "Открытие пульта…"
