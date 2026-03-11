@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
-import { haversineDistanceM } from "@/lib/geo";
+import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import {
   StaffVenuePicker,
   getStaffVenueFromSession,
@@ -276,7 +276,7 @@ export default function MiniAppStaffPage() {
   const handleShiftAction = async () => {
     if (actionLoading) return;
     if (!staffId && !userId) return;
-    if (!onShift && geoBlocked) return;
+    if (!onShift && !IS_GEO_DEBUG && geoBlocked) return;
     setActionLoading(true);
     try {
       const res = await fetch("/api/staff/shift", {
@@ -377,14 +377,14 @@ export default function MiniAppStaffPage() {
               <button
                 type="button"
                 onClick={handleShiftAction}
-                disabled={actionLoading || (!onShift && (geoBlocked || geoLoading))}
+                disabled={actionLoading || (!onShift && !IS_GEO_DEBUG && (geoBlocked || geoLoading))}
                 className={`mt-4 w-full rounded-xl py-4 text-base font-semibold text-white transition-opacity disabled:opacity-50 ${
                   onShift ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700"
                 }`}
               >
                 {actionLoading
                   ? "…"
-                  : geoLoading && !onShift
+                  : !IS_GEO_DEBUG && geoLoading && !onShift
                     ? "Проверка геолокации…"
                     : onShift
                       ? "Завершить смену"
@@ -415,6 +415,9 @@ export default function MiniAppStaffPage() {
                 )}
               </div>
             </section>
+            {IS_GEO_DEBUG && (
+              <p className="text-xs text-slate-400 text-center">🛠 Debug: GPS-проверка отключена</p>
+            )}
           </div>
         )}
 

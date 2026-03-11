@@ -1,8 +1,12 @@
 /**
  * Geo-Fencing: Haversine, проверка выхода из зоны, Escape Alert.
+ * Debug: при IS_GEO_DEBUG === true проверка дистанции считается «в зоне» (байпас для тестов).
  */
-
 const EARTH_RADIUS_M = 6371000;
+
+/** Временный debug: true = всегда считать «в зоне». NEXT_PUBLIC_GEO_DEBUG=false отключает. */
+export const IS_GEO_DEBUG =
+  typeof process === "undefined" || process.env.NEXT_PUBLIC_GEO_DEBUG !== "false";
 
 /**
  * Расстояние между двумя точками (м) по формуле Haversine.
@@ -44,6 +48,7 @@ export function offsetLatLngByMeters(
 
 /**
  * Проверка: пользователь вне геозоны заведения?
+ * При IS_GEO_DEBUG === true всегда возвращает false (в зоне); логика Haversine и данные не меняются.
  */
 export function isOutsideVenue(
   userLat: number,
@@ -52,6 +57,7 @@ export function isOutsideVenue(
   venueLng: number,
   radiusM: number
 ): boolean {
+  if (IS_GEO_DEBUG) return false;
   const dist = haversineDistanceM(userLat, userLng, venueLat, venueLng);
   return dist > radiusM;
 }

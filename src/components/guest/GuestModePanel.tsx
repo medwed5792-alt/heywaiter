@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Bell, Receipt } from "lucide-react";
+import { IS_GEO_DEBUG } from "@/lib/geo";
 
 const COOLDOWN_SEC = 30;
 
@@ -109,6 +110,9 @@ export function GuestModePanel({ venueId, tableId, visitorId }: GuestModePanelPr
         )}
         {!error && cooldownLeft === 0 && !loading && (
           <p className="text-sm text-slate-500">Стол №{tableId}</p>
+        )}
+        {IS_GEO_DEBUG && (
+          <p className="mt-2 text-xs text-slate-400">🛠 Debug: GPS-проверка отключена</p>
         )}
       </div>
     </div>

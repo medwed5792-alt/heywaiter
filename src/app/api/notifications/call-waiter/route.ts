@@ -5,6 +5,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { ServiceRole } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
+import { IS_GEO_DEBUG } from "@/lib/geo";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -54,6 +55,7 @@ async function sendTelegramMessage(token: string, chatId: string, text: string):
  * для каждого берёт Global ID и identities.tg, отправляет уведомление в Telegram
  * через Staff Bot (@waitertalk_bot). Сообщение содержит номер стола (параметр t).
  * Тело: venueId, tableId, type?: "call_waiter" | "request_bill", visitorId?
+ * При IS_GEO_DEBUG серверная проверка координат не выполняется — вызов принимается из любой точки.
  */
 export async function POST(request: NextRequest) {
   try {
