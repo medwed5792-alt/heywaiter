@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useVisitor } from "@/components/providers/VisitorProvider";
@@ -11,6 +11,7 @@ const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
 /** Тип для Telegram WebApp в мини-приложении (start_param, user.id есть только здесь). */
 type TelegramWebAppInit = {
   initDataUnsafe?: { start_param?: string; user?: { id?: number } };
+  ready?: () => void;
 };
 
 /** Парсинг start_param: "v_venueId_t_tableId" или "v_venueId_t_tableId_vid_visitorId" */
@@ -26,6 +27,12 @@ function parseStartParam(startParam: string): { venueId: string; tableId: string
   return null;
 }
 
+function getStartParam(): string {
+  if (typeof window === "undefined") return "";
+  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  return tg?.initDataUnsafe?.start_param ?? "";
+}
+
 function MiniAppContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -37,48 +44,74 @@ function MiniAppContent() {
   const [loaded, setLoaded] = useState(false);
   const [firestoreDone, setFirestoreDone] = useState(false);
   const [fromTelegram, setFromTelegram] = useState(false);
+  const lastAppliedStartParam = useRef<string>("");
+
+  const applyStartParam = useCallback((startParam: string) => {
+    if (!startParam.trim()) return false;
+    const parsed = parseStartParam(startParam);
+    if (!parsed) return false;
+    lastAppliedStartParam.current = startParam;
+    setVenueId(parsed.venueId);
+    setTableId(parsed.tableId);
+    setVenueSettings(null);
+    setTableSettings(null);
+    setFirestoreDone(false);
+    if (parsed.visitorId) {
+      try {
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
+        }
+        setVisitorId(parsed.visitorId);
+      } catch (_) {}
+    }
+    setFromTelegram(true);
+    return true;
+  }, [setVisitorId]);
 
   useEffect(() => {
-    const tg = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined) : undefined;
-    const startParam = tg?.initDataUnsafe?.start_param ?? "";
+    if (typeof window !== "undefined" && window.Telegram?.WebApp) {
+      (window.Telegram.WebApp as TelegramWebAppInit).ready?.();
+    }
+  }, []);
+
+  useEffect(() => {
+    const startParam = getStartParam();
     const fromQueryV = searchParams.get("v") ?? "";
     const fromQueryT = searchParams.get("t") ?? "";
 
     if (startParam) {
-      const parsed = parseStartParam(startParam);
-      if (parsed) {
-        setVenueId(parsed.venueId);
-        setTableId(parsed.tableId);
-        if (parsed.visitorId) {
-          try {
-            if (typeof localStorage !== "undefined") {
-              localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
-            }
-            setVisitorId(parsed.visitorId);
-          } catch (_) {}
-        }
-        setFromTelegram(true);
-      } else {
+      const applied = applyStartParam(startParam);
+      if (!applied) {
         setLoaded(true);
         setFirestoreDone(true);
       }
-    }
-    if (fromQueryV && !startParam) {
+    } else if (fromQueryV) {
       setVenueId(fromQueryV);
       if (fromQueryT) setTableId(fromQueryT);
-    }
-    if (!startParam && !fromQueryV) {
+    } else {
       setLoaded(true);
       setFirestoreDone(true);
     }
     setLoaded(true);
-  }, [searchParams]);
+  }, [searchParams, applyStartParam]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const startParam = getStartParam();
+      if (startParam && startParam !== lastAppliedStartParam.current) {
+        applyStartParam(startParam);
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [applyStartParam]);
 
   useEffect(() => {
     if (!venueId) {
       setFirestoreDone(true);
       return;
     }
+    setVenueSettings(null);
+    setTableSettings(null);
     let cancelled = false;
     (async () => {
       try {
