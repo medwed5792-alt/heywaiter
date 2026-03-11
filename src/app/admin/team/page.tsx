@@ -5,19 +5,11 @@ import toast from "react-hot-toast";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
-import type { ExitReason, Staff, StaffGroup, CallCategory } from "@/lib/types";
+import type { Staff, StaffGroup, CallCategory } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
 const VENUE_ID = "current";
-
-const EXIT_REASONS: { value: ExitReason; label: string }[] = [
-  { value: "discipline", label: "Дисциплина" },
-  { value: "own_wish", label: "Личные причины" },
-  { value: "professionalism", label: "Профи" },
-  { value: "conflict", label: "Конфликтность" },
-  { value: "other", label: "Другое" },
-];
 
 /** Иерархия должностей v2: группа → список ролей с подписями. */
 const POSITION_GROUPS_V2: { groupId: StaffGroup; groupLabel: string; roles: { value: ServiceRole; label: string }[] }[] = [
@@ -181,8 +173,7 @@ export default function TeamPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "on_shift">("all");
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [dismissModal, setDismissModal] = useState<Staff | null>(null);
-  const [exitReason, setExitReason] = useState<ExitReason>("own_wish");
-  const [exitReasonComment, setExitReasonComment] = useState("");
+  const [exitReasonText, setExitReasonText] = useState("");
   const [rating, setRating] = useState(3);
   const [loading, setLoading] = useState(false);
 
@@ -243,13 +234,16 @@ export default function TeamPage() {
 
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
-    setExitReason("own_wish");
-    setExitReasonComment("");
+    setExitReasonText("");
     setRating(3);
   };
 
   const handleDismissSubmit = async () => {
     if (!dismissModal) return;
+    if (!exitReasonText.trim()) {
+      toast.error("Укажите причину увольнения");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch("/api/admin/staff/dismiss", {
@@ -257,9 +251,9 @@ export default function TeamPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           staffId: dismissModal.id,
-          exitReason,
+          venueId: VENUE_ID,
+          exitReason: exitReasonText.trim(),
           rating,
-          ...(exitReasonComment.trim() && { exitReasonComment: exitReasonComment.trim() }),
         }),
       });
       const data = await res.json();
@@ -268,7 +262,7 @@ export default function TeamPage() {
         prev.map((s) => (s.id === dismissModal.id ? { ...s, active: false } : s))
       );
       setDismissModal(null);
-      toast.success("Сотрудник уволен");
+      toast.success("Контракт расторгнут");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка увольнения");
     } finally {
@@ -435,42 +429,35 @@ export default function TeamPage() {
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
             <h3 id="dismiss-title" className="font-semibold text-gray-900">Расторгнуть контракт (Unlink): {dismissName}</h3>
             <p className="mt-1 text-sm text-gray-600">
-              Укажите причину увольнения и оценку (1–5). Связь с заведением будет снята (status: former), запись сохранится в глобальный профиль сотрудника в архив.
+              Укажите причину увольнения и оценку (1–5). Связь с заведением будет снята, запись сохранится в архив профиля.
             </p>
-            <label className="mt-3 block text-sm font-medium text-gray-700">Категория причины</label>
-            <select
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              value={exitReason}
-              onChange={(e) => setExitReason(e.target.value as ExitReason)}
-            >
-              {EXIT_REASONS.map((r) => (
-                <option key={r.value} value={r.value}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-            <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения (текст)</label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения</label>
             <textarea
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[80px] resize-y"
-              placeholder="Дополнительный комментарий к причине увольнения…"
-              value={exitReasonComment}
-              onChange={(e) => setExitReasonComment(e.target.value)}
+              placeholder="Введите причину увольнения…"
+              value={exitReasonText}
+              onChange={(e) => setExitReasonText(e.target.value)}
               rows={3}
+              required
             />
-            <label className="mt-3 block text-sm font-medium text-gray-700">Рейтинг от ЛПР (1–5 звёзд)</label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Рейтинг (1–5)</label>
             <div className="mt-1 flex gap-1">
-              {[1, 2, 3, 4, 5].map((star) => (
+              {[1, 2, 3, 4, 5].map((n) => (
                 <button
-                  key={star}
+                  key={n}
                   type="button"
-                  onClick={() => setRating(star)}
-                  className="rounded p-1 text-lg focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  onClick={() => setRating(n)}
+                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    rating === n
+                      ? "border-amber-500 bg-amber-50 text-amber-700"
+                      : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
                 >
-                  <span className={rating >= star ? "text-amber-500" : "text-gray-300"}>★</span>
+                  {n}
                 </button>
               ))}
             </div>
-            <p className="mt-0.5 text-xs text-gray-500">{rating} из 5</p>
+            <p className="mt-0.5 text-xs text-gray-500">Выбрано: {rating} из 5</p>
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
@@ -483,9 +470,9 @@ export default function TeamPage() {
                 type="button"
                 className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                 onClick={handleDismissSubmit}
-                disabled={loading}
+                disabled={loading || !exitReasonText.trim()}
               >
-                {loading ? "Сохранение…" : "Расторгнуть контракт (Unlink)"}
+                {loading ? "Отправка…" : "Подтвердить"}
               </button>
             </div>
           </div>

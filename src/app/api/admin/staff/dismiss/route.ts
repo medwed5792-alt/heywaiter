@@ -3,42 +3,40 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import type { ExitReason, StaffCareerEntry, Affiliation } from "@/lib/types";
+import type { StaffCareerEntry, Affiliation } from "@/lib/types";
 
 const VENUE_ID = "current";
 
 /**
  * POST /api/admin/staff/dismiss
- * Offboarding (расторжение контракта / Unlink): снятие связи сотрудника с заведением.
- * Тело: { staffId: string, exitReason: ExitReason, rating: number (1-5), exitReasonComment?: string }
+ * Тело: { staffId: string, venueId?: string, exitReason: string (текст), rating: number (1-5) }
  *
- * - В global_users для текущего venueId в affiliations устанавливается status: "former".
- * - В careerHistory добавляется запись: exitDate, exitReason, rating, comment.
- * - Пересчитывается globalScore по истории оценок.
- * - В коллекции staff: active: false, onShift: false.
- * - Fallback: если у сотрудника нет записи в global_users — создаётся при увольнении.
- * Использует Firebase Admin (корректная обработка privateKey в .env).
+ * - Находит документ staff по staffId, при необходимости берёт venueId из тела или из документа.
+ * - В global_users находит affiliation с этим venueId и ставит status: "former".
+ * - Добавляет запись в careerHistory (date, exitReason как текст в comment, rating).
+ * - Пересчитывает globalScore по истории оценок.
+ * - В коллекции staff ставит active: false, onShift: false.
+ * - Fallback: если у сотрудника нет записи в global_users — создаёт её при увольнении.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { staffId, exitReason, rating, exitReasonComment } = body as {
+    const { staffId, venueId: bodyVenueId, exitReason, rating } = body as {
       staffId?: string;
-      exitReason?: ExitReason;
+      venueId?: string;
+      exitReason?: string;
       rating?: number;
-      exitReasonComment?: string;
     };
 
-    if (!staffId || !exitReason) {
+    if (!staffId) {
       return NextResponse.json(
-        { error: "staffId and exitReason required" },
+        { error: "staffId required" },
         { status: 400 }
       );
     }
-    const allowed: ExitReason[] = ["own_wish", "discipline", "professionalism", "conflict", "other"];
-    if (!allowed.includes(exitReason)) {
+    if (typeof exitReason !== "string" || !exitReason.trim()) {
       return NextResponse.json(
-        { error: "Invalid exitReason" },
+        { error: "exitReason required (text)" },
         { status: 400 }
       );
     }
@@ -59,7 +57,7 @@ export async function POST(request: NextRequest) {
     }
 
     const staffData = staffSnap.data() ?? {};
-    const venueId = (staffData.venueId as string) || VENUE_ID;
+    const venueId = (bodyVenueId && String(bodyVenueId).trim()) || (staffData.venueId as string) || VENUE_ID;
     const userId = (staffData.userId as string) || staffId;
     const position = (staffData.position as string) || "Сотрудник";
     const joinDate = staffData.invitedAt ?? staffData.createdAt;
@@ -69,9 +67,9 @@ export async function POST(request: NextRequest) {
       position,
       joinDate,
       exitDate: FieldValue.serverTimestamp(),
-      exitReason,
+      exitReason: "other",
       rating: ratingNum,
-      ...(typeof exitReasonComment === "string" && exitReasonComment.trim() && { comment: exitReasonComment.trim() }),
+      comment: exitReason.trim(),
     };
 
     const globalRef = firestore.collection("global_users").doc(userId);
@@ -105,7 +103,6 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       });
     } else {
-      // Fallback: у старого сотрудника нет userId — создаём запись в global_users при увольнении
       await globalRef.set({
         firstName: staffData.firstName ?? null,
         lastName: staffData.lastName ?? null,
