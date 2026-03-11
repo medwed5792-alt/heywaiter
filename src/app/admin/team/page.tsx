@@ -68,7 +68,7 @@ const ALL_POSITIONS_FLAT = POSITION_GROUPS_V2.flatMap((g) => g.roles);
 
 function getPositionLabel(position: string): string {
   const found = ALL_POSITIONS_FLAT.find((r) => r.value === position);
-  return found?.label ?? position || "—";
+  return (found?.label ?? position) || "—";
 }
 
 function getGroupAndCallCategory(position: string): { group: StaffGroup; call_category: CallCategory } | null {

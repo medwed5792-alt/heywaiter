@@ -62,4 +62,4 @@ export function middleware() {
   return;
 }
 
-export const config = { matcher: [] as string[] };
+export const config = { matcher: [] };
