@@ -9,7 +9,8 @@ import { LPR_ROLES } from "@/lib/types";
 /**
  * POST /api/notifications/call-waiter
  * Вызов официанта из Mini App: создаёт уведомление в staffNotifications.
- * Уведомления в Telegram уходят только сотрудникам, у которых onShift === true для данного venueId.
+ * Уведомления уходят только сотрудникам с onShift === true для данного venueId
+ * (и закреплённый официант, и группы официантов/ЛПР проходят эту проверку).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -27,19 +28,32 @@ export async function POST(request: NextRequest) {
 
     const firestore = getAdminFirestore();
 
+    // 1) Закреплённый официант за столом — только если на смене
     const assignedId = await getAssignedStaffForTable(firestore, venueId, tableId, "waiter");
-    const lprIds = await getLprStaffIds(firestore, venueId);
-    const waiterIds = await getStaffIdsByRoleOnShift(firestore, venueId, "waiter");
     const assignedOnShift = assignedId
       ? await isStaffOnShift(firestore, assignedId, venueId)
       : false;
-    const targetUids = Array.from(
+
+    // 2) Официанты на смене (уже фильтр по onShift в запросе)
+    const waiterIds = await getStaffIdsByRoleOnShift(firestore, venueId, "waiter");
+
+    // 3) ЛПР на смене (уже фильтр по onShift в запросе)
+    const lprIds = await getLprStaffIds(firestore, venueId);
+
+    const rawTargetUids = Array.from(
       new Set([
         ...(assignedOnShift && assignedId ? [assignedId] : []),
         ...waiterIds,
         ...lprIds,
       ])
     );
+
+    // Финальная проверка: в рассылку попадают только те, у кого onShift === true
+    const targetUids: string[] = [];
+    for (const id of rawTargetUids) {
+      const onShift = await isStaffOnShift(firestore, id, venueId);
+      if (onShift) targetUids.push(id);
+    }
 
     const message = `Вызов официанта, стол №${tableId}`;
     await firestore.collection("staffNotifications").add({
