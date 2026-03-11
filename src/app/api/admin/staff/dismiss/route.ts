@@ -1,38 +1,32 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  updateDoc,
-  setDoc,
-  query,
-  where,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import type { ExitReason, StaffCareerEntry, Affiliation } from "@/lib/types";
 
 const VENUE_ID = "current";
 
 /**
  * POST /api/admin/staff/dismiss
- * ЛПР: «Удаление» = Unlink — снятие связи с заведением.
- * Тело: { staffId: string, exitReason: ExitReason, rating?: number (1-5) }
- * - Устанавливает status: "former" для текущего venueId в affiliations.
- * - Сохраняет причину увольнения в careerHistory глобального профиля.
- * - Профиль остаётся в global_users для Супер-админа (/super/catalog).
+ * Offboarding (расторжение контракта / Unlink): снятие связи сотрудника с заведением.
+ * Тело: { staffId: string, exitReason: ExitReason, rating: number (1-5), exitReasonComment?: string }
+ *
+ * - В global_users для текущего venueId в affiliations устанавливается status: "former".
+ * - В careerHistory добавляется запись: exitDate, exitReason, rating, comment.
+ * - Пересчитывается globalScore по истории оценок.
+ * - В коллекции staff: active: false, onShift: false.
+ * - Fallback: если у сотрудника нет записи в global_users — создаётся при увольнении.
+ * Использует Firebase Admin (корректная обработка privateKey в .env).
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { staffId, exitReason, rating } = body as {
+    const { staffId, exitReason, rating, exitReasonComment } = body as {
       staffId?: string;
       exitReason?: ExitReason;
       rating?: number;
+      exitReasonComment?: string;
     };
 
     if (!staffId || !exitReason) {
@@ -57,32 +51,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const staffRef = doc(db, "staff", staffId);
-    const staffSnap = await getDoc(staffRef);
-    if (!staffSnap.exists()) {
+    const firestore = getAdminFirestore();
+
+    const staffSnap = await firestore.collection("staff").doc(staffId).get();
+    if (!staffSnap.exists) {
       return NextResponse.json({ error: "Staff not found" }, { status: 404 });
     }
 
-    const staffData = staffSnap.data();
+    const staffData = staffSnap.data() ?? {};
     const venueId = (staffData.venueId as string) || VENUE_ID;
     const userId = (staffData.userId as string) || staffId;
     const position = (staffData.position as string) || "Сотрудник";
-    const joinDate = staffData.invitedAt || staffData.createdAt;
-
-    const globalRef = doc(db, "global_users", userId);
-    const globalSnap = await getDoc(globalRef);
+    const joinDate = staffData.invitedAt ?? staffData.createdAt;
 
     const newEntry: StaffCareerEntry = {
       venueId,
       position,
       joinDate,
-      exitDate: serverTimestamp(),
+      exitDate: FieldValue.serverTimestamp(),
       exitReason,
       rating: ratingNum,
+      ...(typeof exitReasonComment === "string" && exitReasonComment.trim() && { comment: exitReasonComment.trim() }),
     };
 
-    if (globalSnap.exists()) {
-      const globalData = globalSnap.data();
+    const globalRef = firestore.collection("global_users").doc(userId);
+    const globalSnap = await globalRef.get();
+
+    if (globalSnap.exists) {
+      const globalData = globalSnap.data() ?? {};
       const affiliations: Affiliation[] = Array.isArray(globalData.affiliations)
         ? [...globalData.affiliations]
         : [];
@@ -102,39 +98,43 @@ export async function POST(request: NextRequest) {
           ? Math.round((ratingsWithValues.reduce((a, b) => a + b, 0) / ratingsWithValues.length) * 10) / 10
           : undefined;
 
-      await updateDoc(globalRef, {
+      await globalRef.update({
         affiliations,
         careerHistory,
         ...(globalScore != null && { globalScore }),
-        updatedAt: serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     } else {
-      // Legacy: staff без global_users — создаём запись в каталоге для Супер-админа
-      await setDoc(globalRef, {
+      // Fallback: у старого сотрудника нет userId — создаём запись в global_users при увольнении
+      await globalRef.set({
         firstName: staffData.firstName ?? null,
         lastName: staffData.lastName ?? null,
         identity: staffData.identity ?? null,
+        identities: staffData.identities ?? null,
         affiliations: [{ venueId, role: position, status: "former" as const }],
         careerHistory: [newEntry],
         globalScore: ratingNum,
-        updatedAt: serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     }
 
-    await updateDoc(staffRef, {
+    await firestore.collection("staff").doc(staffId).update({
       active: false,
       onShift: false,
-      updatedAt: serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
 
     const today = new Date().toISOString().slice(0, 10);
-    const futureShiftsSnap = await getDocs(
-      query(collection(db, "scheduleEntries"), where("staffId", "==", staffId))
-    );
+    const futureShiftsSnap = await firestore
+      .collection("scheduleEntries")
+      .where("staffId", "==", staffId)
+      .get();
     for (const d of futureShiftsSnap.docs) {
       const slot = d.data().slot as { date?: string } | undefined;
       const date = slot?.date ?? (d.data().date as string);
-      if (date && date >= today) await deleteDoc(doc(db, "scheduleEntries", d.id));
+      if (date && date >= today) {
+        await firestore.collection("scheduleEntries").doc(d.id).delete();
+      }
     }
 
     return NextResponse.json({ ok: true });

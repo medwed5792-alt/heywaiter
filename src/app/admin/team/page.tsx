@@ -150,7 +150,7 @@ function StaffRow({
             className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50"
             onClick={() => onDismiss(staff)}
           >
-            Отвязать
+            Расторгнуть контракт (Unlink)
           </button>
         )}
       </td>
@@ -182,6 +182,7 @@ export default function TeamPage() {
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [dismissModal, setDismissModal] = useState<Staff | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason>("own_wish");
+  const [exitReasonComment, setExitReasonComment] = useState("");
   const [rating, setRating] = useState(3);
   const [loading, setLoading] = useState(false);
 
@@ -243,6 +244,7 @@ export default function TeamPage() {
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
     setExitReason("own_wish");
+    setExitReasonComment("");
     setRating(3);
   };
 
@@ -257,6 +259,7 @@ export default function TeamPage() {
           staffId: dismissModal.id,
           exitReason,
           rating,
+          ...(exitReasonComment.trim() && { exitReasonComment: exitReasonComment.trim() }),
         }),
       });
       const data = await res.json();
@@ -430,11 +433,11 @@ export default function TeamPage() {
       {dismissModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="dismiss-title">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-            <h3 id="dismiss-title" className="font-semibold text-gray-900">Отвязать от заведения: {dismissName}</h3>
+            <h3 id="dismiss-title" className="font-semibold text-gray-900">Расторгнуть контракт (Unlink): {dismissName}</h3>
             <p className="mt-1 text-sm text-gray-600">
-              Укажите причину увольнения и оценку (1–5). Связь с заведением будет снята (status: former), запись сохранится в глобальный профиль сотрудника в архив. Профиль остаётся в каталоге для Супер-админа.
+              Укажите причину увольнения и оценку (1–5). Связь с заведением будет снята (status: former), запись сохранится в глобальный профиль сотрудника в архив.
             </p>
-            <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения</label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Категория причины</label>
             <select
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               value={exitReason}
@@ -446,6 +449,14 @@ export default function TeamPage() {
                 </option>
               ))}
             </select>
+            <label className="mt-3 block text-sm font-medium text-gray-700">Причина увольнения (текст)</label>
+            <textarea
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm min-h-[80px] resize-y"
+              placeholder="Дополнительный комментарий к причине увольнения…"
+              value={exitReasonComment}
+              onChange={(e) => setExitReasonComment(e.target.value)}
+              rows={3}
+            />
             <label className="mt-3 block text-sm font-medium text-gray-700">Рейтинг от ЛПР (1–5 звёзд)</label>
             <div className="mt-1 flex gap-1">
               {[1, 2, 3, 4, 5].map((star) => (
@@ -474,7 +485,7 @@ export default function TeamPage() {
                 onClick={handleDismissSubmit}
                 disabled={loading}
               >
-                {loading ? "Сохранение…" : "Отвязать"}
+                {loading ? "Сохранение…" : "Расторгнуть контракт (Unlink)"}
               </button>
             </div>
           </div>

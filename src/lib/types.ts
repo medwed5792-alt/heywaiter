@@ -300,6 +300,17 @@ export interface StaffCareerEntry {
   exitDate: unknown;
   exitReason: ExitReason;
   rating?: number;
+  /** Текстовая причина увольнения (от ЛПР) */
+  comment?: string;
+}
+
+/** Единый профиль: агрегация идентификаторов (tg, email, phone и т.д.) для поиска дубликатов. */
+export interface UnifiedIdentities {
+  tg?: string;
+  email?: string;
+  phone?: string;
+  wa?: string;
+  vk?: string;
 }
 
 /** Связь сотрудника с заведением (коллекция global_users). */
@@ -327,6 +338,8 @@ export interface GlobalUser {
   identity?: MessengerIdentity;
   primaryChannel?: MessengerChannel;
   tgId?: string;
+  /** Агрегация соцсетей/контактов для поиска по идентификаторам (избежание дубликатов, сквозной профиль). */
+  identities?: UnifiedIdentities;
   /** Связи с заведениями */
   affiliations: Affiliation[];
   /** История работы (архив при увольнении) */
