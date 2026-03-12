@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
@@ -65,7 +65,7 @@ function formatTime(iso: string | null): string {
   }
 }
 
-export default function MiniAppStaffPage() {
+function MiniAppStaffContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const rawVenue = searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID;
@@ -455,5 +455,19 @@ export default function MiniAppStaffPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function MiniAppStaffPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+          <p className="text-slate-500">Загрузка…</p>
+        </main>
+      }
+    >
+      <MiniAppStaffContent />
+    </Suspense>
   );
 }
