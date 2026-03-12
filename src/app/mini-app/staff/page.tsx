@@ -460,13 +460,7 @@ function MiniAppStaffContent() {
 
 export default function MiniAppStaffPage() {
   return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-          <p className="text-slate-500">Загрузка…</p>
-        </main>
-      }
-    >
+    <Suspense fallback={<div>Loading...</div>}>
       <MiniAppStaffContent />
     </Suspense>
   );
