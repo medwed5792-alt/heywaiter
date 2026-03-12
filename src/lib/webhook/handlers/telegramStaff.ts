@@ -167,11 +167,11 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Подсказка + кнопка SOS + вход в Staff Workspace (bot=staff → только кабинет персонала)
+  // Подсказка + кнопка SOS + вход в Staff Workspace (role=staff и bot=staff → кабинет, без t → «Начать смену»)
   const staffData = await getStaffByTgId(String(fromId));
   let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
   const baseUrl = getAppUrl();
-  const staffAppUrl = `${baseUrl}/mini-app?bot=staff`;
+  const staffAppUrl = `${baseUrl}/mini-app?bot=staff&role=staff`;
   const inlineKeyboard: { text: string; callback_data?: string; web_app?: { url: string } }[][] = [
     [{ text: "🚨 SOS", callback_data: "sos" }, { text: "📱 Открыть пульт", web_app: { url: staffAppUrl } }],
   ];

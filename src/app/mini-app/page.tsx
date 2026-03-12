@@ -100,9 +100,18 @@ function MiniAppContent() {
     const startParam = getStartParam();
     const fromQueryV = (searchParams.get("v") ?? "").trim();
     const fromQueryT = (searchParams.get("t") ?? "").trim();
+    const role = searchParams.get("role") ?? "";
+    const bot = searchParams.get("bot") ?? "";
+    const isStaffByUrl = (bot === "staff" || role === "staff") && !fromQueryT;
 
     if (typeof window !== "undefined" && startParam) {
       clearMiniappCache();
+    }
+
+    if (isStaffByUrl) {
+      setLoaded(true);
+      setFirestoreDone(true);
+      return;
     }
 
     if (startParam) {
@@ -195,19 +204,30 @@ function MiniAppContent() {
     return () => { cancelled = true; };
   }, [venueId, tableId]);
 
+  // Защита: персонал — только по URL (role=staff или bot=staff), без t. Решение по state не делаем, чтобы GuestModePanel не перекрывал кабинет.
   useEffect(() => {
-    if (!loaded || !firestoreDone) return;
-    const v = (venueId || searchParams.get("v")) ?? "";
-    const t = (tableId || searchParams.get("t")) ?? "";
+    if (!loaded) return;
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
-    // Контекст по точке входа: @waitertalk_bot (Staff) передаёт bot=staff → кабинет; @HeyWaiter_bot — всегда гость (при t — 2 кнопки)
+    const urlT = (searchParams.get("t") ?? "").trim();
     const isStaffEntry = bot === "staff" || role === "staff";
-    if (isStaffEntry && !t && !tableId) {
+    if (isStaffEntry && !urlT) {
+      const v = (venueId || searchParams.get("v")) ?? "";
       router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
       return;
     }
+  }, [loaded, searchParams, venueId, router]);
 
+  useEffect(() => {
+    if (!loaded || !firestoreDone) return;
+    const role = searchParams.get("role") ?? "";
+    const bot = searchParams.get("bot") ?? "";
+    const urlT = (searchParams.get("t") ?? "").trim();
+    const isStaffEntry = bot === "staff" || role === "staff";
+    if (isStaffEntry && !urlT) return;
+
+    const v = (venueId || searchParams.get("v")) ?? "";
+    const t = (tableId || searchParams.get("t")) ?? "";
     if (!v || !t) return;
 
     const chatId = typeof window !== "undefined" ? (window.Telegram?.WebApp as TelegramWebAppInit | undefined)?.initDataUnsafe?.user?.id : undefined;
