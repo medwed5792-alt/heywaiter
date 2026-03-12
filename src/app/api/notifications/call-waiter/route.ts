@@ -91,6 +91,7 @@ export async function POST(request: NextRequest) {
       ])
     );
 
+    // Уведомления только сотрудникам на смене (onShift: true) → @waitertalk_bot (Персонал)
     const targetUids: string[] = [];
     for (const id of rawTargetUids) {
       const onShift = await isStaffOnShift(firestore, id, venueId);

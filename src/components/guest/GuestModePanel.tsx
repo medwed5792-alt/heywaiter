@@ -13,8 +13,8 @@ interface GuestModePanelProps {
 }
 
 /**
- * Гостевой режим: строго 2 гигантские кнопки (50/50 по высоте).
- * «Вызвать официанта» и «Запросить счёт». При клике — API call-waiter, затем блокировка 30 с и статус.
+ * Гостевой режим: строго 2 кнопки — «Вызвать официанта» и «Запросить счёт».
+ * При IS_GEO_DEBUG кнопки активны везде (GPS-проверка не блокирует).
  */
 export function GuestModePanel({ venueId, tableId, visitorId }: GuestModePanelProps) {
   const [cooldownLeft, setCooldownLeft] = useState(0);
@@ -22,6 +22,7 @@ export function GuestModePanel({ venueId, tableId, visitorId }: GuestModePanelPr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // В Debug-режиме кнопки не блокируются геозоной; иначе можно добавить проверку checkGeoPosition
   const disabled = cooldownLeft > 0 || loading;
 
   const runRequest = useCallback(

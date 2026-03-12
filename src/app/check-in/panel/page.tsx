@@ -137,7 +137,7 @@ function FullServicePanel({
           tableId={tableId}
           visitorId={effectiveVisitorId}
         />
-        <VenueMenuBlock venueId={venueId} />
+        {/* Гостевой режим (v+t): только 2 кнопки — Меню не показываем */}
       </div>
     </main>
   );
