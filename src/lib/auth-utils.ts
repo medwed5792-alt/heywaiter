@@ -30,3 +30,25 @@ export async function findExistingUserIdByIdentities(
   }
   return null;
 }
+
+/**
+ * Ищет userId по одному полю identities. Если excludeUserId задан, игнорирует этот документ (для проверки дубликата при редактировании).
+ */
+export async function findUserIdByIdentityKey(
+  key: keyof UnifiedIdentities,
+  value: string,
+  excludeUserId?: string
+): Promise<string | null> {
+  if (!value || !value.trim()) return null;
+  const firestore = getAdminFirestore();
+  const snap = await firestore
+    .collection("global_users")
+    .where(`identities.${key}`, "==", value.trim())
+    .limit(2)
+    .get();
+  for (const doc of snap.docs) {
+    if (excludeUserId && doc.id === excludeUserId) continue;
+    return doc.id;
+  }
+  return null;
+}

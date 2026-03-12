@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
-import type { Staff, StaffGroup, CallCategory } from "@/lib/types";
+import type { Staff, StaffGroup, CallCategory, UnifiedIdentities } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
@@ -68,6 +68,33 @@ function getGroupAndCallCategory(position: string): { group: StaffGroup; call_ca
   if (!group) return null;
   const call_category = STAFF_GROUP_CALL_CATEGORY[group];
   return { group, call_category };
+}
+
+const IDENTITY_OPTIONS: { value: keyof UnifiedIdentities; label: string }[] = [
+  { value: "tg", label: "Telegram" },
+  { value: "wa", label: "WhatsApp" },
+  { value: "vk", label: "VK" },
+  { value: "email", label: "Email" },
+  { value: "phone", label: "Phone" },
+];
+
+function identitiesToEntries(identities?: UnifiedIdentities | null): { type: keyof UnifiedIdentities; value: string }[] {
+  if (!identities) return [];
+  const entries: { type: keyof UnifiedIdentities; value: string }[] = [];
+  (IDENTITY_OPTIONS as { value: keyof UnifiedIdentities }[]).forEach(({ value }) => {
+    const v = identities[value];
+    if (v && String(v).trim()) entries.push({ type: value, value: String(v).trim() });
+  });
+  return entries;
+}
+
+function entriesToIdentities(entries: { type: keyof UnifiedIdentities; value: string }[]): UnifiedIdentities {
+  const identities: UnifiedIdentities = {};
+  entries.forEach(({ type, value }) => {
+    const trimmed = value.trim();
+    if (trimmed) identities[type] = trimmed;
+  });
+  return identities;
 }
 
 /** Группа сотрудника: из поля group или по position через SERVICE_ROLE_GROUP. */
@@ -512,7 +539,12 @@ function StaffFormModal({
   const [birthDate, setBirthDate] = useState(staff.birthDate ?? "");
   const [photoUrl, setPhotoUrl] = useState(staff.photoUrl ?? "");
   const [phone, setPhone] = useState(staff.phone ?? "");
-  const [tgId, setTgId] = useState(staff.tgId ?? staff.identity?.externalId ?? "");
+  const [identitiesEntries, setIdentitiesEntries] = useState<{ type: keyof UnifiedIdentities; value: string }[]>(() => {
+    const fromIdentities = identitiesToEntries(staff.identities);
+    if (fromIdentities.length) return fromIdentities;
+    const tg = staff.tgId ?? staff.identity?.externalId ?? "";
+    return tg ? [{ type: "tg", value: String(tg).trim() }] : [];
+  });
   const [position, setPosition] = useState(staff.position ?? "");
   const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
   const [saving, setSaving] = useState(false);
@@ -521,6 +553,25 @@ function StaffFormModal({
   const call_category = groupAndCall?.call_category ?? (staff.call_category as CallCategory | undefined);
 
   const displayName = (staff.identity?.displayName ?? [firstName, lastName].filter(Boolean).join(" ")) || "Имя для уведомлений";
+  const identities = entriesToIdentities(identitiesEntries);
+  const primaryTg = identities.tg ?? "";
+
+  const addIdentityRow = () => {
+    setIdentitiesEntries((prev) => [...prev, { type: "tg", value: "" }]);
+  };
+
+  const updateIdentityRow = (index: number, field: "type" | "value", val: keyof UnifiedIdentities | string) => {
+    setIdentitiesEntries((prev) => {
+      const next = [...prev];
+      if (field === "type") next[index] = { ...next[index], type: val as keyof UnifiedIdentities };
+      else next[index] = { ...next[index], value: String(val) };
+      return next;
+    });
+  };
+
+  const removeIdentityRow = (index: number) => {
+    setIdentitiesEntries((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -536,12 +587,13 @@ function StaffFormModal({
           birthDate: birthDate || undefined,
           photoUrl: photoUrl.trim() || undefined,
           phone: phone.trim() || undefined,
-          tgId: tgId.trim() || undefined,
+          identities,
+          tgId: primaryTg || undefined,
           position: position || undefined,
           group: group ?? (position ? getGroupAndCallCategory(position)?.group : undefined),
           call_category: call_category ?? (position ? getGroupAndCallCategory(position)?.call_category : undefined),
           assignedTableIds: assignedTableIds,
-          identity: staff.identity ? { ...staff.identity, externalId: tgId.trim() || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: tgId.trim(), locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
+          identity: staff.identity ? { ...staff.identity, externalId: primaryTg || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: primaryTg, locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
           primaryChannel: staff.primaryChannel ?? "telegram",
           role: staff.role ?? "waiter",
           onShift: staff.onShift ?? false,
@@ -552,7 +604,7 @@ function StaffFormModal({
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка");
+      if (!res.ok) throw new Error(data.error || data.duplicateWarning || "Ошибка");
       const savedId = data.staffId ?? staff.id;
       const nextGroup = position ? getGroupAndCallCategory(position)?.group : undefined;
       const nextCallCategory = position ? getGroupAndCallCategory(position)?.call_category : undefined;
@@ -564,7 +616,8 @@ function StaffFormModal({
         birthDate: birthDate || undefined,
         photoUrl: photoUrl.trim() || undefined,
         phone: phone.trim() || undefined,
-        tgId: tgId.trim() || undefined,
+        identities,
+        tgId: primaryTg || undefined,
         position: position || undefined,
         group: nextGroup,
         call_category: nextCallCategory,
@@ -629,10 +682,48 @@ function StaffFormModal({
                 <span className="block text-xs text-gray-600">Телефон</span>
                 <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
               </label>
-              <label className="col-span-2">
-                <span className="block text-xs text-gray-600">ID мессенджера (для связи со Staff-ботом)</span>
-                <input type="text" value={tgId} onChange={(e) => setTgId(e.target.value)} placeholder="tgId, waId…" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
-              </label>
+            </div>
+            <div className="mt-3">
+              <span className="block text-xs text-gray-600 mb-2">Привязанные соцсети</span>
+              <div className="space-y-2">
+                {identitiesEntries.map((row, index) => (
+                  <div key={index} className="flex gap-2 items-center">
+                    <select
+                      value={row.type}
+                      onChange={(e) => updateIdentityRow(index, "type", e.target.value as keyof UnifiedIdentities)}
+                      className="rounded border border-gray-300 px-2 py-1.5 text-sm w-32"
+                    >
+                      {IDENTITY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={row.value}
+                      onChange={(e) => updateIdentityRow(index, "value", e.target.value)}
+                      placeholder={row.type === "email" ? "email@example.com" : row.type === "phone" ? "+7 900 …" : "ID или номер"}
+                      className="flex-1 min-w-0 rounded border border-gray-300 px-2 py-1.5 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeIdentityRow(index)}
+                      className="shrink-0 rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+                      aria-label="Удалить"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addIdentityRow}
+                  className="rounded border border-dashed border-gray-300 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50"
+                >
+                  + Добавить еще
+                </button>
+              </div>
             </div>
           </section>
           <section>

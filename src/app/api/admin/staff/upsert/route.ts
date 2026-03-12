@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { findExistingUserIdByIdentities } from "@/lib/auth-utils";
+import { findExistingUserIdByIdentities, findUserIdByIdentityKey } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 
 const VENUE_ID = "current";
@@ -57,13 +57,31 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       };
       if (body.globalScore != null) profilePayload.globalScore = body.globalScore;
-      const identitiesUpdate: UnifiedIdentities = {
-        ...(staffData.identities as UnifiedIdentities | undefined),
-        ...(body.tgId && { tg: String(body.tgId).trim() }),
-        ...(body.email && { email: String(body.email).trim() }),
-        ...(body.phone && { phone: String(body.phone).trim() }),
-      };
-      if (Object.keys(identitiesUpdate).length > 0) profilePayload.identities = identitiesUpdate;
+      const identitiesUpdate: UnifiedIdentities =
+        typeof body.identities === "object" && body.identities !== null
+          ? { ...(staffData.identities as UnifiedIdentities | undefined), ...body.identities }
+          : {
+              ...(staffData.identities as UnifiedIdentities | undefined),
+              ...(body.tgId && { tg: String(body.tgId).trim() }),
+              ...(body.email && { email: String(body.email).trim() }),
+              ...(body.phone && { phone: String(body.phone).trim() }),
+            };
+      const identitiesFiltered: UnifiedIdentities = {};
+      for (const [k, v] of Object.entries(identitiesUpdate)) {
+        if (v && typeof v === "string" && v.trim()) identitiesFiltered[k as keyof UnifiedIdentities] = v.trim();
+      }
+      if (Object.keys(identitiesFiltered).length > 0) {
+        for (const key of Object.keys(identitiesFiltered) as (keyof UnifiedIdentities)[]) {
+          const other = await findUserIdByIdentityKey(key, identitiesFiltered[key]!, userId);
+          if (other) {
+            return NextResponse.json(
+              { error: "Дубликат", duplicateWarning: `Этот ${key === "tg" ? "Telegram ID" : key === "wa" ? "WhatsApp" : key === "vk" ? "VK" : key} уже привязан к другому сотруднику.` },
+              { status: 409 }
+            );
+          }
+        }
+        profilePayload.identities = identitiesFiltered;
+      }
 
       if (globalSnap.exists) {
         const globalData = globalSnap.data() ?? {};
@@ -87,11 +105,7 @@ export async function POST(request: NextRequest) {
       } else {
         await globalRef.set({
           ...profilePayload,
-          identities: profilePayload.identities ?? {
-            ...(body.tgId && { tg: String(body.tgId).trim() }),
-            ...(body.email && { email: String(body.email).trim() }),
-            ...(body.phone && { phone: String(body.phone).trim() }),
-          },
+          identities: profilePayload.identities ?? (Object.keys(identitiesFiltered).length > 0 ? identitiesFiltered : undefined),
           affiliations: [{
             venueId: VENUE_ID,
             role: body.position ?? body.role ?? "waiter",
@@ -118,10 +132,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Создание: поиск по identities (Единый профиль), затем создание или привязка
-    const identities: UnifiedIdentities = {};
-    if (body.tgId && String(body.tgId).trim()) identities.tg = String(body.tgId).trim();
-    if (body.email && String(body.email).trim()) identities.email = String(body.email).trim();
-    if (body.phone && String(body.phone).trim()) identities.phone = String(body.phone).trim();
+    const identities: UnifiedIdentities =
+      typeof body.identities === "object" && body.identities !== null
+        ? Object.fromEntries(
+            Object.entries(body.identities).filter(([, v]) => v && typeof v === "string" && String(v).trim())
+          ) as UnifiedIdentities
+        : (() => {
+            const out: UnifiedIdentities = {};
+            if (body.tgId && String(body.tgId).trim()) out.tg = String(body.tgId).trim();
+            if (body.email && String(body.email).trim()) out.email = String(body.email).trim();
+            if (body.phone && String(body.phone).trim()) out.phone = String(body.phone).trim();
+            return out;
+          })();
 
     let existingUserId: string | null = null;
     if (Object.keys(identities).length > 0) {

@@ -387,6 +387,8 @@ export interface Staff {
   /** Связь */
   phone?: string;
   /** ID в соцсетях (для Staff-ботов): tgId, waId и т.д. хранятся в identity или здесь */
+  /** Привязанные соцсети (Unified ID): из global_users.identities */
+  identities?: UnifiedIdentities;
   /** Проф: закрепление за столами (ID столов) */
   assignedTableIds?: string[];
   /** Сеть: массив venueId — сотрудник закреплён за несколькими точками, в Staff Bot видит адрес на сегодня и «Маршрут» */

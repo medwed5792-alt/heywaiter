@@ -67,6 +67,7 @@ export async function GET() {
           photoUrl: global.photoUrl ?? data.photoUrl,
           phone: global.phone ?? data.phone,
           tgId: global.tgId ?? data.tgId,
+          identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
           careerHistory: global.careerHistory,
           updatedAt: global.updatedAt ?? data.updatedAt,
         } as Staff);
@@ -92,6 +93,7 @@ export async function GET() {
           photoUrl: data.photoUrl,
           phone: data.phone,
           tgId: data.tgId,
+          identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
           careerHistory: data.careerHistory,
           updatedAt: data.updatedAt,
         } as Staff);
