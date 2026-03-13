@@ -285,11 +285,9 @@ export default function TeamPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
-      setStaffList((prev) =>
-        prev.map((s) => (s.id === dismissModal.id ? { ...s, active: false } : s))
-      );
+      setStaffList((prev) => prev.filter((s) => s.id !== dismissModal.id));
       setDismissModal(null);
-      toast.success("Контракт расторгнут");
+      toast.success("Контракт расторгнут. Запись убрана из списка активных.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка увольнения");
     } finally {

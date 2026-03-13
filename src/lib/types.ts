@@ -290,6 +290,7 @@ export type ExitReason =
   | "professionalism"
   | "discipline"
   | "conflict"
+  | "contract_terminated"
   | "other";
 
 /** Запись в карьере сотрудника (Биржа труда) — данные перманентны */

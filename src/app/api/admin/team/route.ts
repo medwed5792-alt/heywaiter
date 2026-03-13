@@ -43,9 +43,11 @@ export async function GET() {
       const data = d.data();
       const userId = data.userId as string | undefined;
       const global = userId ? globalUsers.get(userId) : null;
+      const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
+      const isActive = (data.active !== false) && (aff?.status === "active" ?? true);
+      if (!isActive) continue;
 
       if (global) {
-        const aff = global.affiliations?.find((a) => a.venueId === VENUE_ID);
         staffList.push({
           id: d.id,
           userId: global.id,
@@ -54,7 +56,7 @@ export async function GET() {
           primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
           identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
           onShift: aff?.onShift ?? data.onShift ?? false,
-          active: (aff?.status === "active" ? true : data.active !== false) ?? true,
+          active: true,
           firstName: global.firstName ?? data.firstName,
           lastName: global.lastName ?? data.lastName,
           position: aff?.position ?? data.position,
@@ -72,7 +74,6 @@ export async function GET() {
           updatedAt: global.updatedAt ?? data.updatedAt,
         } as Staff);
       } else {
-        // Legacy: только staff без global_users
         staffList.push({
           id: d.id,
           venueId: VENUE_ID,
@@ -80,7 +81,7 @@ export async function GET() {
           primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
           identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
           onShift: data.onShift ?? false,
-          active: data.active !== false,
+          active: true,
           firstName: data.firstName,
           lastName: data.lastName,
           position: data.position,

@@ -8,15 +8,20 @@ import type { StaffCareerEntry, Affiliation } from "@/lib/types";
 const VENUE_ID = "current";
 
 /**
- * POST /api/admin/staff/dismiss
+ * POST /api/admin/staff/dismiss (Unlink / Расторжение контракта)
  * Тело: { staffId: string, venueId?: string, exitReason: string (текст), rating: number (1-5) }
  *
- * - Находит документ staff по staffId, при необходимости берёт venueId из тела или из документа.
- * - В global_users находит affiliation с этим venueId и ставит status: "former".
- * - Добавляет запись в careerHistory (date, exitReason как текст в comment, rating).
- * - Пересчитывает globalScore по истории оценок.
- * - В коллекции staff ставит active: false, onShift: false.
- * - Fallback: если у сотрудника нет записи в global_users — создаёт её при увольнении.
+ * Концепция: заведение не удаляет пользователя, а разрывает связь (Affiliation) и оставляет
+ * запись в трудовой книжке (careerHistory) для Биржи смен.
+ *
+ * 1. Находит staff и global_users по userId.
+ * 2. Удаляет текущий venueId из массива affiliations (разрыв связи).
+ * 3. Находит последнюю запись в careerHistory для этого заведения или создаёт новую;
+ *    записывает endDate, exitReason: "contract_terminated", rating и comment.
+ * 4. В коллекции venues/[venueId]/staff/[staffId] устанавливает status: 'inactive'
+ *    (скрывает из списка «Команда», сохраняет в архиве заведения).
+ * 5. В корневой коллекции staff ставит active: false, onShift: false.
+ * 6. Удаляет будущие смены (scheduleEntries).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -70,7 +75,7 @@ export async function POST(request: NextRequest) {
       position,
       joinDate,
       exitDate: FieldValue.serverTimestamp(),
-      exitReason: "other",
+      exitReason: "contract_terminated",
       rating: ratingNum,
       comment: exitReason.trim(),
     };
@@ -83,14 +88,24 @@ export async function POST(request: NextRequest) {
       const affiliations: Affiliation[] = Array.isArray(globalData.affiliations)
         ? [...globalData.affiliations]
         : [];
-      const idx = affiliations.findIndex((a: { venueId: string }) => a.venueId === venueId);
-      if (idx >= 0) {
-        affiliations[idx] = { ...affiliations[idx], status: "former" as const };
+      const filteredAffiliations = affiliations.filter((a: { venueId: string }) => a.venueId !== venueId);
+
+      let careerHistory: StaffCareerEntry[] = Array.isArray(globalData.careerHistory)
+        ? [...globalData.careerHistory]
+        : [];
+      const lastIdxForVenue = careerHistory.map((e, i) => (e.venueId === venueId ? i : -1)).filter((i) => i >= 0).pop();
+      if (lastIdxForVenue !== undefined && lastIdxForVenue >= 0) {
+        careerHistory[lastIdxForVenue] = {
+          ...careerHistory[lastIdxForVenue],
+          exitDate: FieldValue.serverTimestamp(),
+          exitReason: "contract_terminated",
+          rating: ratingNum,
+          comment: exitReason.trim(),
+        };
+      } else {
+        careerHistory = [...careerHistory, newEntry];
       }
-      const careerHistory: StaffCareerEntry[] = [
-        ...(Array.isArray(globalData.careerHistory) ? globalData.careerHistory : []),
-        newEntry,
-      ];
+
       const ratingsWithValues = careerHistory
         .map((e) => e.rating)
         .filter((r): r is number => typeof r === "number" && r >= 1 && r <= 5);
@@ -100,7 +115,7 @@ export async function POST(request: NextRequest) {
           : undefined;
 
       await globalRef.update({
-        affiliations,
+        affiliations: filteredAffiliations,
         careerHistory,
         ...(globalScore != null && { globalScore }),
         updatedAt: FieldValue.serverTimestamp(),
@@ -111,7 +126,7 @@ export async function POST(request: NextRequest) {
         lastName: staffData.lastName ?? null,
         identity: staffData.identity ?? null,
         identities: staffData.identities ?? null,
-        affiliations: [{ venueId, role: position, status: "former" as const }],
+        affiliations: [],
         careerHistory: [newEntry],
         globalScore: ratingNum,
         updatedAt: FieldValue.serverTimestamp(),
@@ -123,6 +138,12 @@ export async function POST(request: NextRequest) {
       onShift: false,
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffId);
+    await venueStaffRef.set(
+      { status: "inactive", updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
 
     const today = new Date().toISOString().slice(0, 10);
     const futureShiftsSnap = await firestore
