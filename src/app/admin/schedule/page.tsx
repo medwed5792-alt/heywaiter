@@ -6,10 +6,16 @@ import toast from "react-hot-toast";
 import { collection, doc, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
-import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/types";
 
 const VENUE_ID = "current";
+
+/** Сотрудник считается активным: status === 'active' либо (при отсутствии status) active !== false */
+function isActiveStaff(s: Staff): boolean {
+  const status = (s as { status?: string }).status;
+  if (status != null) return status === "active";
+  return s.active !== false;
+}
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -93,32 +99,19 @@ export default function AdminSchedulePage() {
   const [addShiftModal, setAddShiftModal] = useState<{ dates: string[]; defaultStartHour: number } | null>(null);
   const [editShiftEntry, setEditShiftEntry] = useState<ScheduleEntry | null>(null);
   const [dragStart, setDragStart] = useState<string | null>(null);
-  const [confirmState, setConfirmState] = useState<{
-    open: boolean;
-    title: string;
-    message: string;
-    variant: "danger" | "primary";
-    onConfirm: () => void | Promise<void>;
-  } | null>(null);
 
-  const openDeleteConfirm = (entry: ScheduleEntry, onSuccess?: () => void) => {
-    setConfirmState({
-      open: true,
-      title: "Подтверждение",
-      message: "Удалить эту смену из графика?",
-      variant: "danger",
-      onConfirm: async () => {
-        try {
-          await deleteDoc(doc(db, "scheduleEntries", entry.id));
-          setEntries((prev) => prev.filter((e) => e.id !== entry.id));
-          onSuccess?.();
-          toast.success("Смена удалена");
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : "Ошибка удаления");
-        }
-        setConfirmState(null);
-      },
-    });
+  const handleDeleteEntry = (entry: ScheduleEntry, onSuccess?: () => void) => {
+    if (!window.confirm("Удалить эту смену из графика?")) return;
+    (async () => {
+      try {
+        await deleteDoc(doc(db, "scheduleEntries", entry.id));
+        setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+        onSuccess?.();
+        toast.success("Смена удалена");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Ошибка удаления");
+      }
+    })();
   };
 
   useEffect(() => {
@@ -146,7 +139,7 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(list.filter((s) => s.active !== false));
+      setStaffList(list.filter(isActiveStaff));
     });
     return () => unsub();
   }, []);
@@ -330,20 +323,7 @@ export default function AdminSchedulePage() {
           managedVenues={managedVenues}
           onClose={() => setEditShiftEntry(null)}
           onSaved={() => setEditShiftEntry(null)}
-          onRequestDelete={() => openDeleteConfirm(editShiftEntry, () => setEditShiftEntry(null))}
-        />
-      )}
-
-      {confirmState && (
-        <ConfirmModal
-          open={confirmState.open}
-          title={confirmState.title}
-          message={confirmState.message}
-          variant={confirmState.variant}
-          confirmLabel="ПОДТВЕРДИТЬ"
-          cancelLabel="ОТМЕНА"
-          onConfirm={confirmState.onConfirm}
-          onCancel={() => setConfirmState(null)}
+          onRequestDelete={() => handleDeleteEntry(editShiftEntry, () => setEditShiftEntry(null))}
         />
       )}
 
@@ -354,7 +334,7 @@ export default function AdminSchedulePage() {
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
         onEditEntry={setEditShiftEntry}
-        onDeleteEntry={(entry) => openDeleteConfirm(entry)}
+        onDeleteEntry={(entry) => handleDeleteEntry(entry)}
       />
     </div>
   );
@@ -436,7 +416,7 @@ function EditShiftModal({
             <label><span className="block text-xs font-medium text-gray-600">До</span><input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" /></label>
           </div>
           <div className="mt-4 flex gap-2">
-            <button type="button" onClick={onRequestDelete} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 py-2 px-3 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">
+            <button type="button" onClick={onRequestDelete} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-red-200 py-2 px-3 text-sm font-medium text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors">
               <Trash2 className="h-4 w-4" />
               Удалить смену
             </button>
@@ -584,12 +564,15 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
+  const activeStaffIds = useMemo(() => new Set(staffList.map((s) => s.id)), [staffList]);
+
   const rows = useMemo(() => {
     const byEntry = entries.filter((e) => {
       const slot = e.slot;
       if (!slot) return false;
       const date = slot?.date;
-      return date && String(date).startsWith(filterMonth);
+      if (!date || !String(date).startsWith(filterMonth)) return false;
+      return activeStaffIds.has(e.staffId);
     });
     return byEntry.map((e) => {
       const staff = staffList.find((s) => s.id === e.staffId);
@@ -611,7 +594,7 @@ function FOTReport({
         endTime: e.slot?.endTime ?? "--:--",
       };
     });
-  }, [entries, staffList, venues, filterMonth]);
+  }, [entries, staffList, venues, filterMonth, activeStaffIds]);
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
@@ -690,7 +673,7 @@ function FOTReport({
                       </button>
                       <button
                         type="button"
-                        className="rounded p-1.5 text-red-600 hover:bg-red-100"
+                        className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
                         title="Удалить"
                         onClick={() => onDeleteEntry?.(r.entry)}
                       >
