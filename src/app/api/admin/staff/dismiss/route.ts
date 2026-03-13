@@ -60,7 +60,10 @@ export async function POST(request: NextRequest) {
     const venueId = (bodyVenueId && String(bodyVenueId).trim()) || (staffData.venueId as string) || VENUE_ID;
     const userId = (staffData.userId as string) || staffId;
     const position = (staffData.position as string) || "Сотрудник";
-    const joinDate = staffData.invitedAt ?? staffData.createdAt;
+    const joinDateRaw = staffData.invitedAt ?? staffData.createdAt;
+    const joinDate = joinDateRaw !== undefined && joinDateRaw !== null
+      ? joinDateRaw
+      : FieldValue.serverTimestamp();
 
     const newEntry: StaffCareerEntry = {
       venueId,
