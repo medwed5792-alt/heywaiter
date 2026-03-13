@@ -5,13 +5,27 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import type { DocumentReference } from "firebase-admin/firestore";
 
+/** Текущее время в формате HH:mm */
+function nowHHmm(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/** Факт часов из checkIn/checkOut (HH:mm) */
+function factHoursFromCheckInOut(checkIn: string, checkOut: string): number {
+  const [sh, sm] = checkIn.split(":").map(Number);
+  const [eh, em] = checkOut.split(":").map(Number);
+  const m = (eh * 60 + em) - (sh * 60 + sm);
+  return m <= 0 ? 0 : Math.round((m / 60) * 10) / 10;
+}
+
 /**
  * POST /api/staff/shift
  * Вход на смену / выход (Shift Management).
  * Тело: { userId: string, venueId: string, action: "start" | "stop" } или { staffId: string, action: "start" | "stop" }
  *
- * - start: onShift = true, shiftStartTime = serverTimestamp()
- * - stop: onShift = false, shiftEndTime = serverTimestamp()
+ * - start: onShift = true, shiftStartTime; при наличии смены на сегодня в scheduleEntries — пишем checkIn (HH:mm).
+ * - stop: onShift = false, shiftEndTime; при наличии смены с checkIn — пишем checkOut и factHours (для План/Факт).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +60,9 @@ export async function POST(request: NextRequest) {
     }
 
     let snap = await staffRef.get();
+    const staffVenueId =
+      (venueId && venueId.trim()) ||
+      (snap.exists ? (snap.data()?.venueId as string) : null);
 
     if (!snap.exists) {
       if (staffIdBody) {
@@ -74,7 +91,37 @@ export async function POST(request: NextRequest) {
           shiftStartTime: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
+        if (venueId) {
+          const today = new Date().toISOString().slice(0, 10);
+          const entriesSnap = await firestore
+            .collection("scheduleEntries")
+            .where("staffId", "==", legacyId)
+            .where("venueId", "==", venueId)
+            .where("slot.date", "==", today)
+            .get();
+          const toSet = entriesSnap.docs.find((d) => !d.data().checkIn);
+          if (toSet) await toSet.ref.update({ checkIn: nowHHmm(), updatedAt: FieldValue.serverTimestamp() });
+        }
       } else {
+        if (venueId) {
+          const today = new Date().toISOString().slice(0, 10);
+          const entriesSnap = await firestore
+            .collection("scheduleEntries")
+            .where("staffId", "==", legacyId)
+            .where("venueId", "==", venueId)
+            .where("slot.date", "==", today)
+            .get();
+          const toSet = entriesSnap.docs.find((d) => d.data().checkIn && !d.data().checkOut);
+          if (toSet) {
+            const data = toSet.data();
+            const cin = (data.checkIn as string) || nowHHmm();
+            await toSet.ref.update({
+              checkOut: nowHHmm(),
+              factHours: factHoursFromCheckInOut(cin, nowHHmm()),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
+        }
         await docRef.update({
           onShift: false,
           shiftEndTime: FieldValue.serverTimestamp(),
@@ -96,12 +143,49 @@ export async function POST(request: NextRequest) {
         shiftStartTime: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+      if (staffVenueId) {
+        const today = new Date().toISOString().slice(0, 10);
+        const entriesSnap = await firestore
+          .collection("scheduleEntries")
+          .where("staffId", "==", staffDocId)
+          .where("venueId", "==", staffVenueId)
+          .where("slot.date", "==", today)
+          .get();
+        const toSetCheckIn = entriesSnap.docs.find((d) => !d.data().checkIn);
+        if (toSetCheckIn) {
+          await toSetCheckIn.ref.update({
+            checkIn: nowHHmm(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      }
       return NextResponse.json({
         ok: true,
         onShift: true,
         staffId: staffDocId,
         shiftStartTime: new Date().toISOString(),
       });
+    }
+
+    if (staffVenueId) {
+      const today = new Date().toISOString().slice(0, 10);
+      const entriesSnap = await firestore
+        .collection("scheduleEntries")
+        .where("staffId", "==", staffDocId)
+        .where("venueId", "==", staffVenueId)
+        .where("slot.date", "==", today)
+        .get();
+      const toSetCheckOut = entriesSnap.docs.find((d) => d.data().checkIn && !d.data().checkOut);
+      if (toSetCheckOut) {
+        const data = toSetCheckOut.data();
+        const cin = (data.checkIn as string) || nowHHmm();
+        const cout = nowHHmm();
+        await toSetCheckOut.ref.update({
+          checkOut: cout,
+          factHours: factHoursFromCheckInOut(cin, cout),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     }
 
     await staffRef.update({

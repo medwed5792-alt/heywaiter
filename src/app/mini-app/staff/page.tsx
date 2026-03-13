@@ -38,6 +38,16 @@ interface VenueGeo {
   configured: boolean;
 }
 
+interface ScheduleEntryItem {
+  id: string;
+  slot: { date: string; startTime: string; endTime: string };
+  planHours?: number;
+  factHours?: number | null;
+  checkIn?: string | null;
+  checkOut?: string | null;
+  role?: string;
+}
+
 function formatTime(iso: string | null): string {
   if (!iso) return "—";
   try {
@@ -68,6 +78,8 @@ function StaffContentInner() {
   const [geoBlocked, setGeoBlocked] = useState(false);
   const [geoMessage, setGeoMessage] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
+  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryItem[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -92,6 +104,32 @@ function StaffContentInner() {
     const t = setInterval(fetchNotifications, NOTIFICATIONS_POLL_MS);
     return () => clearInterval(t);
   }, [staffId, fetchNotifications]);
+
+  const fetchSchedule = useCallback(async () => {
+    if (!staffId || !currentVenueId) return;
+    setScheduleLoading(true);
+    try {
+      const res = await fetch(
+        `/api/staff/schedule?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(currentVenueId)}`
+      );
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.entries)) {
+        setScheduleEntries(data.entries);
+      } else {
+        setScheduleEntries([]);
+      }
+    } catch {
+      setScheduleEntries([]);
+    } finally {
+      setScheduleLoading(false);
+    }
+  }, [staffId, currentVenueId]);
+
+  useEffect(() => {
+    if (tab === "cabinet" && staffId && currentVenueId) {
+      fetchSchedule();
+    }
+  }, [tab, staffId, currentVenueId, fetchSchedule]);
 
   // Гео-валидация: загрузка настроек заведения и проверка дистанции (haversineDistanceM из geo.ts)
   useEffect(() => {
@@ -325,7 +363,28 @@ function StaffContentInner() {
                 <Calendar className="h-5 w-5 text-slate-500" />
                 <h3 className="font-medium">Мой график</h3>
               </div>
-              <p className="mt-2 text-sm text-slate-500">Здесь отображается ваше расписание. Редактирование в админ-панели заведения.</p>
+              <p className="mt-2 text-sm text-slate-500">Ваше расписание по текущему заведению. Изменения вносит администратор.</p>
+              {scheduleLoading ? (
+                <p className="mt-3 text-sm text-slate-500">Загрузка…</p>
+              ) : scheduleEntries.length === 0 ? (
+                <p className="mt-3 text-sm text-slate-500">Нет запланированных смен.</p>
+              ) : (
+                <ul className="mt-3 divide-y divide-slate-100">
+                  {scheduleEntries.map((entry) => (
+                    <li key={entry.id} className="py-3 first:pt-0">
+                      <p className="font-medium text-slate-800">
+                        {entry.slot.date} · {entry.slot.startTime} – {entry.slot.endTime}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        План: {entry.planHours ?? 0} ч
+                        {entry.checkIn != null && entry.checkOut != null && (
+                          <> · Факт: {entry.factHours ?? 0} ч</>
+                        )}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-slate-700">

@@ -59,15 +59,19 @@ function normalizeEntry(d: { id: string; data: () => Record<string, unknown> }):
         endTime: `${10 + Math.max(0, Math.floor(planHours))}:00`,
         venueId,
       };
+  const planH = data?.planHours ?? planHoursFromSlot(slot);
+  const checkIn = data?.checkIn as string | undefined;
+  const checkOut = data?.checkOut as string | undefined;
+  const factFromLogs = factHoursFromCheckInOut(checkIn, checkOut);
   return {
     id,
     venueId,
     staffId,
     slot,
-    planHours: data?.planHours ?? planHoursFromSlot(slot),
-    factHours: data?.factHours,
-    checkIn: data?.checkIn,
-    checkOut: data?.checkOut,
+    planHours: planH,
+    factHours: (data?.factHours as number | undefined) ?? factFromLogs,
+    checkIn,
+    checkOut,
     lateMinutes: data?.lateMinutes,
     earlyLeaveMinutes: data?.earlyLeaveMinutes,
     role: data?.role as ServiceRole | undefined,
@@ -120,12 +124,8 @@ export default function AdminSchedulePage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [staffSnap, venuesSnap] = await Promise.all([
-        getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))),
-        getDocs(collection(db, "venues")),
-      ]);
+      const venuesSnap = await getDocs(collection(db, "venues"));
       if (cancelled) return;
-      setStaffList(staffSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
       const venueList = venuesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Venue));
       setVenues(venueList);
       const venueIds = venueList.length ? venueList.map((v) => v.id).slice(0, 10) : [VENUE_ID];
@@ -137,6 +137,18 @@ export default function AdminSchedulePage() {
       setLoading(false);
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, "staff"),
+      where("venueId", "==", VENUE_ID)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
+      setStaffList(list.filter((s) => s.active !== false));
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
