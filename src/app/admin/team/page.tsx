@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { UserPlus, User, Briefcase, Star, Circle } from "lucide-react";
-import type { Staff, StaffGroup, CallCategory, UnifiedIdentities } from "@/lib/types";
+import { UserPlus, User, Briefcase, Star } from "lucide-react";
+import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
@@ -146,12 +146,12 @@ function StaffRow({
         {!isActive ? (
           <span className="text-gray-500">Уволен</span>
         ) : onShift ? (
-          <span className="inline-flex items-center gap-1 text-green-700">
-            <Circle className="h-2 w-2 fill-current" /> На смене
+          <span className="inline-flex items-center gap-1.5 text-green-600 font-medium">
+            <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" aria-hidden /> На смене
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 text-gray-500">
-            <Circle className="h-2 w-2 fill-current" /> Не на смене
+          <span className="inline-flex items-center gap-1.5 text-gray-400">
+            <span className="h-2 w-2 rounded-full bg-gray-400 shrink-0" aria-hidden /> Не на смене
           </span>
         )}
       </td>
@@ -213,19 +213,11 @@ export default function TeamPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [teamRes, hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
-          fetch("/api/admin/team"),
+        const [hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
           getDocs(collection(db, "venues", VENUE_ID, "halls")),
           getDocs(collection(db, "venues", VENUE_ID, "tables")),
           getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
         ]);
-        const teamData = await teamRes.json();
-        if (teamRes.ok && Array.isArray(teamData.staff)) {
-          setStaffList(teamData.staff as Staff[]);
-        } else if (!teamRes.ok) {
-          const fallback = await getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID)));
-          setStaffList(fallback.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
-        }
         setHalls(hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "" })));
         const fromSub = tablesFromSub.docs.map((d) => {
           const data = d.data();
@@ -234,12 +226,90 @@ export default function TeamPage() {
         const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }));
         setTables(fromSub.length ? fromSub : fromRoot);
       } catch (_e) {
-        const fallback = await getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID)));
-        setStaffList(fallback.docs.map((d) => ({ id: d.id, ...d.data() } as Staff)));
+        // halls/tables optional
       } finally {
         setLoaded(true);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    const staffQuery = query(collection(db, "staff"), where("venueId", "==", VENUE_ID));
+    const unsubscribe = onSnapshot(staffQuery, async (snap) => {
+      const staffDocs = snap.docs;
+      const userIds = [...new Set(staffDocs.map((d) => d.data().userId as string).filter(Boolean))];
+      const globalUsers = new Map<string, GlobalUser>();
+      for (const uid of userIds) {
+        const ref = doc(db, "global_users", uid);
+        const globalSnap = await getDoc(ref);
+        if (globalSnap.exists()) {
+          globalUsers.set(uid, { id: globalSnap.id, ...globalSnap.data() } as GlobalUser);
+        }
+      }
+      const list: Staff[] = [];
+      for (const d of staffDocs) {
+        const data = d.data();
+        const userId = data.userId as string | undefined;
+        const global = userId ? globalUsers.get(userId) : null;
+        const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
+        const isActive = (data.active !== false) && (aff?.status === "active" ?? true);
+        if (!isActive) continue;
+        if (global) {
+          list.push({
+            id: d.id,
+            userId: global.id,
+            venueId: VENUE_ID,
+            role: (data.role as Staff["role"]) ?? "waiter",
+            primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+            identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
+            onShift: data.onShift ?? aff?.onShift ?? false,
+            active: true,
+            firstName: global.firstName ?? data.firstName,
+            lastName: global.lastName ?? data.lastName,
+            position: aff?.position ?? data.position,
+            group: data.group ?? undefined,
+            call_category: data.call_category ?? undefined,
+            assignedTableIds: aff?.assignedTableIds ?? data.assignedTableIds ?? [],
+            globalScore: global.globalScore ?? data.globalScore,
+            guestRating: global.guestRating ?? data.guestRating,
+            venueRating: global.venueRating ?? data.venueRating,
+            photoUrl: global.photoUrl ?? data.photoUrl,
+            phone: global.phone ?? data.phone,
+            tgId: global.tgId ?? data.tgId,
+            identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+            careerHistory: global.careerHistory,
+            updatedAt: global.updatedAt ?? data.updatedAt,
+          } as Staff);
+        } else {
+          list.push({
+            id: d.id,
+            venueId: VENUE_ID,
+            role: (data.role as Staff["role"]) ?? "waiter",
+            primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+            identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
+            onShift: data.onShift ?? false,
+            active: true,
+            firstName: data.firstName,
+            lastName: data.lastName,
+            position: data.position,
+            group: data.group,
+            call_category: data.call_category,
+            assignedTableIds: data.assignedTableIds ?? [],
+            globalScore: data.globalScore,
+            guestRating: data.guestRating,
+            venueRating: data.venueRating,
+            photoUrl: data.photoUrl,
+            phone: data.phone,
+            tgId: data.tgId,
+            identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+            careerHistory: data.careerHistory,
+            updatedAt: data.updatedAt,
+          } as Staff);
+        }
+      }
+      setStaffList(list);
+    });
+    return () => unsubscribe();
   }, []);
 
   const filteredStaff = staffList.filter((s) => {

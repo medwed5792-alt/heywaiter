@@ -55,7 +55,7 @@ export async function GET() {
           role: (data.role as Staff["role"]) ?? "waiter",
           primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
           identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
-          onShift: aff?.onShift ?? data.onShift ?? false,
+          onShift: data.onShift ?? aff?.onShift ?? false,
           active: true,
           firstName: global.firstName ?? data.firstName,
           lastName: global.lastName ?? data.lastName,
