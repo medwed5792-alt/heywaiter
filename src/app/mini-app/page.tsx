@@ -19,7 +19,7 @@ function clearMiniappCache(): void {
   } catch (_) {}
 }
 
-/** Username рабочего бота: при открытии из чата с ним (кнопка «Открыть») форсируем Staff Mode даже без role=staff в URL. В BotFather можно также выставить URL: .../mini-app?role=staff&v=2.1 для сброса кеша кнопки. */
+/** Username рабочего бота: при открытии из чата с ним автоматически role=staff и редирект в StaffWorkspace. BotFather → Edit Mini App URL: https://heywaiter.vercel.app/mini-app?role=staff&v=2.6 */
 const STAFF_BOT_USERNAME = "waitertalk_bot";
 
 /** Тип для Telegram WebApp в мини-приложении (start_param, user, receiver — бот при открытии из чата с ним). */
@@ -112,10 +112,13 @@ function MiniAppContent() {
     }
   }, []);
 
-  // Принудительный Staff Mode по контексту: открытие из чата с @waitertalk_bot (кнопка «Открыть» без параметров URL).
+  // Мгновенный редирект: если открыто из @waitertalk_bot (receiver.username) — сразу в StaffWorkspace, без гостевого экрана.
   useEffect(() => {
-    if (isStaffBotContext()) setForceStaffByBot(true);
-  }, []);
+    if (isStaffBotContext()) {
+      setForceStaffByBot(true);
+      router.replace("/mini-app/staff?v=current");
+    }
+  }, [router]);
 
   useEffect(() => {
     const startParam = getStartParam();
