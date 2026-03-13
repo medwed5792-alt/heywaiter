@@ -33,7 +33,7 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** Сотрудник считается активным только при status === 'active' (или active !== false при отсутствии status) */
+/** HARD: в графиках только сотрудники со статусом 'active'. При отсутствии поля status — legacy: active !== false */
 function isActiveStaff(s: Staff): boolean {
   const status = (s as { status?: string }).status;
   if (status != null) return status === "active";
@@ -491,13 +491,16 @@ function AddShiftModal({
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
+  const selectedStaff = useMemo(() => staffList.find((s) => s.id === staffId), [staffList, staffId]);
+  const roleFromStaff = selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffId.trim()) return;
     const toCreate = dates.length > 0 ? dates : [todayISO()];
     setSaving(true);
     try {
-      const role = staffList.find((s) => s.id === staffId)?.position ?? "waiter";
+      const role = roleFromStaff;
       for (const date of toCreate) {
         const slot = { date, startTime, endTime, venueId };
         const planH = planHoursFromSlot(slot);
@@ -545,9 +548,9 @@ function AddShiftModal({
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Должность</span>
             <p className="mt-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" aria-readonly>
-              {staffId ? roleLabel(staffList.find((s) => s.id === staffId)?.position ?? (staffList.find((s) => s.id === staffId) as { role?: string } | undefined)?.role ?? "waiter") : "—"}
+              {staffId ? roleLabel(roleFromStaff) : "—"}
             </p>
-            <p className="mt-0.5 text-xs text-gray-500">Из карточки сотрудника в Команде (только просмотр)</p>
+            <p className="mt-0.5 text-xs text-gray-500">Заполняется автоматически при выборе сотрудника (из Команды)</p>
           </label>
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Объект (точка)</span>
@@ -595,6 +598,7 @@ function AddShiftModal({
   );
 }
 
+/** Сводка по ФОТ: staffList должен содержать только активных (status === 'active'). Строки по уволенным не показываются. */
 function FOTReport({
   entries,
   staffList,
@@ -620,7 +624,8 @@ function FOTReport({
       if (!slot) return false;
       const date = slot?.date;
       if (!date || !String(date).startsWith(filterMonth)) return false;
-      return activeStaffIds.has(e.staffId);
+      if (!activeStaffIds.has(e.staffId)) return false;
+      return true;
     });
     return byEntry.map((e) => {
       const staff = staffList.find((s) => s.id === e.staffId);
