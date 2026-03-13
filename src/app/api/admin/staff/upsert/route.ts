@@ -208,6 +208,7 @@ export async function POST(request: NextRequest) {
     const staffRef = firestore.collection("staff").doc(linkId);
     const existingStaff = await staffRef.get();
     if (existingStaff.exists) {
+      // Сотрудник уже есть в коллекции staff для этого venue — обновляем, не создаём дубликат
       await staffRef.update({
         position: body.position ?? null,
         group: body.group ?? null,

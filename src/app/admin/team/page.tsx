@@ -510,10 +510,8 @@ export default function TeamPage() {
           onSaved={(updated) => {
             if (editingStaff.id) {
               setStaffList((prev) => prev.map((s) => (s.id === editingStaff.id ? { ...s, ...updated } : s)));
-            } else {
-              const id = (updated as { id?: string }).id;
-              if (id) setStaffList((prev) => [...prev, { ...editingStaff, ...updated, id } as Staff]);
             }
+            // При добавлении нового сотрудника список обновится по onSnapshot — не дублируем вручную
             setEditingStaff(null);
           }}
         />

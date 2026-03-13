@@ -65,16 +65,20 @@ export async function POST(request: NextRequest) {
     const venueId = (bodyVenueId && String(bodyVenueId).trim()) || (staffData.venueId as string) || VENUE_ID;
     const userId = (staffData.userId as string) || staffId;
     const position = (staffData.position as string) || "Сотрудник";
+    const nowIso = new Date().toISOString();
     const joinDateRaw = staffData.invitedAt ?? staffData.createdAt;
-    const joinDate = joinDateRaw !== undefined && joinDateRaw !== null
-      ? joinDateRaw
-      : FieldValue.serverTimestamp();
+    const joinDate =
+      joinDateRaw !== undefined && joinDateRaw !== null
+        ? typeof joinDateRaw === "object" && "toDate" in joinDateRaw
+          ? (joinDateRaw as { toDate: () => Date }).toDate().toISOString()
+          : String(joinDateRaw)
+        : nowIso;
 
     const newEntry: StaffCareerEntry = {
       venueId,
       position,
       joinDate,
-      exitDate: FieldValue.serverTimestamp(),
+      exitDate: nowIso,
       exitReason: "contract_terminated",
       rating: ratingNum,
       comment: exitReason.trim(),
@@ -97,7 +101,7 @@ export async function POST(request: NextRequest) {
       if (lastIdxForVenue !== undefined && lastIdxForVenue >= 0) {
         careerHistory[lastIdxForVenue] = {
           ...careerHistory[lastIdxForVenue],
-          exitDate: FieldValue.serverTimestamp(),
+          exitDate: nowIso,
           exitReason: "contract_terminated",
           rating: ratingNum,
           comment: exitReason.trim(),
