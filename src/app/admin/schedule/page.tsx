@@ -10,7 +10,30 @@ import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/
 
 const VENUE_ID = "current";
 
-/** Сотрудник считается активным: status === 'active' либо (при отсутствии status) active !== false */
+/** Подписи ролей для UI (расширяемый список) */
+const ROLE_LABELS: Partial<Record<string, string>> = {
+  waiter: "Официант",
+  sommelier: "Сомелье",
+  manager: "Менеджер",
+  security: "Охрана",
+  chef: "Повар",
+  cook: "Повар",
+  sous_chef: "Су-шеф",
+  pastry_chef: "Кондитер",
+  bartender: "Бармен",
+  hostess: "Хостес",
+  administrator: "Администратор",
+  director: "Директор",
+  owner: "Владелец",
+  cleaner: "Уборщик",
+  runner: "Раннер",
+};
+
+function roleLabel(key: string): string {
+  return ROLE_LABELS[key] ?? key;
+}
+
+/** Сотрудник считается активным только при status === 'active' (или active !== false при отсутствии status) */
 function isActiveStaff(s: Staff): boolean {
   const status = (s as { status?: string }).status;
   if (status != null) return status === "active";
@@ -34,7 +57,7 @@ function planHoursFromSlot(slot: ShiftSlot): number {
   return eh0 - sh0 + (em0 - sm0) / 60;
 }
 
-/** Факт часов из checkIn/checkOut (HH:mm) */
+/** Факт часов из логов смен (checkIn/checkOut в scheduleEntry, заполняются при «Начать/Завершить смену» в Mini App) */
 function factHoursFromCheckInOut(checkIn?: string, checkOut?: string): number | undefined {
   if (!checkIn || !checkOut) return undefined;
   const [sh, sm] = checkIn.split(":").map(Number);
@@ -171,18 +194,31 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
+  const activeStaffIds = useMemo(() => new Set(staffList.map((s) => s.id)), [staffList]);
+
   const filtered = useMemo(
     () =>
       entries.filter((e) => {
+        if (!activeStaffIds.has(e.staffId)) return false;
         const slot = e.slot ?? { date: (e as unknown as { date?: string }).date ?? "", startTime: "10:00", endTime: "18:00", venueId: e.venueId };
         if (filterDate && slot.date !== filterDate) return false;
         if (filterRole && e.role !== filterRole) return false;
         return true;
       }),
-    [entries, filterDate, filterRole]
+    [entries, filterDate, filterRole, activeStaffIds]
   );
 
   const managedVenues = useMemo(() => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]), [venues, VENUE_ID]);
+
+  /** Роли, которые реально есть среди активных сотрудников — только их показываем во вкладках фильтра */
+  const rolesPresent = useMemo(() => {
+    const set = new Set<string>();
+    staffList.forEach((s) => {
+      const r = s.position ?? (s as { role?: string }).role;
+      if (r && typeof r === "string") set.add(r);
+    });
+    return Array.from(set).sort();
+  }, [staffList]);
 
   const monthDays = useMemo(() => {
     const [y, m] = filterMonth.split("-").map(Number);
@@ -250,10 +286,9 @@ export default function AdminSchedulePage() {
             onChange={(e) => setFilterRole(e.target.value as ServiceRole | "")}
           >
             <option value="">Все</option>
-            <option value="waiter">Официант</option>
-            <option value="sommelier">Сомелье</option>
-            <option value="manager">Менеджер</option>
-            <option value="security">Охрана</option>
+            {rolesPresent.map((r) => (
+              <option key={r} value={r}>{roleLabel(r)}</option>
+            ))}
           </select>
         </label>
         <button
@@ -400,6 +435,12 @@ function EditShiftModal({
             </select>
           </label>
           <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Должность</span>
+            <p className="mt-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" aria-readonly>
+              {roleLabel(staffList.find((s) => s.id === staffId)?.position ?? (staffList.find((s) => s.id === staffId) as { role?: string } | undefined)?.role ?? entry.role ?? "waiter")}
+            </p>
+          </label>
+          <label className="block">
             <span className="block text-xs font-medium text-gray-600">Объект</span>
             <select value={venueId} onChange={(e) => setVenueId(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm">
               {managedVenues.map((v) => (
@@ -500,6 +541,13 @@ function AddShiftModal({
                 </option>
               ))}
             </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Должность</span>
+            <p className="mt-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" aria-readonly>
+              {staffId ? roleLabel(staffList.find((s) => s.id === staffId)?.position ?? (staffList.find((s) => s.id === staffId) as { role?: string } | undefined)?.role ?? "waiter") : "—"}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500">Из карточки сотрудника в Команде (только просмотр)</p>
           </label>
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Объект (точка)</span>
@@ -611,7 +659,7 @@ function FOTReport({
   return (
     <section className="mt-8">
       <h3 className="text-base font-semibold text-gray-900">Сводка по ФОТ</h3>
-      <p className="mt-1 text-sm text-gray-500">План/Факт часов, опоздания и ранний уход. Экспорт в CSV для расчёта зарплаты.</p>
+      <p className="mt-1 text-sm text-gray-500">План — из расписания; Факт — из логов смен (checkIn/checkOut при «Начать/Завершить смену»). Экспорт в CSV.</p>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm">
           <span className="text-gray-600">Месяц / Дата</span>

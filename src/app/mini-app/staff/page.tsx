@@ -363,7 +363,7 @@ function StaffContentInner() {
                 <Calendar className="h-5 w-5 text-slate-500" />
                 <h3 className="font-medium">Мой график</h3>
               </div>
-              <p className="mt-2 text-sm text-slate-500">Ваше расписание по текущему заведению. Изменения вносит администратор.</p>
+              <p className="mt-2 text-sm text-slate-500">Только ваши смены по текущему заведению. Редактирование и удаление недоступны.</p>
               {scheduleLoading ? (
                 <p className="mt-3 text-sm text-slate-500">Загрузка…</p>
               ) : scheduleEntries.length === 0 ? (
