@@ -19,11 +19,26 @@ function clearMiniappCache(): void {
   } catch (_) {}
 }
 
-/** Тип для Telegram WebApp в мини-приложении (start_param, user.id есть только здесь). */
+/** Username рабочего бота: при открытии из чата с ним (кнопка «Открыть») форсируем Staff Mode даже без role=staff в URL. В BotFather можно также выставить URL: .../mini-app?role=staff&v=2.1 для сброса кеша кнопки. */
+const STAFF_BOT_USERNAME = "waitertalk_bot";
+
+/** Тип для Telegram WebApp в мини-приложении (start_param, user, receiver — бот при открытии из чата с ним). */
 type TelegramWebAppInit = {
-  initDataUnsafe?: { start_param?: string; user?: { id?: number } };
+  initDataUnsafe?: {
+    start_param?: string;
+    user?: { id?: number };
+    /** В чате с ботом: второй участник чата = бот (при открытии из кнопки «Открыть»). */
+    receiver?: { username?: string };
+  };
   ready?: () => void;
 };
+
+function isStaffBotContext(): boolean {
+  if (typeof window === "undefined") return false;
+  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  const username = tg?.initDataUnsafe?.receiver?.username ?? "";
+  return username === STAFF_BOT_USERNAME;
+}
 
 /** Парсинг start_param: "v_venueId_t_tableId" или "v_venueId_t_tableId_vid_visitorId" */
 function parseStartParam(startParam: string): { venueId: string; tableId: string; visitorId?: string } | null {
@@ -55,6 +70,7 @@ function MiniAppContent() {
   const [loaded, setLoaded] = useState(false);
   const [firestoreDone, setFirestoreDone] = useState(false);
   const [fromTelegram, setFromTelegram] = useState(false);
+  const [forceStaffByBot, setForceStaffByBot] = useState(false);
   const lastAppliedStartParam = useRef<string>("");
 
   const forceResetTableAndLoad = useCallback((newVenueId: string, newTableId: string) => {
@@ -96,6 +112,11 @@ function MiniAppContent() {
     }
   }, []);
 
+  // Принудительный Staff Mode по контексту: открытие из чата с @waitertalk_bot (кнопка «Открыть» без параметров URL).
+  useEffect(() => {
+    if (isStaffBotContext()) setForceStaffByBot(true);
+  }, []);
+
   useEffect(() => {
     const startParam = getStartParam();
     const fromQueryV = (searchParams.get("v") ?? "").trim();
@@ -103,12 +124,13 @@ function MiniAppContent() {
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
     const isStaffByUrl = (bot === "staff" || role === "staff") && !fromQueryT;
+    const isStaffEntry = isStaffByUrl || forceStaffByBot;
 
     if (typeof window !== "undefined" && startParam) {
       clearMiniappCache();
     }
 
-    if (isStaffByUrl) {
+    if (isStaffEntry) {
       setLoaded(true);
       setFirestoreDone(true);
       return;
@@ -131,7 +153,7 @@ function MiniAppContent() {
       setFirestoreDone(true);
     }
     setLoaded(true);
-  }, [searchParams, applyStartParam, forceResetTableAndLoad, venueId, tableId]);
+  }, [searchParams, applyStartParam, forceResetTableAndLoad, venueId, tableId, forceStaffByBot]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -204,26 +226,26 @@ function MiniAppContent() {
     return () => { cancelled = true; };
   }, [venueId, tableId]);
 
-  // Защита: персонал — только по URL (role=staff или bot=staff), без t. Решение по state не делаем, чтобы GuestModePanel не перекрывал кабинет.
+  // Защита: персонал — по URL (role/bot=staff) или по контексту Telegram (receiver.username === waitertalk_bot). Без t → кабинет, не гость.
   useEffect(() => {
     if (!loaded) return;
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
     const urlT = (searchParams.get("t") ?? "").trim();
-    const isStaffEntry = bot === "staff" || role === "staff";
+    const isStaffEntry = bot === "staff" || role === "staff" || forceStaffByBot;
     if (isStaffEntry && !urlT) {
       const v = (venueId || searchParams.get("v")) ?? "";
       router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
       return;
     }
-  }, [loaded, searchParams, venueId, router]);
+  }, [loaded, searchParams, venueId, router, forceStaffByBot]);
 
   useEffect(() => {
     if (!loaded || !firestoreDone) return;
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
     const urlT = (searchParams.get("t") ?? "").trim();
-    const isStaffEntry = bot === "staff" || role === "staff";
+    const isStaffEntry = bot === "staff" || role === "staff" || forceStaffByBot;
     if (isStaffEntry && !urlT) return;
 
     const v = (venueId || searchParams.get("v")) ?? "";
@@ -241,7 +263,7 @@ function MiniAppContent() {
     if (chatId) params.set("chatId", String(chatId));
     params.set("platform", searchParams.get("platform") || "telegram");
     router.replace(`/check-in/panel?${params.toString()}`);
-  }, [loaded, firestoreDone, venueId, tableId, searchParams, router]);
+  }, [loaded, firestoreDone, venueId, tableId, searchParams, router, forceStaffByBot]);
 
   const venueName = (venueSettings?.name as string) ?? venueId;
   const tableNumber = (tableSettings?.tableNumber as number) ?? tableId;
