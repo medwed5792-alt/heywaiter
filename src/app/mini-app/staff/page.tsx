@@ -4,14 +4,9 @@ import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
-import {
-  StaffVenuePicker,
-  getStaffVenueFromSession,
-  setStaffVenueInSession,
-} from "@/components/staff/StaffVenuePicker";
+import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
+import { StaffVenuePicker } from "@/components/staff/StaffVenuePicker";
 
-const DEFAULT_VENUE_ID = "current";
-const POLL_MS = 8000;
 const NOTIFICATIONS_POLL_MS = 5000;
 const GEO_OPTIONS: PositionOptions = {
   enableHighAccuracy: false,
@@ -26,13 +21,6 @@ type TelegramWebApp = {
   ready?: () => void;
 };
 
-function getTelegramUserId(): string | null {
-  if (typeof window === "undefined") return null;
-  const tg = (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
-  const id = tg?.initDataUnsafe?.user?.id;
-  return id != null ? String(id) : null;
-}
-
 interface NotificationItem {
   id: string;
   message: string;
@@ -41,11 +29,6 @@ interface NotificationItem {
   type: string | null;
   read: boolean;
   createdAt: string | null;
-}
-
-interface VenueOption {
-  venueId: string;
-  name: string;
 }
 
 interface VenueGeo {
@@ -65,61 +48,34 @@ function formatTime(iso: string | null): string {
   }
 }
 
-function MiniAppStaffContent() {
-  const searchParams = useSearchParams();
+function StaffContentInner() {
   const router = useRouter();
-  const rawVenue = searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || DEFAULT_VENUE_ID;
-  const [venueId, setVenueId] = useState<string>(rawVenue);
-  const [venuesList, setVenuesList] = useState<VenueOption[]>([]);
-  const [venuePickerShown, setVenuePickerShown] = useState(false);
+  const {
+    currentVenueId,
+    staffData,
+    venuesList,
+    loading,
+    error: staffError,
+    setCurrentVenue,
+    refreshStaffData,
+  } = useStaff();
+
   const [tab, setTab] = useState<Tab>("work");
-  const [userId, setUserId] = useState<string | null>(null);
-  const [staffId, setStaffId] = useState<string | null>(null);
-  const [onShift, setOnShift] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [shiftError, setShiftError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [venueGeo, setVenueGeo] = useState<VenueGeo | null>(null);
   const [geoBlocked, setGeoBlocked] = useState(false);
   const [geoMessage, setGeoMessage] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
 
-  const effectiveVenueId = venueId && venueId !== DEFAULT_VENUE_ID ? venueId : null;
-
-  const fetchMe = useCallback(async (vid: string) => {
-    const telegramId = getTelegramUserId();
-    if (!telegramId) {
-      setError("Откройте приложение из Telegram");
-      setLoading(false);
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/api/staff/me?venueId=${encodeURIComponent(vid)}&telegramId=${encodeURIComponent(telegramId)}`
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Не удалось загрузить данные");
-        setLoading(false);
-        return;
-      }
-      setUserId(data.userId);
-      setStaffId(data.staffId);
-      setOnShift(data.onShift === true);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка сети");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { userId, staffId, onShift } = staffData;
 
   const fetchNotifications = useCallback(async () => {
-    if (!staffId) return;
+    if (!staffId || !currentVenueId) return;
     try {
       const res = await fetch(
-        `/api/staff/notifications?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(venueId)}&limit=30`
+        `/api/staff/notifications?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(currentVenueId)}&limit=30`
       );
       const data = await res.json();
       if (res.ok && Array.isArray(data.notifications)) {
@@ -128,60 +84,7 @@ function MiniAppStaffContent() {
     } catch (_e) {
       // ignore
     }
-  }, [staffId, effectiveVenueId]);
-
-  // Мульти-заведения: при v=current запрашиваем список, при одном — подставляем, при нескольких — экран выбора
-  useEffect(() => {
-    const telegramId = getTelegramUserId();
-    if (!telegramId) return;
-    if (rawVenue && rawVenue !== DEFAULT_VENUE_ID) {
-      setVenueId(rawVenue);
-      setVenuePickerShown(false);
-      setLoading(true);
-      fetchMe(rawVenue);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      const res = await fetch(`/api/staff/venues?telegramId=${encodeURIComponent(telegramId)}`);
-      const data = await res.json().catch(() => ({}));
-      if (cancelled) return;
-      const list: VenueOption[] = data.venues ?? [];
-      setVenuesList(list);
-      if (list.length === 0) {
-        setError("Нет привязанных заведений");
-        setLoading(false);
-        return;
-      }
-      if (list.length === 1) {
-        const id = list[0].venueId;
-        setStaffVenueInSession(id);
-        setVenueId(id);
-        setLoading(true);
-        router.replace(`/mini-app/staff?${new URLSearchParams({ v: id }).toString()}`);
-        fetchMe(id);
-        return;
-      }
-      const sessionVenue = getStaffVenueFromSession();
-      const inList = sessionVenue && list.some((v) => v.venueId === sessionVenue);
-      if (inList && sessionVenue) {
-        setVenueId(sessionVenue);
-        setVenuePickerShown(false);
-        setLoading(true);
-        fetchMe(sessionVenue);
-        return;
-      }
-      setVenuePickerShown(true);
-      setLoading(false);
-    })();
-    return () => { cancelled = true; };
-  }, [rawVenue, router, fetchMe]);
-
-  useEffect(() => {
-    if (!userId || loading || !effectiveVenueId) return;
-    const t = setInterval(() => fetchMe(effectiveVenueId), POLL_MS);
-    return () => clearInterval(t);
-  }, [userId, loading, effectiveVenueId, fetchMe]);
+  }, [staffId, currentVenueId]);
 
   useEffect(() => {
     fetchNotifications();
@@ -190,9 +93,9 @@ function MiniAppStaffContent() {
     return () => clearInterval(t);
   }, [staffId, fetchNotifications]);
 
-  // Гео-валидация: загрузка настроек заведения и проверка дистанции (Haversine)
+  // Гео-валидация: загрузка настроек заведения и проверка дистанции (haversineDistanceM из geo.ts)
   useEffect(() => {
-    if (!effectiveVenueId || onShift) {
+    if (!currentVenueId || onShift) {
       setVenueGeo(null);
       setGeoBlocked(false);
       setGeoMessage(null);
@@ -202,7 +105,7 @@ function MiniAppStaffContent() {
     (async () => {
       setGeoLoading(true);
       try {
-        const res = await fetch(`/api/venues/${encodeURIComponent(effectiveVenueId)}/geo`);
+        const res = await fetch(`/api/venues/${encodeURIComponent(currentVenueId)}/geo`);
         const data = await res.json();
         if (cancelled) return;
         if (!res.ok || !data?.configured) {
@@ -259,18 +162,14 @@ function MiniAppStaffContent() {
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveVenueId, onShift]);
+  }, [currentVenueId, onShift]);
 
   const handleVenueSelect = useCallback(
     (selectedId: string) => {
-      setStaffVenueInSession(selectedId);
-      setVenueId(selectedId);
-      setVenuePickerShown(false);
+      setCurrentVenue(selectedId);
       router.replace(`/mini-app/staff?${new URLSearchParams({ v: selectedId }).toString()}`);
-      setLoading(true);
-      fetchMe(selectedId);
     },
-    [router, fetchMe]
+    [setCurrentVenue, router]
   );
 
   const handleShiftAction = async () => {
@@ -278,23 +177,22 @@ function MiniAppStaffContent() {
     if (!staffId && !userId) return;
     if (!onShift && !IS_GEO_DEBUG && geoBlocked) return;
     setActionLoading(true);
+    setShiftError(null);
     try {
       const res = await fetch("/api/staff/shift", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(staffId && { staffId }),
-          ...(userId && !staffId && { userId, venueId: effectiveVenueId ?? venueId }),
+          ...(userId && !staffId && { userId, venueId: currentVenueId }),
           action: onShift ? "stop" : "start",
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
-      setOnShift(data.onShift === true);
-      setError(null);
-      if (effectiveVenueId) fetchMe(effectiveVenueId);
+      refreshStaffData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка смены");
+      setShiftError(e instanceof Error ? e.message : "Ошибка смены");
     } finally {
       setActionLoading(false);
     }
@@ -304,7 +202,8 @@ function MiniAppStaffContent() {
     (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp?.ready?.();
   }
 
-  if (venuePickerShown && venuesList.length > 1) {
+  // Экран выбора заведения при нескольких привязках
+  if (venuesList.length > 1 && !currentVenueId && !loading) {
     return (
       <StaffVenuePicker
         venues={venuesList}
@@ -321,17 +220,16 @@ function MiniAppStaffContent() {
     );
   }
 
-  if (error && !userId) {
+  if (staffError && !userId) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-center text-red-600">{error}</p>
+        <p className="text-center text-red-600">{staffError}</p>
       </main>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 md:flex md:max-w-2xl md:mx-auto md:shadow-lg">
-      {/* Переключатель Работа / Кабинет */}
       <header className="sticky top-0 z-10 flex border-b border-slate-200 bg-white">
         <button
           type="button"
@@ -362,14 +260,13 @@ function MiniAppStaffContent() {
       <main className="flex-1 p-4 pb-8 md:p-6">
         {tab === "work" && (
           <div className="space-y-6">
-            {/* Кнопка смены */}
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-sm font-medium text-slate-500">Смена</h2>
               <p className="mt-0.5 text-slate-700">
                 {onShift ? "Вы на смене" : "Вы не на смене"}
               </p>
-              {error && (
-                <p className="mt-2 text-sm text-red-600">{error}</p>
+              {shiftError && (
+                <p className="mt-2 text-sm text-red-600">{shiftError}</p>
               )}
               {!onShift && geoMessage && (
                 <p className="mt-2 text-sm text-amber-700">{geoMessage}</p>
@@ -392,7 +289,6 @@ function MiniAppStaffContent() {
               </button>
             </section>
 
-            {/* Лог вызовов */}
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
                 <Bell className="h-4 w-4 text-slate-500" />
@@ -424,8 +320,6 @@ function MiniAppStaffContent() {
         {tab === "cabinet" && (
           <div className="space-y-4">
             <p className="text-xs text-slate-500">Только просмотр. Редактирование недоступно.</p>
-
-            {/* Мой График */}
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-slate-700">
                 <Calendar className="h-5 w-5 text-slate-500" />
@@ -433,8 +327,6 @@ function MiniAppStaffContent() {
               </div>
               <p className="mt-2 text-sm text-slate-500">Здесь отображается ваше расписание. Редактирование в админ-панели заведения.</p>
             </section>
-
-            {/* Биржа смен */}
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-slate-700">
                 <Briefcase className="h-5 w-5 text-slate-500" />
@@ -442,8 +334,6 @@ function MiniAppStaffContent() {
               </div>
               <p className="mt-2 text-sm text-slate-500">Обмен сменами с коллегами. Доступ только для просмотра в приложении.</p>
             </section>
-
-            {/* Мои чаевые */}
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-slate-700">
                 <Coins className="h-5 w-5 text-slate-500" />
@@ -455,6 +345,17 @@ function MiniAppStaffContent() {
         )}
       </main>
     </div>
+  );
+}
+
+function MiniAppStaffContent() {
+  const searchParams = useSearchParams();
+  const rawVenue = searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || "current";
+
+  return (
+    <StaffProvider initialVenueFromUrl={rawVenue}>
+      <StaffContentInner />
+    </StaffProvider>
   );
 }
 
