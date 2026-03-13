@@ -6,6 +6,7 @@ import toast from "react-hot-toast";
 import { collection, doc, query, where, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/types";
 
 const VENUE_ID = "current";
@@ -122,19 +123,24 @@ export default function AdminSchedulePage() {
   const [addShiftModal, setAddShiftModal] = useState<{ dates: string[]; defaultStartHour: number } | null>(null);
   const [editShiftEntry, setEditShiftEntry] = useState<ScheduleEntry | null>(null);
   const [dragStart, setDragStart] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ entry: ScheduleEntry; onSuccess?: () => void } | null>(null);
 
   const handleDeleteEntry = (entry: ScheduleEntry, onSuccess?: () => void) => {
-    if (!window.confirm("Удалить эту смену из графика?")) return;
-    (async () => {
-      try {
-        await deleteDoc(doc(db, "scheduleEntries", entry.id));
-        setEntries((prev) => prev.filter((e) => e.id !== entry.id));
-        onSuccess?.();
-        toast.success("Смена удалена");
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Ошибка удаления");
-      }
-    })();
+    setDeleteConfirm({ entry, onSuccess });
+  };
+
+  const runDeleteAndClose = async () => {
+    if (!deleteConfirm) return;
+    const { entry, onSuccess } = deleteConfirm;
+    try {
+      await deleteDoc(doc(db, "scheduleEntries", entry.id));
+      setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+      onSuccess?.();
+      toast.success("Смена удалена");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Ошибка удаления");
+    }
+    setDeleteConfirm(null);
   };
 
   useEffect(() => {
@@ -194,18 +200,25 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  const activeStaffIds = useMemo(() => new Set(staffList.map((s) => s.id)), [staffList]);
+  const activeStaffIds = useMemo(
+    () => new Set(staffList.filter((s) => (s as { status?: string }).status === "active" || ((s as { status?: string }).status == null && s.active !== false)).map((s) => s.id)),
+    [staffList]
+  );
+
+  const filteredEntries = useMemo(
+    () => entries.filter((e) => activeStaffIds.has(e.staffId)),
+    [entries, activeStaffIds]
+  );
 
   const filtered = useMemo(
     () =>
-      entries.filter((e) => {
-        if (!activeStaffIds.has(e.staffId)) return false;
+      filteredEntries.filter((e) => {
         const slot = e.slot ?? { date: (e as unknown as { date?: string }).date ?? "", startTime: "10:00", endTime: "18:00", venueId: e.venueId };
         if (filterDate && slot.date !== filterDate) return false;
         if (filterRole && e.role !== filterRole) return false;
         return true;
       }),
-    [entries, filterDate, filterRole, activeStaffIds]
+    [filteredEntries, filterDate, filterRole]
   );
 
   const managedVenues = useMemo(() => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]), [venues, VENUE_ID]);
@@ -363,13 +376,24 @@ export default function AdminSchedulePage() {
       )}
 
       <FOTReport
-        entries={entries}
+        entries={filteredEntries}
         staffList={staffList}
         venues={venues}
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
         onEditEntry={setEditShiftEntry}
         onDeleteEntry={(entry) => handleDeleteEntry(entry)}
+      />
+
+      <ConfirmModal
+        open={!!deleteConfirm}
+        title="Удаление смены"
+        message="Удалить эту смену из графика?"
+        cancelLabel="Отмена"
+        confirmLabel="Удалить"
+        variant="danger"
+        onConfirm={runDeleteAndClose}
+        onCancel={() => setDeleteConfirm(null)}
       />
     </div>
   );
@@ -486,13 +510,21 @@ function AddShiftModal({
   onSaved: () => void;
 }) {
   const [staffId, setStaffId] = useState("");
+  const [roleDisplay, setRoleDisplay] = useState("");
   const [venueId, setVenueId] = useState(managedVenues[0]?.id ?? VENUE_ID);
   const [startTime, setStartTime] = useState(`${String(defaultStartHour).padStart(2, "0")}:00`);
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
   const selectedStaff = useMemo(() => staffList.find((s) => s.id === staffId), [staffList, staffId]);
-  const roleFromStaff = selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter";
+  const roleFromStaff = roleDisplay || (selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter");
+
+  const handleStaffSelect = (selectedId: string) => {
+    setStaffId(selectedId);
+    const s = staffList.find((x) => x.id === selectedId);
+    if (s) setRoleDisplay(s.position ?? (s as { role?: string }).role ?? "waiter");
+    else setRoleDisplay("");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -534,7 +566,7 @@ function AddShiftModal({
             <select
               required
               value={staffId}
-              onChange={(e) => setStaffId(e.target.value)}
+              onChange={(e) => handleStaffSelect(e.target.value)}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
@@ -550,7 +582,7 @@ function AddShiftModal({
             <p className="mt-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" aria-readonly>
               {staffId ? roleLabel(roleFromStaff) : "—"}
             </p>
-            <p className="mt-0.5 text-xs text-gray-500">Заполняется автоматически при выборе сотрудника (из Команды)</p>
+            <p className="mt-0.5 text-xs text-gray-500">Заполняется мгновенно при выборе сотрудника (из Команды)</p>
           </label>
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Объект (точка)</span>
