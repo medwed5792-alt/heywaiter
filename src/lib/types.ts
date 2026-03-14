@@ -321,6 +321,7 @@ export interface Affiliation {
   venueId: string;
   /** Должность (ключ: sommelier, waiter, …) */
   role: string;
+  /** @deprecated Для определения «в штате» использовать только staff.active в коллекции staff (Единый Словарь V.2.0). */
   status: AffiliationStatus;
   position?: string;
   onShift?: boolean;

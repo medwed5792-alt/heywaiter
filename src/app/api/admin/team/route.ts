@@ -44,7 +44,7 @@ export async function GET() {
       const userId = data.userId as string | undefined;
       const global = userId ? globalUsers.get(userId) : null;
       const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
-      const isActive = (data.active !== false) && (aff?.status === "active" ?? true);
+      const isActive = data.active === true;
       if (!isActive) continue;
 
       if (global) {

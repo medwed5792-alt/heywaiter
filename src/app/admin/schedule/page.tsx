@@ -204,14 +204,8 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  /** Активный штат (Команда): только status === 'active' или active === true. Таймлайн и ФОТ рендерятся только по нему. */
-  const activeStaffList = useMemo(
-    () =>
-      staffList.filter(
-        (s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true
-      ),
-    [staffList]
-  );
+  /** Активный штат (Команда): только active === true (Единый Словарь Состояний V.2.0). Таймлайн и ФОТ рендерятся только по нему. */
+  const activeStaffList = useMemo(() => staffList.filter((s) => s.active === true), [staffList]);
 
   const activeStaffIds = useMemo(() => activeStaffList.map((s) => s.id), [activeStaffList]);
 
@@ -580,7 +574,7 @@ function AddShiftModal({
             >
               <option value="">Выберите</option>
               {staffList
-                .filter((s) => s.active === true && (s as { status?: string }).status === "active")
+                .filter((s) => s.active === true)
                 .filter((v, i, a) => a.findIndex((t) => t.id === v.id) === i)
                 .map((employee) => (
                   <option key={employee.id} value={employee.id}>
@@ -660,10 +654,10 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  /** Строки только по активным (active === true и status === 'active'); смены фильтруем по staffId и месяцу. */
+  /** Строки только по активным (active === true, Словарь V.2.0); смены фильтруем по staffId и месяцу. */
   const rowsByStaff = useMemo(() => {
     return staffList
-      .filter((s) => s.active === true && (s as { status?: string }).status === "active")
+      .filter((s) => s.active === true)
       .map((staff) => {
         const staffEntries = entries.filter((e) => {
           if (e.staffId !== staff.id) return false;
@@ -745,13 +739,13 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {staffList.filter((s) => s.active === true && (s as { status?: string }).status === "active").length === 0 ? (
+            {staffList.filter((s) => s.active === true).length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-500">Нет активных сотрудников</td>
               </tr>
             ) : (
               staffList
-                .filter((s) => s.active === true && (s as { status?: string }).status === "active")
+                .filter((s) => s.active === true)
                 .map((staff) => {
                   const staffEntries = entries.filter(
                     (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
