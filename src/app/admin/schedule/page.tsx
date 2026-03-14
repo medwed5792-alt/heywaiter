@@ -162,7 +162,12 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      const activeStaffOnly = allStaff.filter((s) => (s as { status?: string }).status === "active");
+      const activeStaffOnly = allStaff.filter((s) => {
+        const status = (s as { status?: string }).status;
+        const active = (s as { active?: boolean }).active;
+        if (status === "inactive" || active === false) return false;
+        return status === "active" || active === true;
+      });
       setStaffList(activeStaffOnly);
     });
     return () => unsub();
