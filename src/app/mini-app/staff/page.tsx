@@ -58,6 +58,165 @@ function formatTime(iso: string | null): string {
   }
 }
 
+function getTelegramUserIdFromWindow(): string | null {
+  if (typeof window === "undefined") return null;
+  const id = (window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } })
+    .Telegram?.WebApp?.initDataUnsafe?.user?.id;
+  return id != null ? String(id) : null;
+}
+
+function StaffOnboardingScreen({
+  venueId,
+  onSuccess,
+}: {
+  venueId: string;
+  onSuccess: () => void;
+}) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [showPhoneLink, setShowPhoneLink] = useState(false);
+  const [linkPhone, setLinkPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const platformId = getTelegramUserIdFromWindow();
+  const platform = "tg";
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!platformId) {
+      setError("Откройте приложение из Telegram");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/staff/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          platform,
+          platformId,
+          venueId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка регистрации");
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLinkByPhone = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!platformId || !linkPhone.trim()) {
+      setError("Введите номер телефона");
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/staff/link-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: linkPhone.trim(),
+          platform,
+          platformId,
+          venueId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка входа");
+      onSuccess();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-lg font-semibold text-slate-900">Добро пожаловать</h1>
+        <p className="mt-1 text-sm text-slate-500">Заполните данные или войдите по номеру телефона</p>
+
+        <form onSubmit={handleRegister} className="mt-6 space-y-4">
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600">Имя</span>
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Имя"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-slate-600">Фамилия</span>
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Фамилия"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {loading ? "…" : "Зарегистрироваться"}
+          </button>
+        </form>
+
+        <div className="mt-6 border-t border-slate-200 pt-6">
+          {!showPhoneLink ? (
+            <button
+              type="button"
+              onClick={() => setShowPhoneLink(true)}
+              className="w-full rounded-xl border border-slate-300 bg-white py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              У меня уже есть аккаунт (вход по номеру телефона)
+            </button>
+          ) : (
+            <form onSubmit={handleLinkByPhone} className="space-y-3">
+              <label className="block">
+                <span className="block text-xs font-medium text-slate-600">Номер телефона</span>
+                <input
+                  type="tel"
+                  value={linkPhone}
+                  onChange={(e) => setLinkPhone(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="+7 900 123-45-67"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-xl bg-slate-800 py-3 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {loading ? "…" : "Войти"}
+              </button>
+            </form>
+          )}
+        </div>
+
+        {error && (
+          <p className="mt-4 text-center text-sm text-red-600">{error}</p>
+        )}
+      </div>
+    </main>
+  );
+}
+
 function StaffContentInner() {
   const router = useRouter();
   const {
@@ -258,11 +417,12 @@ function StaffContentInner() {
     );
   }
 
-  if (staffError && !userId) {
+  if (staffError && !userId && !staffId) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-center text-red-600">{staffError}</p>
-      </main>
+      <StaffOnboardingScreen
+        venueId={currentVenueId ?? "current"}
+        onSuccess={refreshStaffData}
+      />
     );
   }
 

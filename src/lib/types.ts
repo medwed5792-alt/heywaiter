@@ -305,14 +305,24 @@ export interface StaffCareerEntry {
   comment?: string;
 }
 
-/** Единый профиль: агрегация идентификаторов (tg, email, phone и т.д.) для поиска дубликатов. */
+/** Unified ID V.2.0: все 8 соцсетей + phone для единого поиска (один сотрудник = один профиль). */
 export interface UnifiedIdentities {
   tg?: string;
-  email?: string;
-  phone?: string;
   wa?: string;
   vk?: string;
+  viber?: string;
+  wechat?: string;
+  inst?: string;
+  fb?: string;
+  line?: string;
+  phone?: string;
+  email?: string;
 }
+
+/** Ключи identities для поиска (используются в where(`identities.${key}`, "==", value)). */
+export const UNIFIED_IDENTITY_KEYS: (keyof UnifiedIdentities)[] = [
+  "tg", "wa", "vk", "viber", "wechat", "inst", "fb", "line", "phone", "email",
+];
 
 /** Связь сотрудника с заведением (коллекция global_users). */
 export type AffiliationStatus = "active" | "former";

@@ -4,8 +4,7 @@
  */
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { UnifiedIdentities } from "@/lib/types";
-
-const IDENTITY_KEYS = ["tg", "email", "phone", "wa", "vk"] as const;
+import { UNIFIED_IDENTITY_KEYS } from "@/lib/types";
 
 /**
  * Ищет существующий userId в коллекции global_users по доступным полям identities.
@@ -16,7 +15,7 @@ export async function findExistingUserIdByIdentities(
   identities: UnifiedIdentities
 ): Promise<string | null> {
   const firestore = getAdminFirestore();
-  for (const key of IDENTITY_KEYS) {
+  for (const key of UNIFIED_IDENTITY_KEYS) {
     const value = identities[key];
     if (!value || typeof value !== "string" || !value.trim()) continue;
     const snap = await firestore

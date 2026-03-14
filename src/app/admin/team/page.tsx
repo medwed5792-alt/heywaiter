@@ -86,12 +86,18 @@ function getGroupAndCallCategory(position: string): { group: StaffGroup; call_ca
   return { group, call_category };
 }
 
-const IDENTITY_OPTIONS: { value: keyof UnifiedIdentities; label: string }[] = [
-  { value: "tg", label: "Telegram" },
-  { value: "wa", label: "WhatsApp" },
-  { value: "vk", label: "VK" },
-  { value: "email", label: "Email" },
-  { value: "phone", label: "Phone" },
+/** Unified ID V.2.0: все 8 соцсетей + phone, email для карточки сотрудника. */
+const IDENTITY_OPTIONS: { value: keyof UnifiedIdentities; label: string; short: string }[] = [
+  { value: "tg", label: "Telegram", short: "TG" },
+  { value: "wa", label: "WhatsApp", short: "WA" },
+  { value: "vk", label: "VK", short: "VK" },
+  { value: "viber", label: "Viber", short: "VB" },
+  { value: "wechat", label: "WeChat", short: "WC" },
+  { value: "inst", label: "Instagram", short: "IN" },
+  { value: "fb", label: "Facebook", short: "FB" },
+  { value: "line", label: "Line", short: "LN" },
+  { value: "phone", label: "Телефон", short: "📞" },
+  { value: "email", label: "Email", short: "✉" },
 ];
 
 function identitiesToEntries(identities?: UnifiedIdentities | null): { type: keyof UnifiedIdentities; value: string }[] {
@@ -155,7 +161,27 @@ function StaffRow({
           )}
         </div>
       </td>
-      <td className="p-3 text-sm font-medium text-gray-900">{name}</td>
+      <td className="p-3">
+        <div>
+          <p className="text-sm font-medium text-gray-900">{name}</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {IDENTITY_OPTIONS.filter((o) => o.value !== "email").map((opt) => {
+              const linked = !!(staff.identities?.[opt.value] ?? (opt.value === "tg" && staff.tgId));
+              return (
+                <span
+                  key={opt.value}
+                  title={`${opt.label}: ${linked ? "привязан" : "нет"}`}
+                  className={`inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded px-1 text-[10px] font-medium ${
+                    linked ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-400"
+                  }`}
+                >
+                  {opt.short}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </td>
       <td className="p-3 text-sm text-gray-600">{positionLabel}</td>
       <td className="p-3 text-sm">{staff.globalScore != null ? `${staff.globalScore}` : "—"}</td>
       <td className="p-3 text-sm">
