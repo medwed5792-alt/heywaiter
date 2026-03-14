@@ -34,17 +34,13 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** Универсальный фильтр активных для списка: status === 'active' ИЛИ active === true ИЛИ есть роль/должность. Позволяет видеть сотрудников без поля status (АндрейОф, о2 и т.д.). */
-function isActiveForList(s: Staff): boolean {
+/** Жёсткий фильтр активных: убираем всех с явным статусом неактивности или unlinked. В списке только о2, АндрейОф и т.п. */
+function isActiveStaffStrict(s: Staff): boolean {
   const status = (s as { status?: string }).status;
-  const active = (s as { active?: boolean }).active;
-  const role = (s as { role?: string }).role ?? s.position;
-  return status === "active" || active === true || role !== undefined;
-}
-
-/** Не показывать в выпадающем списке только явно неактивных (status === 'inactive'). */
-function isNotInactive(s: Staff): boolean {
-  return (s as { status?: string }).status !== "inactive";
+  const unlinked = (s as { unlinked?: boolean }).unlinked;
+  if (status === "inactive" || status === "dismissed") return false;
+  if (unlinked === true) return false;
+  return true;
 }
 
 function todayISO() {
@@ -173,8 +169,9 @@ export default function AdminSchedulePage() {
       where("venueId", "==", VENUE_ID)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(list.filter(isActiveForList));
+      const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
+      const activeStaff = allStaff.filter(isActiveStaffStrict);
+      setStaffList(activeStaff);
     });
     return () => unsub();
   }, []);
@@ -428,7 +425,7 @@ function EditShiftModal({
   const [endTime, setEndTime] = useState(slot.endTime);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList.filter(isNotInactive), [staffList]);
+  const activeStaff = useMemo(() => staffList, [staffList]);
   const selectedStaffForRole = activeStaff.find((s) => s.id === staffId);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -525,16 +522,8 @@ function AddShiftModal({
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
-  const visibleStaff = useMemo(() => staffList.filter(isNotInactive), [staffList]);
-  const selectedStaff = useMemo(() => visibleStaff.find((s) => s.id === staffId), [visibleStaff, staffId]);
+  const selectedStaff = useMemo(() => staffList.find((s) => s.id === staffId), [staffList, staffId]);
   const roleFromStaff = roleDisplay || (selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter");
-
-  const handleStaffSelect = (selectedId: string) => {
-    setStaffId(selectedId);
-    const staff = staffList.find((s) => s.id === selectedId);
-    if (staff) setRoleDisplay((staff as { role?: string }).role || staff.position || "waiter");
-    else setRoleDisplay("");
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -579,15 +568,15 @@ function AddShiftModal({
               onChange={(e) => {
                 const val = e.target.value;
                 setStaffId(val);
-                const staff = staffList.find((s) => s.id === val);
-                if (staff) setRoleDisplay((staff as { role?: string }).role || staff.position || "waiter");
+                const selected = staffList.find((s) => s.id === val);
+                if (selected) setRoleDisplay((selected as { role?: string }).role || selected.position || "");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList.filter(isNotInactive).map((s) => (
+              {staffList.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}
+                  {(s as { displayName?: string }).displayName ?? (s as { name?: string }).name ?? ((s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id))}
                 </option>
               ))}
             </select>
@@ -663,18 +652,19 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
+  // Только активные сотрудники (staffList уже отфильтрован в onSnapshot) — строки с1 и других уволенных не показываются
   const activeStaffIds = useMemo(
     () => new Set(staffList.map((s) => s.id)),
     [staffList]
   );
 
   const rows = useMemo(() => {
-    const byEntry = entries.filter((e) => {
+    const filteredEntries = entries.filter((e) => activeStaffIds.has(e.staffId));
+    const byEntry = filteredEntries.filter((e) => {
       const slot = e.slot;
       if (!slot) return false;
       const date = slot?.date;
       if (!date || !String(date).startsWith(filterMonth)) return false;
-      if (!activeStaffIds.has(e.staffId)) return false;
       return true;
     });
     return byEntry.map((e) => {
