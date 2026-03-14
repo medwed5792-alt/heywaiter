@@ -162,10 +162,8 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      const activeStaff = allStaff.filter(
-        (s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true
-      );
-      setStaffList(activeStaff);
+      const activeStaffOnly = allStaff.filter((s) => (s as { status?: string }).status === "active");
+      setStaffList(activeStaffOnly);
     });
     return () => unsub();
   }, []);
@@ -559,7 +557,7 @@ function AddShiftModal({
               onChange={(e) => {
                 const selected = staffList.find((p) => p.id === e.target.value);
                 setStaffId(e.target.value);
-                if (selected) setRoleDisplay((selected as { role?: string }).role || selected.position || "waiter");
+                if (selected) setRoleDisplay((selected as { role?: string }).role ?? selected.position ?? "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
@@ -677,7 +675,9 @@ function FOTReport({
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
-    const body = rowsByStaff.map((r) => `${r.name};${r.venueName};${r.plan};${r.fact};${r.late};${r.early}`).join("\n");
+    const body = rowsByStaff
+      .map((r) => `${r.name};${r.venueName};${r.plan};${r.fact};${r.late};${r.early}`)
+      .join("\n");
     const blob = new Blob(["\uFEFF" + header + body], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -723,45 +723,61 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {rowsByStaff.length === 0 ? (
+            {staffList.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-4 text-center text-gray-500">Нет данных за выбранный период</td>
+                <td colSpan={7} className="p-4 text-center text-gray-500">Нет активных сотрудников</td>
               </tr>
             ) : (
-              rowsByStaff.map((r) => (
-                <tr
-                  key={r.staff.id}
-                  className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
-                  onClick={() => onEditEntry?.(r.firstEntry)}
-                >
-                  <td className="p-3">{r.name}</td>
-                  <td className="p-3">{r.venueName}</td>
-                  <td className="p-3 text-right">{r.plan}</td>
-                  <td className="p-3 text-right">{r.fact}</td>
-                  <td className="p-3 text-right">{r.late}</td>
-                  <td className="p-3 text-right">{r.early}</td>
-                  <td className="p-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
-                        title="Редактировать"
-                        onClick={() => onEditEntry?.(r.firstEntry)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                        title="Удалить"
-                        onClick={() => onDeleteEntry?.(r.firstEntry)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
+              staffList.map((staff) => {
+                const staffEntries = entries.filter(
+                  (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
+                );
+                if (staffEntries.length === 0) return null;
+                const plan = staffEntries.reduce((sum, e) => sum + (e.planHours ?? 0), 0);
+                const fact = staffEntries.reduce((sum, e) => sum + (e.factHours ?? 0), 0);
+                const late = staffEntries.reduce((sum, e) => sum + (e.lateMinutes ?? 0), 0);
+                const early = staffEntries.reduce((sum, e) => sum + (e.earlyLeaveMinutes ?? 0), 0);
+                const firstEntry = staffEntries[0];
+                const venue = venues.find((v) => v.id === (firstEntry.slot?.venueId ?? firstEntry.venueId));
+                const name = (staff.firstName ?? staff.lastName)
+                  ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
+                  : (staff.identity?.displayName ?? staff.id);
+                const venueName = venue?.name ?? (firstEntry.slot?.venueId ?? firstEntry.venueId ?? "—");
+                return (
+                  <tr
+                    key={staff.id}
+                    className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
+                    onClick={() => onEditEntry?.(firstEntry)}
+                  >
+                    <td className="p-3">{name}</td>
+                    <td className="p-3">{venueName}</td>
+                    <td className="p-3 text-right">{Math.round(plan * 10) / 10}</td>
+                    <td className="p-3 text-right">{Math.round(fact * 10) / 10}</td>
+                    <td className="p-3 text-right">{late}</td>
+                    <td className="p-3 text-right">{early}</td>
+                    <td className="p-3 text-right" onClick={(ev) => ev.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
+                          title="Редактировать"
+                          onClick={() => onEditEntry?.(firstEntry)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                          title="Удалить"
+                          onClick={() => onDeleteEntry?.(firstEntry)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
