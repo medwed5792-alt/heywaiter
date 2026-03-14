@@ -34,7 +34,12 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** Жёсткий фильтр: только активные. Явно status === 'active' либо (legacy) нет status и active !== false */
+/** Строго активные для UI: только status === 'active'. Неактивные (уволенные и т.д.) в списки не попадают. */
+function hasActiveStatus(s: Staff): boolean {
+  return (s as { status?: string }).status === "active";
+}
+
+/** Жёсткий фильтр: только активные. Используется там, где нужна совместимость с legacy (нет status). */
 function isActiveStaff(s: Staff): boolean {
   const status = (s as { status?: string }).status;
   if (status != null && status !== "active") return false;
@@ -169,7 +174,7 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(list.filter(isActiveStaff));
+      setStaffList(list.filter(hasActiveStatus));
     });
     return () => unsub();
   }, []);
@@ -202,7 +207,7 @@ export default function AdminSchedulePage() {
   }, []);
 
   const activeStaffIds = useMemo(
-    () => new Set(staffList.filter((s) => (s as { status?: string }).status === "active" || ((s as { status?: string }).status == null && s.active !== false)).map((s) => s.id)),
+    () => new Set(staffList.filter(hasActiveStatus).map((s) => s.id)),
     [staffList]
   );
 
@@ -423,7 +428,7 @@ function EditShiftModal({
   const [endTime, setEndTime] = useState(slot.endTime);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList.filter(isActiveStaff), [staffList]);
+  const activeStaff = useMemo(() => staffList.filter(hasActiveStatus), [staffList]);
   const selectedStaffForRole = activeStaff.find((s) => s.id === staffId);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -520,7 +525,7 @@ function AddShiftModal({
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList.filter(isActiveStaff), [staffList]);
+  const activeStaff = useMemo(() => staffList.filter(hasActiveStatus), [staffList]);
   const selectedStaff = useMemo(() => activeStaff.find((s) => s.id === staffId), [activeStaff, staffId]);
   const roleFromStaff = roleDisplay || (selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter");
 
@@ -575,7 +580,7 @@ function AddShiftModal({
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {activeStaff.map((s) => (
+              {staffList.filter(hasActiveStatus).map((s) => (
                 <option key={s.id} value={s.id}>
                   {(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}
                 </option>
@@ -653,7 +658,10 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  const activeStaffIds = useMemo(() => new Set(staffList.map((s) => s.id)), [staffList]);
+  const activeStaffIds = useMemo(
+    () => new Set(staffList.filter(hasActiveStatus).map((s) => s.id)),
+    [staffList]
+  );
 
   const rows = useMemo(() => {
     const byEntry = entries.filter((e) => {
