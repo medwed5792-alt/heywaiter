@@ -198,7 +198,19 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  const activeStaffIds = useMemo(() => staffList.map((s) => s.id), [staffList]);
+  /** Единый отфильтрованный массив: только активные. Используется для Select, ФОТ, таймлайна. */
+  const activeStaff = useMemo(
+    () =>
+      staffList.filter((s) => {
+        const status = (s as { status?: string }).status;
+        const active = (s as { active?: boolean }).active;
+        if (status === "inactive" || status === "dismissed") return false;
+        return status === "active" || active === true;
+      }),
+    [staffList]
+  );
+
+  const activeStaffIds = useMemo(() => activeStaff.map((s) => s.id), [activeStaff]);
 
   const cleanEntries = useMemo(
     () => entries.filter((e) => activeStaffIds.includes(e.staffId)),
@@ -221,12 +233,12 @@ export default function AdminSchedulePage() {
   /** Роли, которые реально есть среди активных сотрудников — только их показываем во вкладках фильтра */
   const rolesPresent = useMemo(() => {
     const set = new Set<string>();
-    staffList.forEach((s) => {
+    activeStaff.forEach((s) => {
       const r = s.position ?? (s as { role?: string }).role;
       if (r && typeof r === "string") set.add(r);
     });
     return Array.from(set).sort();
-  }, [staffList]);
+  }, [activeStaff]);
 
   const monthDays = useMemo(() => {
     const [y, m] = filterMonth.split("-").map(Number);
@@ -341,7 +353,7 @@ export default function AdminSchedulePage() {
             selectedDate={filterDate}
             outOfZoneStaffIds={staffOutOfZoneIdSet}
             venueId={VENUE_ID}
-            staffList={staffList}
+            staffList={activeStaff}
             onCellClick={(date, hour) => setAddShiftModal({ dates: [date], defaultStartHour: hour })}
             onEntryClick={setEditShiftEntry}
           />
@@ -352,7 +364,7 @@ export default function AdminSchedulePage() {
         <AddShiftModal
           dates={addShiftModal.dates}
           defaultStartHour={addShiftModal.defaultStartHour}
-          staffList={staffList}
+          staffList={activeStaff}
           managedVenues={managedVenues}
           onClose={() => setAddShiftModal(null)}
           onSaved={() => setAddShiftModal(null)}
@@ -362,7 +374,7 @@ export default function AdminSchedulePage() {
       {editShiftEntry && (
         <EditShiftModal
           entry={editShiftEntry}
-          staffList={staffList}
+          staffList={activeStaff}
           managedVenues={managedVenues}
           onClose={() => setEditShiftEntry(null)}
           onSaved={() => setEditShiftEntry(null)}
@@ -372,7 +384,7 @@ export default function AdminSchedulePage() {
 
       <FOTReport
         entries={cleanEntries}
-        staffList={staffList}
+        staffList={activeStaff}
         venues={venues}
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
