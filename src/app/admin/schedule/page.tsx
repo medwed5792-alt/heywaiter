@@ -561,18 +561,21 @@ function AddShiftModal({
               required
               value={staffId}
               onChange={(e) => {
-                const selected = staffList.find((p) => p.id === e.target.value);
+                const selected = staffList.find((s) => s.id === e.target.value);
                 setStaffId(e.target.value);
-                if (selected) setRoleDisplay(selected.position ?? (selected as { role?: string }).role ?? "waiter");
+                if (selected) setRoleDisplay(selected.position || (selected as { role?: string }).role || "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {(s as { displayName?: string }).displayName ?? (s as { name?: string }).name ?? ((s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id))}
-                </option>
-              ))}
+              {staffList
+                .filter((s) => s.active === true)
+                .filter((v, i, a) => a.findIndex((t) => (t as { displayName?: string }).displayName === (v as { displayName?: string }).displayName) === i)
+                .map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {(employee as { displayName?: string }).displayName || (employee as { name?: string }).name || ((employee.firstName ?? employee.lastName) ? [employee.firstName, employee.lastName].filter(Boolean).join(" ") : (employee.identity?.displayName ?? employee.id))}
+                  </option>
+                ))}
             </select>
           </label>
           <label className="block">
@@ -646,8 +649,16 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
+  const activeOnlyStaff = useMemo(
+    () =>
+      staffList
+        .filter((s) => s.active === true)
+        .filter((v, i, a) => a.findIndex((t) => (t as { displayName?: string }).displayName === (v as { displayName?: string }).displayName) === i),
+    [staffList]
+  );
+
   const rowsByStaff = useMemo(() => {
-    return staffList
+    return activeOnlyStaff
       .map((staff) => {
         const staffEntries = entries.filter((e) => {
           if (e.staffId !== staff.id) return false;
@@ -677,7 +688,7 @@ function FOTReport({
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
-  }, [entries, staffList, venues, filterMonth]);
+  }, [entries, activeOnlyStaff, venues, filterMonth]);
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
@@ -729,61 +740,61 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {staffList.length === 0 ? (
+            {activeOnlyStaff.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-500">Нет активных сотрудников</td>
               </tr>
             ) : (
-              staffList.map((staff) => {
-                const staffEntries = entries.filter(
-                  (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
-                );
-                if (staffEntries.length === 0) return null;
-                const plan = staffEntries.reduce((sum, e) => sum + (e.planHours ?? 0), 0);
-                const fact = staffEntries.reduce((sum, e) => sum + (e.factHours ?? 0), 0);
-                const late = staffEntries.reduce((sum, e) => sum + (e.lateMinutes ?? 0), 0);
-                const early = staffEntries.reduce((sum, e) => sum + (e.earlyLeaveMinutes ?? 0), 0);
-                const firstEntry = staffEntries[0];
-                const venue = venues.find((v) => v.id === (firstEntry.slot?.venueId ?? firstEntry.venueId));
-                const name = (staff.firstName ?? staff.lastName)
-                  ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
-                  : (staff.identity?.displayName ?? staff.id);
-                const venueName = venue?.name ?? (firstEntry.slot?.venueId ?? firstEntry.venueId ?? "—");
-                return (
-                  <tr
-                    key={staff.id}
-                    className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
-                    onClick={() => onEditEntry?.(firstEntry)}
-                  >
-                    <td className="p-3">{name}</td>
-                    <td className="p-3">{venueName}</td>
-                    <td className="p-3 text-right">{Math.round(plan * 10) / 10}</td>
-                    <td className="p-3 text-right">{Math.round(fact * 10) / 10}</td>
-                    <td className="p-3 text-right">{late}</td>
-                    <td className="p-3 text-right">{early}</td>
-                    <td className="p-3 text-right" onClick={(ev) => ev.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
-                          title="Редактировать"
-                          onClick={() => onEditEntry?.(firstEntry)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                          title="Удалить"
-                          onClick={() => onDeleteEntry?.(firstEntry)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
+              activeOnlyStaff.map((staff) => {
+                  const staffEntries = entries.filter(
+                    (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
+                  );
+                  if (staffEntries.length === 0) return null;
+                  const plan = staffEntries.reduce((sum, e) => sum + (e.planHours ?? 0), 0);
+                  const fact = staffEntries.reduce((sum, e) => sum + (e.factHours ?? 0), 0);
+                  const late = staffEntries.reduce((sum, e) => sum + (e.lateMinutes ?? 0), 0);
+                  const early = staffEntries.reduce((sum, e) => sum + (e.earlyLeaveMinutes ?? 0), 0);
+                  const firstEntry = staffEntries[0];
+                  const venue = venues.find((v) => v.id === (firstEntry.slot?.venueId ?? firstEntry.venueId));
+                  const name = (staff.firstName ?? staff.lastName)
+                    ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
+                    : (staff.identity?.displayName ?? staff.id);
+                  const venueName = venue?.name ?? (firstEntry.slot?.venueId ?? firstEntry.venueId ?? "—");
+                  return (
+                    <tr
+                      key={staff.id}
+                      className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
+                      onClick={() => onEditEntry?.(firstEntry)}
+                    >
+                      <td className="p-3">{name}</td>
+                      <td className="p-3">{venueName}</td>
+                      <td className="p-3 text-right">{Math.round(plan * 10) / 10}</td>
+                      <td className="p-3 text-right">{Math.round(fact * 10) / 10}</td>
+                      <td className="p-3 text-right">{late}</td>
+                      <td className="p-3 text-right">{early}</td>
+                      <td className="p-3 text-right" onClick={(ev) => ev.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
+                            title="Редактировать"
+                            onClick={() => onEditEntry?.(firstEntry)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                            title="Удалить"
+                            onClick={() => onDeleteEntry?.(firstEntry)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
             )}
           </tbody>
         </table>
