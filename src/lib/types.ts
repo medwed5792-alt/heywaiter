@@ -328,6 +328,15 @@ export interface Affiliation {
   assignedTableIds?: string[];
 }
 
+/** Медкнижка: часть «трудовой книжки», необязательные поля. */
+export interface MedicalCard {
+  /** Дата окончания действия медкнижки (ISO date YYYY-MM-DD) */
+  expiryDate: string | null;
+  /** Дата последней проверки (ISO date) */
+  lastChecked: string | null;
+  notes?: string;
+}
+
 /** Глобальный профиль сотрудника (коллекция global_users). Один документ на человека. */
 export interface GlobalUser {
   id: string;
@@ -346,6 +355,8 @@ export interface GlobalUser {
   affiliations: Affiliation[];
   /** История работы (архив при увольнении) */
   careerHistory?: StaffCareerEntry[];
+  /** Медкнижка (опционально) */
+  medicalCard?: MedicalCard;
   globalScore?: number;
   guestRating?: number;
   venueRating?: number;
@@ -391,6 +402,8 @@ export interface Staff {
   /** ID в соцсетях (для Staff-ботов): tgId, waId и т.д. хранятся в identity или здесь */
   /** Привязанные соцсети (Unified ID): из global_users.identities */
   identities?: UnifiedIdentities;
+  /** Медкнижка (опционально), синхронизируется с global_users */
+  medicalCard?: MedicalCard;
   /** Проф: закрепление за столами (ID столов) */
   assignedTableIds?: string[];
   /** Сеть: массив venueId — сотрудник закреплён за несколькими точками, в Staff Bot видит адрес на сегодня и «Маршрут» */

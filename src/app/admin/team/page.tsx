@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Phone, BookOpen } from "lucide-react";
-import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser } from "@/lib/types";
+import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, MedicalCard } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
@@ -22,6 +22,7 @@ type LookupByPhoneResult = {
   identities: UnifiedIdentities;
   tgId: string | null;
   globalScore: number | null;
+  medicalCard: MedicalCard | null;
   careerHistory: { venueId: string; position: string; joinDate: unknown; exitDate: unknown; exitReason: string; rating?: number; comment?: string }[];
   affiliations: { venueId: string; role?: string; status?: string }[];
 };
@@ -231,6 +232,10 @@ export default function TeamPage() {
   }, []);
 
   useEffect(() => {
+    fetch(`/api/admin/staff/check-medical-cards?venueId=${encodeURIComponent(VENUE_ID)}`).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     (async () => {
       try {
         const [hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
@@ -297,6 +302,7 @@ export default function TeamPage() {
             phone: global.phone ?? data.phone,
             tgId: global.tgId ?? data.tgId,
             identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+            medicalCard: global.medicalCard ?? data.medicalCard,
             careerHistory: global.careerHistory,
             updatedAt: global.updatedAt ?? data.updatedAt,
           } as Staff);
@@ -322,6 +328,7 @@ export default function TeamPage() {
             phone: data.phone,
             tgId: data.tgId,
             identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+            medicalCard: data.medicalCard,
             careerHistory: data.careerHistory,
             updatedAt: data.updatedAt,
           } as Staff);
@@ -400,6 +407,7 @@ export default function TeamPage() {
       identities: lookupResult.identities,
       tgId: lookupResult.tgId ?? undefined,
       globalScore: lookupResult.globalScore ?? undefined,
+      medicalCard: lookupResult.medicalCard ?? undefined,
       careerHistory: lookupResult.careerHistory as Staff["careerHistory"],
       photoUrl: lookupResult.photoUrl ?? undefined,
     };
@@ -527,6 +535,11 @@ export default function TeamPage() {
                       Опыт: {lookupResult.careerHistory.length} записей (должности: {lookupResult.careerHistory.map((e) => e.position).filter(Boolean).join(", ") || "—"})
                     </span>
                   </div>
+                )}
+                {lookupResult.medicalCard?.expiryDate && (
+                  <p className="mt-1 text-xs text-gray-600">
+                    Медкнижка до: {lookupResult.medicalCard.expiryDate}
+                  </p>
                 )}
                 <button
                   type="button"
@@ -780,6 +793,7 @@ function StaffFormModal({
   const [lastName, setLastName] = useState(staff.lastName ?? "");
   const [gender, setGender] = useState(staff.gender ?? "");
   const [birthDate, setBirthDate] = useState(staff.birthDate ?? "");
+  const [medicalCardExpiry, setMedicalCardExpiry] = useState(staff.medicalCard?.expiryDate ?? "");
   const [photoUrl, setPhotoUrl] = useState(staff.photoUrl ?? "");
   const [phone, setPhone] = useState(staff.phone ?? "");
   const [identitiesEntries, setIdentitiesEntries] = useState<{ type: keyof UnifiedIdentities; value: string }[]>(() => {
@@ -836,6 +850,7 @@ function StaffFormModal({
           group: group ?? (position ? getGroupAndCallCategory(position)?.group : undefined),
           call_category: call_category ?? (position ? getGroupAndCallCategory(position)?.call_category : undefined),
           assignedTableIds: assignedTableIds,
+          medicalCard: medicalCardExpiry.trim() ? { expiryDate: medicalCardExpiry.trim(), lastChecked: null, notes: undefined } : undefined,
           identity: staff.identity ? { ...staff.identity, externalId: primaryTg || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: primaryTg, locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
           primaryChannel: staff.primaryChannel ?? "telegram",
           role: staff.role ?? "waiter",
@@ -865,6 +880,7 @@ function StaffFormModal({
         group: nextGroup,
         call_category: nextCallCategory,
         assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+        medicalCard: medicalCardExpiry.trim() ? { expiryDate: medicalCardExpiry.trim(), lastChecked: null, notes: undefined } : undefined,
       });
       toast.success("Сохранено");
     } catch (e) {
@@ -915,6 +931,10 @@ function StaffFormModal({
               <label>
                 <span className="block text-xs text-gray-600">Дата рождения</span>
                 <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+              </label>
+              <label>
+                <span className="block text-xs text-gray-600">Дата окончания медкнижки</span>
+                <input type="date" value={medicalCardExpiry} onChange={(e) => setMedicalCardExpiry(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
               </label>
             </div>
           </section>

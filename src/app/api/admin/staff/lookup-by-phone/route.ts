@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import type { StaffCareerEntry, UnifiedIdentities } from "@/lib/types";
+import type { StaffCareerEntry, UnifiedIdentities, MedicalCard } from "@/lib/types";
 
 /**
  * Нормализует телефон для поиска: только цифры, российский формат +7XXXXXXXXXX.
@@ -76,6 +76,7 @@ export async function GET(request: NextRequest) {
     const careerHistory = (data.careerHistory as StaffCareerEntry[] | undefined) ?? [];
     const identities = (data.identities as UnifiedIdentities | undefined) ?? {};
     const affiliations = Array.isArray(data.affiliations) ? data.affiliations : [];
+    const medicalCard = data.medicalCard as MedicalCard | undefined;
 
     return NextResponse.json({
       found: true,
@@ -87,6 +88,7 @@ export async function GET(request: NextRequest) {
       identities,
       tgId: data.tgId ?? null,
       globalScore: data.globalScore ?? null,
+      medicalCard: medicalCard ?? null,
       careerHistory: careerHistory.map((e) => ({
         venueId: e.venueId,
         position: e.position,

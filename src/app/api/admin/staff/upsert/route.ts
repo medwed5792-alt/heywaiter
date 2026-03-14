@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       };
       if (body.globalScore != null) profilePayload.globalScore = body.globalScore;
+      if (body.medicalCard != null) profilePayload.medicalCard = body.medicalCard;
       const identitiesUpdate: UnifiedIdentities =
         typeof body.identities === "object" && body.identities !== null
           ? { ...(staffData.identities as UnifiedIdentities | undefined), ...body.identities }
@@ -126,6 +127,7 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
         ...(body.role != null && { role: body.role }),
         ...(body.active != null && { active: body.active }),
+        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
       });
 
       return NextResponse.json({ ok: true, staffId });
@@ -183,6 +185,7 @@ export async function POST(request: NextRequest) {
         identity: identity ?? globalData.identity,
         tgId: body.tgId ?? globalData.tgId,
         updatedAt: FieldValue.serverTimestamp(),
+        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
       });
     } else {
       const newRef = firestore.collection("global_users").doc();
@@ -200,6 +203,7 @@ export async function POST(request: NextRequest) {
         identities: Object.keys(identities).length > 0 ? identities : null,
         affiliations: [affiliation],
         careerHistory: [],
+        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
@@ -217,6 +221,7 @@ export async function POST(request: NextRequest) {
         active: true,
         assignedTableIds,
         tgId: body.tgId ?? null,
+        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     } else {
@@ -235,6 +240,7 @@ export async function POST(request: NextRequest) {
         call_category: body.call_category ?? null,
         assignedTableIds,
         tgId: body.tgId ?? null,
+        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
