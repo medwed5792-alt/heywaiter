@@ -34,10 +34,11 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** HARD: в графиках только сотрудники со статусом 'active'. При отсутствии поля status — legacy: active !== false */
+/** Жёсткий фильтр: только активные. Явно status === 'active' либо (legacy) нет status и active !== false */
 function isActiveStaff(s: Staff): boolean {
   const status = (s as { status?: string }).status;
-  if (status != null) return status === "active";
+  if (status != null && status !== "active") return false;
+  if (status === "active") return true;
   return s.active !== false;
 }
 
@@ -422,6 +423,9 @@ function EditShiftModal({
   const [endTime, setEndTime] = useState(slot.endTime);
   const [saving, setSaving] = useState(false);
 
+  const activeStaff = useMemo(() => staffList.filter(isActiveStaff), [staffList]);
+  const selectedStaffForRole = activeStaff.find((s) => s.id === staffId);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -433,7 +437,7 @@ function EditShiftModal({
         venueId: venueId || VENUE_ID,
         slot: newSlot,
         planHours: Math.round(planH * 10) / 10,
-        role: staffList.find((s) => s.id === staffId)?.position ?? entry.role ?? "waiter",
+        role: selectedStaffForRole?.position ?? (selectedStaffForRole as { role?: string })?.role ?? entry.role ?? "waiter",
         updatedAt: serverTimestamp(),
       });
       toast.success("Изменения сохранены");
@@ -453,7 +457,7 @@ function EditShiftModal({
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Сотрудник</span>
             <select value={staffId} onChange={(e) => setStaffId(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" required>
-              {staffList.map((s) => (
+              {activeStaff.map((s) => (
                 <option key={s.id} value={s.id}>{(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}</option>
               ))}
             </select>
@@ -461,7 +465,7 @@ function EditShiftModal({
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Должность</span>
             <p className="mt-1 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700" aria-readonly>
-              {roleLabel(staffList.find((s) => s.id === staffId)?.position ?? (staffList.find((s) => s.id === staffId) as { role?: string } | undefined)?.role ?? entry.role ?? "waiter")}
+              {roleLabel(selectedStaffForRole?.position ?? (selectedStaffForRole as { role?: string })?.role ?? entry.role ?? "waiter")}
             </p>
           </label>
           <label className="block">
@@ -516,12 +520,13 @@ function AddShiftModal({
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
-  const selectedStaff = useMemo(() => staffList.find((s) => s.id === staffId), [staffList, staffId]);
+  const activeStaff = useMemo(() => staffList.filter(isActiveStaff), [staffList]);
+  const selectedStaff = useMemo(() => activeStaff.find((s) => s.id === staffId), [activeStaff, staffId]);
   const roleFromStaff = roleDisplay || (selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter");
 
   const handleStaffSelect = (selectedId: string) => {
     setStaffId(selectedId);
-    const s = staffList.find((x) => x.id === selectedId);
+    const s = activeStaff.find((x) => x.id === selectedId);
     if (s) setRoleDisplay(s.position ?? (s as { role?: string }).role ?? "waiter");
     else setRoleDisplay("");
   };
@@ -570,7 +575,7 @@ function AddShiftModal({
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList.map((s) => (
+              {activeStaff.map((s) => (
                 <option key={s.id} value={s.id}>
                   {(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}
                 </option>
