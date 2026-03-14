@@ -840,6 +840,10 @@ function StaffFormModal({
   };
 
   const handleSave = async () => {
+    if (!phone.trim()) {
+      toast.error("Введите номер телефона");
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch("/api/admin/staff/upsert", {
@@ -875,6 +879,7 @@ function StaffFormModal({
       const savedId = data.staffId ?? staff.id;
       const nextGroup = position ? getGroupAndCallCategory(position)?.group : undefined;
       const nextCallCategory = position ? getGroupAndCallCategory(position)?.call_category : undefined;
+      const savedPhone = phone.trim() || undefined;
       onSaved({
         ...(savedId ? { id: savedId } : {}),
         firstName: firstName.trim() || undefined,
@@ -882,7 +887,7 @@ function StaffFormModal({
         gender: gender || undefined,
         birthDate: birthDate || undefined,
         photoUrl: photoUrl.trim() || undefined,
-        phone: phone.trim() || undefined,
+        phone: savedPhone,
         identities,
         tgId: primaryTg || undefined,
         position: position || undefined,

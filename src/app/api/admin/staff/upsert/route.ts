@@ -89,6 +89,9 @@ export async function POST(request: NextRequest) {
               ...(body.email && { email: String(body.email).trim() }),
               ...(body.phone && { phone: String(body.phone).trim() }),
             };
+      if (body.phone != null && String(body.phone).trim()) {
+        identitiesUpdate.phone = String(body.phone).trim();
+      }
       const identitiesFiltered: UnifiedIdentities = {};
       for (const [k, v] of Object.entries(identitiesUpdate)) {
         if (v && typeof v === "string" && v.trim()) {
@@ -143,17 +146,25 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      const staffPhone = (profilePayload.phone as string) ?? (staffData.phone as string) ?? null;
       await staffRef.update({
         position: body.position ?? staffData.position,
         group: body.group ?? staffData.group,
         call_category: body.call_category ?? staffData.call_category,
         onShift: body.onShift ?? staffData.onShift,
         assignedTableIds,
+        phone: staffPhone,
         updatedAt: FieldValue.serverTimestamp(),
         ...(body.role != null && { role: body.role }),
         ...(body.active != null && { active: body.active }),
         ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
       });
+
+      const venueStaffRef = firestore.collection("venues").doc(VENUE_ID).collection("staff").doc(staffId);
+      await venueStaffRef.set(
+        { ...(staffPhone != null && { phone: staffPhone }), updatedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
 
       return NextResponse.json({ ok: true, staffId });
     }
