@@ -161,14 +161,11 @@ export default function AdminSchedulePage() {
       where("venueId", "==", VENUE_ID)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      const activeStaffOnly = allStaff.filter((s) => {
-        const status = (s as { status?: string }).status;
-        const active = (s as { active?: boolean }).active;
-        if (status === "inactive" || active === false) return false;
-        return status === "active" || active === true;
-      });
-      setStaffList(activeStaffOnly);
+      const activeOnly = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as Staff))
+        .filter((s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true)
+        .filter((s) => (s as { status?: string }).status !== "inactive" && (s as { status?: string }).status !== "dismissed");
+      setStaffList(activeOnly);
     });
     return () => unsub();
   }, []);
