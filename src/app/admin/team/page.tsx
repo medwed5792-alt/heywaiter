@@ -4,12 +4,27 @@ import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { UserPlus, User, Briefcase, Star } from "lucide-react";
+import { UserPlus, User, Briefcase, Star, Phone, BookOpen } from "lucide-react";
 import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
 const VENUE_ID = "current";
+
+/** Ответ API lookup-by-phone: трудовая книжка из global_users */
+type LookupByPhoneResult = {
+  found: true;
+  userId: string;
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  photoUrl: string | null;
+  identities: UnifiedIdentities;
+  tgId: string | null;
+  globalScore: number | null;
+  careerHistory: { venueId: string; position: string; joinDate: unknown; exitDate: unknown; exitReason: string; rating?: number; comment?: string }[];
+  affiliations: { venueId: string; role?: string; status?: string }[];
+};
 
 /** Иерархия должностей v2: группа → список ролей с подписями. */
 const POSITION_GROUPS_V2: { groupId: StaffGroup; groupLabel: string; roles: { value: ServiceRole; label: string }[] }[] = [
@@ -203,6 +218,11 @@ export default function TeamPage() {
   const [exitReasonText, setExitReasonText] = useState("");
   const [rating, setRating] = useState(3);
   const [loading, setLoading] = useState(false);
+  const [lookupPhone, setLookupPhone] = useState("");
+  const [lookupResult, setLookupResult] = useState<LookupByPhoneResult | null>(null);
+  const [lookupNotFound, setLookupNotFound] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -329,6 +349,84 @@ export default function TeamPage() {
     ? (POSITION_GROUPS_V2.find((g) => g.groupId === groupFilter)?.roles ?? [])
     : ALL_POSITIONS_FLAT;
 
+  const handleLookupByPhone = async () => {
+    const phone = lookupPhone.trim();
+    if (!phone) {
+      toast.error("Введите номер телефона");
+      return;
+    }
+    setLookupError(null);
+    setLookupResult(null);
+    setLookupNotFound(false);
+    setLookupLoading(true);
+    try {
+      const res = await fetch(`/api/admin/staff/lookup-by-phone?phone=${encodeURIComponent(phone)}`);
+      const data = await res.json();
+      if (res.status === 404) {
+        setLookupNotFound(true);
+        setLookupResult(null);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "Ошибка поиска");
+      if (data.found) {
+        setLookupResult(data as LookupByPhoneResult);
+        setLookupNotFound(false);
+      } else {
+        setLookupNotFound(true);
+        setLookupResult(null);
+      }
+    } catch (e) {
+      setLookupError(e instanceof Error ? e.message : "Ошибка поиска");
+      setLookupResult(null);
+      setLookupNotFound(false);
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleHireFromLookup = () => {
+    if (!lookupResult) return;
+    const name = [lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ").trim();
+    const staffFromLookup: Staff = {
+      id: "",
+      venueId: VENUE_ID,
+      role: "waiter",
+      primaryChannel: "telegram",
+      identity: { channel: "telegram", externalId: lookupResult.tgId ?? "", locale: "ru", displayName: name || undefined },
+      onShift: false,
+      firstName: lookupResult.firstName ?? undefined,
+      lastName: lookupResult.lastName ?? undefined,
+      phone: lookupResult.phone ?? undefined,
+      identities: lookupResult.identities,
+      tgId: lookupResult.tgId ?? undefined,
+      globalScore: lookupResult.globalScore ?? undefined,
+      careerHistory: lookupResult.careerHistory as Staff["careerHistory"],
+      photoUrl: lookupResult.photoUrl ?? undefined,
+    };
+    setLookupResult(null);
+    setLookupPhone("");
+    setLookupNotFound(false);
+    setEditingStaff(staffFromLookup);
+  };
+
+  const handleCreateNewFromLookup = () => {
+    const phone = lookupPhone.trim();
+    const staffNew: Staff = {
+      id: "",
+      venueId: VENUE_ID,
+      role: "waiter",
+      primaryChannel: "telegram",
+      identity: { channel: "telegram", externalId: "", locale: "ru" },
+      onShift: false,
+      phone: phone || undefined,
+      identities: phone ? { phone } : undefined,
+    };
+    setLookupNotFound(false);
+    setLookupPhone("");
+    setLookupResult(null);
+    setEditingStaff(staffNew);
+  };
+
   const handleDismiss = (staff: Staff) => {
     setDismissModal(staff);
     setExitReasonText("");
@@ -375,6 +473,85 @@ export default function TeamPage() {
       <p className="mt-2 text-sm text-gray-600">
         Управление штатом заведения: только сотрудники, привязанные к этому venue. «Отвязать» — снятие связи с заведением (причина увольнения сохраняется в глобальный профиль в архив).
       </p>
+
+      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+          <Phone className="h-4 w-4" />
+          Принять по телефону
+        </h3>
+        <p className="mt-1 text-xs text-gray-600">
+          Введите номер — система найдёт трудовую книжку (опыт, рейтинг) в global_users и предложит принять в штат. Если человека нет — создаём нового.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="tel"
+            placeholder="+7 900 123-45-67"
+            value={lookupPhone}
+            onChange={(e) => { setLookupPhone(e.target.value); setLookupError(null); setLookupResult(null); setLookupNotFound(false); }}
+            onKeyDown={(e) => e.key === "Enter" && handleLookupByPhone()}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-48"
+          />
+          <button
+            type="button"
+            onClick={handleLookupByPhone}
+            disabled={lookupLoading || !lookupPhone.trim()}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          >
+            {lookupLoading ? "Поиск…" : "Найти"}
+          </button>
+        </div>
+        {lookupError && <p className="mt-2 text-sm text-red-600">{lookupError}</p>}
+        {lookupResult && (
+          <div className="mt-3 rounded-lg border border-green-200 bg-green-50/80 p-3">
+            <div className="flex items-start gap-3">
+              <div className="h-12 w-12 rounded-full overflow-hidden bg-gray-200 shrink-0 flex items-center justify-center">
+                {lookupResult.photoUrl ? (
+                  <img src={lookupResult.photoUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <User className="h-6 w-6 text-gray-500" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-gray-900">
+                  {[lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ") || "Без имени"}
+                </p>
+                {lookupResult.globalScore != null && (
+                  <p className="mt-0.5 flex items-center gap-1 text-sm text-amber-700">
+                    <Star className="h-3.5 w-3.5" /> Рейтинг: {lookupResult.globalScore}
+                  </p>
+                )}
+                {lookupResult.careerHistory && lookupResult.careerHistory.length > 0 && (
+                  <div className="mt-2 flex items-start gap-1.5 text-xs text-gray-600">
+                    <BookOpen className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Опыт: {lookupResult.careerHistory.length} записей (должности: {lookupResult.careerHistory.map((e) => e.position).filter(Boolean).join(", ") || "—"})
+                    </span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleHireFromLookup}
+                  className="mt-3 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600"
+                >
+                  Принять в штат
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {lookupNotFound && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
+            <p className="text-sm text-gray-700">Пользователь с таким телефоном не найден в системе.</p>
+            <button
+              type="button"
+              onClick={handleCreateNewFromLookup}
+              className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
+            >
+              Создать нового (телефон будет подставлен)
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input
