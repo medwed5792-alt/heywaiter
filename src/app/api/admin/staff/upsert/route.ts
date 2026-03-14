@@ -209,7 +209,7 @@ export async function POST(request: NextRequest) {
         affiliations,
         firstName: body.firstName ?? globalData.firstName,
         lastName: body.lastName ?? globalData.lastName,
-        phone: phoneCleaned || globalData.phone ?? null,
+        phone: (phoneCleaned || globalData.phone) ?? null,
         identity: identity ?? globalData.identity,
         tgId: body.tgId ?? globalData.tgId,
         updatedAt: FieldValue.serverTimestamp(),
