@@ -162,11 +162,10 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(
-        allStaff
-          .filter((s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true)
-          .filter((s) => (s as { status?: string }).status !== "inactive")
+      const activeStaff = allStaff.filter(
+        (s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true
       );
+      setStaffList(activeStaff);
     });
     return () => unsub();
   }, []);
@@ -198,19 +197,8 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  /** Единый отфильтрованный массив: только активные. Используется для Select, ФОТ, таймлайна. */
-  const activeStaff = useMemo(
-    () =>
-      staffList.filter((s) => {
-        const status = (s as { status?: string }).status;
-        const active = (s as { active?: boolean }).active;
-        if (status === "inactive" || status === "dismissed") return false;
-        return status === "active" || active === true;
-      }),
-    [staffList]
-  );
-
-  const activeStaffIds = useMemo(() => activeStaff.map((s) => s.id), [activeStaff]);
+  /** staffList уже только активные (заполняется в onSnapshot). Используется для Select, ФОТ, таймлайна. */
+  const activeStaffIds = useMemo(() => staffList.map((s) => s.id), [staffList]);
 
   const cleanEntries = useMemo(
     () => entries.filter((e) => activeStaffIds.includes(e.staffId)),
@@ -233,12 +221,12 @@ export default function AdminSchedulePage() {
   /** Роли, которые реально есть среди активных сотрудников — только их показываем во вкладках фильтра */
   const rolesPresent = useMemo(() => {
     const set = new Set<string>();
-    activeStaff.forEach((s) => {
+    staffList.forEach((s) => {
       const r = s.position ?? (s as { role?: string }).role;
       if (r && typeof r === "string") set.add(r);
     });
     return Array.from(set).sort();
-  }, [activeStaff]);
+  }, [staffList]);
 
   const monthDays = useMemo(() => {
     const [y, m] = filterMonth.split("-").map(Number);
@@ -353,7 +341,7 @@ export default function AdminSchedulePage() {
             selectedDate={filterDate}
             outOfZoneStaffIds={staffOutOfZoneIdSet}
             venueId={VENUE_ID}
-            staffList={activeStaff}
+            staffList={staffList}
             onCellClick={(date, hour) => setAddShiftModal({ dates: [date], defaultStartHour: hour })}
             onEntryClick={setEditShiftEntry}
           />
@@ -364,7 +352,7 @@ export default function AdminSchedulePage() {
         <AddShiftModal
           dates={addShiftModal.dates}
           defaultStartHour={addShiftModal.defaultStartHour}
-          staffList={activeStaff}
+          staffList={staffList}
           managedVenues={managedVenues}
           onClose={() => setAddShiftModal(null)}
           onSaved={() => setAddShiftModal(null)}
@@ -374,7 +362,7 @@ export default function AdminSchedulePage() {
       {editShiftEntry && (
         <EditShiftModal
           entry={editShiftEntry}
-          staffList={activeStaff}
+          staffList={staffList}
           managedVenues={managedVenues}
           onClose={() => setEditShiftEntry(null)}
           onSaved={() => setEditShiftEntry(null)}
@@ -384,7 +372,7 @@ export default function AdminSchedulePage() {
 
       <FOTReport
         entries={cleanEntries}
-        staffList={activeStaff}
+        staffList={staffList}
         venues={venues}
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
@@ -429,8 +417,7 @@ function EditShiftModal({
   const [endTime, setEndTime] = useState(slot.endTime);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList, [staffList]);
-  const selectedStaffForRole = activeStaff.find((s) => s.id === staffId);
+  const selectedStaffForRole = staffList.find((s) => s.id === staffId);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -463,7 +450,7 @@ function EditShiftModal({
           <label className="block">
             <span className="block text-xs font-medium text-gray-600">Сотрудник</span>
             <select value={staffId} onChange={(e) => setStaffId(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" required>
-              {activeStaff.map((s) => (
+              {staffList.map((s) => (
                 <option key={s.id} value={s.id}>{(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}</option>
               ))}
             </select>
@@ -570,9 +557,9 @@ function AddShiftModal({
               required
               value={staffId}
               onChange={(e) => {
-                const person = staffList.find((p) => p.id === e.target.value);
+                const selected = staffList.find((p) => p.id === e.target.value);
                 setStaffId(e.target.value);
-                if (person) setRoleDisplay((person as { role?: string }).role || person.position || "waiter");
+                if (selected) setRoleDisplay((selected as { role?: string }).role || selected.position || "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
@@ -637,7 +624,7 @@ function AddShiftModal({
   );
 }
 
-/** Сводка по ФОТ: staffList должен содержать только активных (status === 'active'). Строки по уволенным не показываются. */
+/** Сводка по ФОТ: итерация по массиву сотрудников (staffList = только активные). Строка только если у сотрудника есть смены за месяц. */
 function FOTReport({
   entries,
   staffList,
@@ -655,40 +642,42 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  // entries приходят как cleanEntries — только смены активных сотрудников
-  const rows = useMemo(() => {
-    const byEntry = entries.filter((e) => {
-      const slot = e.slot;
-      if (!slot) return false;
-      const date = slot?.date;
-      if (!date || !String(date).startsWith(filterMonth)) return false;
-      return true;
-    });
-    return byEntry.map((e) => {
-      const staff = staffList.find((s) => s.id === e.staffId);
-      const venue = venues.find((v) => v.id === (e.slot?.venueId ?? e.venueId));
-      const plan = e.planHours ?? 0;
-      const fact = e.factHours ?? 0;
-      const late = e.lateMinutes ?? 0;
-      const early = e.earlyLeaveMinutes ?? 0;
-      const name = (staff?.firstName ?? staff?.lastName) ? [staff.firstName, staff.lastName].filter(Boolean).join(" ") : (staff?.identity?.displayName ?? e.staffId);
-      return {
-        entry: e,
-        name,
-        venueName: venue?.name ?? (e.slot?.venueId ?? e.venueId),
-        plan: Math.round(plan * 10) / 10,
-        fact: Math.round(fact * 10) / 10,
-        late,
-        early,
-        startTime: e.slot?.startTime ?? "--:--",
-        endTime: e.slot?.endTime ?? "--:--",
-      };
-    });
+  const rowsByStaff = useMemo(() => {
+    return staffList
+      .map((staff) => {
+        const staffEntries = entries.filter((e) => {
+          if (e.staffId !== staff.id) return false;
+          const slot = e.slot;
+          if (!slot?.date) return false;
+          return String(slot.date).startsWith(filterMonth);
+        });
+        if (staffEntries.length === 0) return null;
+        const plan = staffEntries.reduce((sum, e) => sum + (e.planHours ?? 0), 0);
+        const fact = staffEntries.reduce((sum, e) => sum + (e.factHours ?? 0), 0);
+        const late = staffEntries.reduce((sum, e) => sum + (e.lateMinutes ?? 0), 0);
+        const early = staffEntries.reduce((sum, e) => sum + (e.earlyLeaveMinutes ?? 0), 0);
+        const firstEntry = staffEntries[0];
+        const venue = venues.find((v) => v.id === (firstEntry.slot?.venueId ?? firstEntry.venueId));
+        const name = (staff.firstName ?? staff.lastName)
+          ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
+          : (staff.identity?.displayName ?? staff.id);
+        return {
+          staff,
+          name,
+          venueName: venue?.name ?? (firstEntry.slot?.venueId ?? firstEntry.venueId ?? "—"),
+          plan: Math.round(plan * 10) / 10,
+          fact: Math.round(fact * 10) / 10,
+          late,
+          early,
+          firstEntry,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
   }, [entries, staffList, venues, filterMonth]);
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
-    const body = rows.map((r) => `${r.name};${r.venueName};${r.plan};${r.fact};${r.late};${r.early}`).join("\n");
+    const body = rowsByStaff.map((r) => `${r.name};${r.venueName};${r.plan};${r.fact};${r.late};${r.early}`).join("\n");
     const blob = new Blob(["\uFEFF" + header + body], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -734,16 +723,16 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {rowsByStaff.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-500">Нет данных за выбранный период</td>
               </tr>
             ) : (
-              rows.map((r) => (
+              rowsByStaff.map((r) => (
                 <tr
-                  key={r.entry.id}
+                  key={r.staff.id}
                   className="border-b border-gray-100 cursor-pointer hover:bg-gray-50/80"
-                  onClick={() => onEditEntry?.(r.entry)}
+                  onClick={() => onEditEntry?.(r.firstEntry)}
                 >
                   <td className="p-3">{r.name}</td>
                   <td className="p-3">{r.venueName}</td>
@@ -757,7 +746,7 @@ function FOTReport({
                         type="button"
                         className="rounded p-1.5 text-gray-600 hover:bg-gray-200"
                         title="Редактировать"
-                        onClick={() => onEditEntry?.(r.entry)}
+                        onClick={() => onEditEntry?.(r.firstEntry)}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -765,7 +754,7 @@ function FOTReport({
                         type="button"
                         className="rounded p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
                         title="Удалить"
-                        onClick={() => onDeleteEntry?.(r.entry)}
+                        onClick={() => onDeleteEntry?.(r.firstEntry)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
