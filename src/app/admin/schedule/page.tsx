@@ -34,17 +34,17 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** Строго активные для UI: только status === 'active'. Неактивные (уволенные и т.д.) в списки не попадают. */
-function hasActiveStatus(s: Staff): boolean {
-  return (s as { status?: string }).status === "active";
+/** Универсальный фильтр активных для списка: status === 'active' ИЛИ active === true ИЛИ есть роль/должность. Позволяет видеть сотрудников без поля status (АндрейОф, о2 и т.д.). */
+function isActiveForList(s: Staff): boolean {
+  const status = (s as { status?: string }).status;
+  const active = (s as { active?: boolean }).active;
+  const role = (s as { role?: string }).role ?? s.position;
+  return status === "active" || active === true || role !== undefined;
 }
 
-/** Жёсткий фильтр: только активные. Используется там, где нужна совместимость с legacy (нет status). */
-function isActiveStaff(s: Staff): boolean {
-  const status = (s as { status?: string }).status;
-  if (status != null && status !== "active") return false;
-  if (status === "active") return true;
-  return s.active !== false;
+/** Не показывать в выпадающем списке только явно неактивных (status === 'inactive'). */
+function isNotInactive(s: Staff): boolean {
+  return (s as { status?: string }).status !== "inactive";
 }
 
 function todayISO() {
@@ -174,7 +174,7 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      setStaffList(list.filter(hasActiveStatus));
+      setStaffList(list.filter(isActiveForList));
     });
     return () => unsub();
   }, []);
@@ -207,7 +207,7 @@ export default function AdminSchedulePage() {
   }, []);
 
   const activeStaffIds = useMemo(
-    () => new Set(staffList.filter(hasActiveStatus).map((s) => s.id)),
+    () => new Set(staffList.map((s) => s.id)),
     [staffList]
   );
 
@@ -428,7 +428,7 @@ function EditShiftModal({
   const [endTime, setEndTime] = useState(slot.endTime);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList.filter(hasActiveStatus), [staffList]);
+  const activeStaff = useMemo(() => staffList.filter(isNotInactive), [staffList]);
   const selectedStaffForRole = activeStaff.find((s) => s.id === staffId);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -525,14 +525,14 @@ function AddShiftModal({
   const [endTime, setEndTime] = useState(`${String(defaultStartHour + 6).padStart(2, "0")}:00`);
   const [saving, setSaving] = useState(false);
 
-  const activeStaff = useMemo(() => staffList.filter(hasActiveStatus), [staffList]);
-  const selectedStaff = useMemo(() => activeStaff.find((s) => s.id === staffId), [activeStaff, staffId]);
+  const visibleStaff = useMemo(() => staffList.filter(isNotInactive), [staffList]);
+  const selectedStaff = useMemo(() => visibleStaff.find((s) => s.id === staffId), [visibleStaff, staffId]);
   const roleFromStaff = roleDisplay || (selectedStaff?.position ?? (selectedStaff as { role?: string })?.role ?? "waiter");
 
   const handleStaffSelect = (selectedId: string) => {
     setStaffId(selectedId);
-    const s = activeStaff.find((x) => x.id === selectedId);
-    if (s) setRoleDisplay(s.position ?? (s as { role?: string }).role ?? "waiter");
+    const staff = staffList.find((s) => s.id === selectedId);
+    if (staff) setRoleDisplay((staff as { role?: string }).role || staff.position || "waiter");
     else setRoleDisplay("");
   };
 
@@ -576,11 +576,16 @@ function AddShiftModal({
             <select
               required
               value={staffId}
-              onChange={(e) => handleStaffSelect(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setStaffId(val);
+                const staff = staffList.find((s) => s.id === val);
+                if (staff) setRoleDisplay((staff as { role?: string }).role || staff.position || "waiter");
+              }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList.filter(hasActiveStatus).map((s) => (
+              {staffList.filter(isNotInactive).map((s) => (
                 <option key={s.id} value={s.id}>
                   {(s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id)}
                 </option>
@@ -659,7 +664,7 @@ function FOTReport({
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
   const activeStaffIds = useMemo(
-    () => new Set(staffList.filter(hasActiveStatus).map((s) => s.id)),
+    () => new Set(staffList.map((s) => s.id)),
     [staffList]
   );
 
