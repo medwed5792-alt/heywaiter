@@ -68,16 +68,10 @@ export function ScheduleTimeline({
     return slot.date === selectedDate;
   });
 
-  const byStaff = entriesForDate.reduce(
-    (acc, e) => {
-      const key = e.staffId;
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(e);
-      return acc;
-    },
-    {} as Record<string, ScheduleEntry[]>
-  );
-  const staffRows = Object.entries(byStaff);
+  /** Строки графика только по активному штату (staffList). Если сотрудника нет в staffList, его строка не появляется. */
+  const staffRows = staffList
+    .map((staff) => [staff.id, entriesForDate.filter((e) => e.staffId === staff.id)] as [string, ScheduleEntry[]])
+    .filter(([, staffEntries]) => staffEntries.length > 0);
 
   const staffName = (staffId: string) => {
     const s = staffList.find((x) => x.id === staffId);

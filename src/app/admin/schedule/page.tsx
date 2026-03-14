@@ -201,8 +201,16 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  /** staffList уже только активные (заполняется в onSnapshot). Используется для Select, ФОТ, таймлайна. */
-  const activeStaffIds = useMemo(() => staffList.map((s) => s.id), [staffList]);
+  /** Активный штат (Команда): только status === 'active' или active === true. Таймлайн и ФОТ рендерятся только по нему. */
+  const activeStaffList = useMemo(
+    () =>
+      staffList.filter(
+        (s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true
+      ),
+    [staffList]
+  );
+
+  const activeStaffIds = useMemo(() => activeStaffList.map((s) => s.id), [activeStaffList]);
 
   const cleanEntries = useMemo(
     () => entries.filter((e) => activeStaffIds.includes(e.staffId)),
@@ -225,12 +233,12 @@ export default function AdminSchedulePage() {
   /** Роли, которые реально есть среди активных сотрудников — только их показываем во вкладках фильтра */
   const rolesPresent = useMemo(() => {
     const set = new Set<string>();
-    staffList.forEach((s) => {
+    activeStaffList.forEach((s) => {
       const r = s.position ?? (s as { role?: string }).role;
       if (r && typeof r === "string") set.add(r);
     });
     return Array.from(set).sort();
-  }, [staffList]);
+  }, [activeStaffList]);
 
   const monthDays = useMemo(() => {
     const [y, m] = filterMonth.split("-").map(Number);
@@ -345,7 +353,7 @@ export default function AdminSchedulePage() {
             selectedDate={filterDate}
             outOfZoneStaffIds={staffOutOfZoneIdSet}
             venueId={VENUE_ID}
-            staffList={staffList}
+            staffList={activeStaffList}
             onCellClick={(date, hour) => setAddShiftModal({ dates: [date], defaultStartHour: hour })}
             onEntryClick={setEditShiftEntry}
           />
@@ -356,7 +364,7 @@ export default function AdminSchedulePage() {
         <AddShiftModal
           dates={addShiftModal.dates}
           defaultStartHour={addShiftModal.defaultStartHour}
-          staffList={staffList}
+          staffList={activeStaffList}
           managedVenues={managedVenues}
           onClose={() => setAddShiftModal(null)}
           onSaved={() => setAddShiftModal(null)}
@@ -366,7 +374,7 @@ export default function AdminSchedulePage() {
       {editShiftEntry && (
         <EditShiftModal
           entry={editShiftEntry}
-          staffList={staffList}
+          staffList={activeStaffList}
           managedVenues={managedVenues}
           onClose={() => setEditShiftEntry(null)}
           onSaved={() => setEditShiftEntry(null)}
@@ -376,7 +384,7 @@ export default function AdminSchedulePage() {
 
       <FOTReport
         entries={cleanEntries}
-        staffList={staffList}
+        staffList={activeStaffList}
         venues={venues}
         filterMonth={filterMonth}
         onFilterMonthChange={setFilterMonth}
@@ -563,19 +571,16 @@ function AddShiftModal({
               onChange={(e) => {
                 const selected = staffList.find((s) => s.id === e.target.value);
                 setStaffId(e.target.value);
-                if (selected) setRoleDisplay(selected.position || (selected as { role?: string }).role || "waiter");
+                if (selected) setRoleDisplay((selected as { role?: string }).role ?? selected.position ?? "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList
-                .filter((s) => s.active === true)
-                .filter((v, i, a) => a.findIndex((t) => (t as { displayName?: string }).displayName === (v as { displayName?: string }).displayName) === i)
-                .map((employee) => (
-                  <option key={employee.id} value={employee.id}>
-                    {(employee as { displayName?: string }).displayName || (employee as { name?: string }).name || ((employee.firstName ?? employee.lastName) ? [employee.firstName, employee.lastName].filter(Boolean).join(" ") : (employee.identity?.displayName ?? employee.id))}
-                  </option>
-                ))}
+              {staffList.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {(employee as { displayName?: string }).displayName || (employee as { name?: string }).name || ((employee.firstName ?? employee.lastName) ? [employee.firstName, employee.lastName].filter(Boolean).join(" ") : (employee.identity?.displayName ?? employee.id))}
+                </option>
+              ))}
             </select>
           </label>
           <label className="block">
@@ -649,16 +654,9 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  const activeOnlyStaff = useMemo(
-    () =>
-      staffList
-        .filter((s) => s.active === true)
-        .filter((v, i, a) => a.findIndex((t) => (t as { displayName?: string }).displayName === (v as { displayName?: string }).displayName) === i),
-    [staffList]
-  );
-
+  /** staffList = activeStaffList из родителя. Строки только по этому списку; смены фильтруем по staffId. */
   const rowsByStaff = useMemo(() => {
-    return activeOnlyStaff
+    return staffList
       .map((staff) => {
         const staffEntries = entries.filter((e) => {
           if (e.staffId !== staff.id) return false;
@@ -688,7 +686,7 @@ function FOTReport({
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
-  }, [entries, activeOnlyStaff, venues, filterMonth]);
+  }, [entries, staffList, venues, filterMonth]);
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
@@ -740,12 +738,12 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {activeOnlyStaff.length === 0 ? (
+            {staffList.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-500">Нет активных сотрудников</td>
               </tr>
             ) : (
-              activeOnlyStaff.map((staff) => {
+              staffList.map((staff) => {
                   const staffEntries = entries.filter(
                     (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
                   );
