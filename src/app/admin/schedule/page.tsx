@@ -83,21 +83,24 @@ function normalizeEntry(d: { id: string; data: () => Record<string, unknown> }):
         endTime: `${10 + Math.max(0, Math.floor(planHours))}:00`,
         venueId,
       };
-  const planH = data?.planHours ?? planHoursFromSlot(slot);
+  const planH = (data?.planHours as number | undefined) ?? planHoursFromSlot(slot);
   const checkIn = data?.checkIn as string | undefined;
   const checkOut = data?.checkOut as string | undefined;
   const factFromLogs = factHoursFromCheckInOut(checkIn, checkOut);
+  const planHoursVal = typeof planH === "number" && !Number.isNaN(planH) ? planH : planHoursFromSlot(slot);
+  const lateVal = typeof data?.lateMinutes === "number" ? data.lateMinutes : undefined;
+  const earlyVal = typeof data?.earlyLeaveMinutes === "number" ? data.earlyLeaveMinutes : undefined;
   return {
     id,
     venueId,
     staffId,
     slot,
-    planHours: planH,
+    planHours: planHoursVal,
     factHours: (data?.factHours as number | undefined) ?? factFromLogs,
     checkIn,
     checkOut,
-    lateMinutes: data?.lateMinutes,
-    earlyLeaveMinutes: data?.earlyLeaveMinutes,
+    lateMinutes: lateVal,
+    earlyLeaveMinutes: earlyVal,
     role: data?.role as ServiceRole | undefined,
     createdAt: data?.createdAt,
     updatedAt: data?.updatedAt,
@@ -576,11 +579,14 @@ function AddShiftModal({
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
               <option value="">Выберите</option>
-              {staffList.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {(employee as { displayName?: string }).displayName || (employee as { name?: string }).name || ((employee.firstName ?? employee.lastName) ? [employee.firstName, employee.lastName].filter(Boolean).join(" ") : (employee.identity?.displayName ?? employee.id))}
-                </option>
-              ))}
+              {staffList
+                .filter((s) => s.active === true && (s as { status?: string }).status === "active")
+                .filter((v, i, a) => a.findIndex((t) => t.id === v.id) === i)
+                .map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {(employee as { displayName?: string }).displayName || (employee as { name?: string }).name || ((employee.firstName ?? employee.lastName) ? [employee.firstName, employee.lastName].filter(Boolean).join(" ") : (employee.identity?.displayName ?? employee.id))}
+                  </option>
+                ))}
             </select>
           </label>
           <label className="block">
@@ -654,9 +660,10 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  /** staffList = activeStaffList из родителя. Строки только по этому списку; смены фильтруем по staffId. */
+  /** Строки только по активным (active === true и status === 'active'); смены фильтруем по staffId и месяцу. */
   const rowsByStaff = useMemo(() => {
     return staffList
+      .filter((s) => s.active === true && (s as { status?: string }).status === "active")
       .map((staff) => {
         const staffEntries = entries.filter((e) => {
           if (e.staffId !== staff.id) return false;
@@ -738,12 +745,14 @@ function FOTReport({
             </tr>
           </thead>
           <tbody>
-            {staffList.length === 0 ? (
+            {staffList.filter((s) => s.active === true && (s as { status?: string }).status === "active").length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-4 text-center text-gray-500">Нет активных сотрудников</td>
               </tr>
             ) : (
-              staffList.map((staff) => {
+              staffList
+                .filter((s) => s.active === true && (s as { status?: string }).status === "active")
+                .map((staff) => {
                   const staffEntries = entries.filter(
                     (e) => e.staffId === staff.id && e.slot?.date && String(e.slot.date).startsWith(filterMonth)
                   );
