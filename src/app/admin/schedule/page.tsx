@@ -163,9 +163,13 @@ export default function AdminSchedulePage() {
     const unsub = onSnapshot(q, (snap) => {
       const activeOnly = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as Staff))
-        .filter((s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true)
-        .filter((s) => (s as { status?: string }).status !== "inactive" && (s as { status?: string }).status !== "dismissed");
-      setStaffList(activeOnly);
+        .filter((s) => s.active === true);
+      const displayKey = (s: Staff) =>
+        (s as { displayName?: string }).displayName ??
+        (s as { name?: string }).name ??
+        ((s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.id));
+      const uniqueActiveStaff = Array.from(new Map(activeOnly.map((s) => [displayKey(s), s])).values());
+      setStaffList(uniqueActiveStaff);
     });
     return () => unsub();
   }, []);
@@ -559,7 +563,7 @@ function AddShiftModal({
               onChange={(e) => {
                 const selected = staffList.find((p) => p.id === e.target.value);
                 setStaffId(e.target.value);
-                if (selected) setRoleDisplay((selected as { role?: string }).role ?? selected.position ?? "waiter");
+                if (selected) setRoleDisplay(selected.position ?? (selected as { role?: string }).role ?? "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
