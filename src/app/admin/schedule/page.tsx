@@ -34,14 +34,6 @@ function roleLabel(key: string): string {
   return ROLE_LABELS[key] ?? key;
 }
 
-/** Жёсткий фильтр активных: убираем всех с явным статусом неактивности или unlinked. В списке только о2, АндрейОф и т.п. */
-function isActiveStaffStrict(s: Staff): boolean {
-  const status = (s as { status?: string }).status;
-  const unlinked = (s as { unlinked?: boolean }).unlinked;
-  if (status === "inactive" || status === "dismissed") return false;
-  if (unlinked === true) return false;
-  return true;
-}
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -170,8 +162,11 @@ export default function AdminSchedulePage() {
     );
     const unsub = onSnapshot(q, (snap) => {
       const allStaff = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Staff));
-      const activeStaff = allStaff.filter(isActiveStaffStrict);
-      setStaffList(activeStaff);
+      setStaffList(
+        allStaff
+          .filter((s) => (s as { status?: string }).status === "active" || (s as { active?: boolean }).active === true)
+          .filter((s) => (s as { status?: string }).status !== "inactive")
+      );
     });
     return () => unsub();
   }, []);
@@ -203,25 +198,22 @@ export default function AdminSchedulePage() {
     return () => unsub();
   }, []);
 
-  const activeStaffIds = useMemo(
-    () => new Set(staffList.map((s) => s.id)),
-    [staffList]
-  );
+  const activeStaffIds = useMemo(() => staffList.map((s) => s.id), [staffList]);
 
-  const filteredEntries = useMemo(
-    () => entries.filter((e) => activeStaffIds.has(e.staffId)),
+  const cleanEntries = useMemo(
+    () => entries.filter((e) => activeStaffIds.includes(e.staffId)),
     [entries, activeStaffIds]
   );
 
   const filtered = useMemo(
     () =>
-      filteredEntries.filter((e) => {
+      cleanEntries.filter((e) => {
         const slot = e.slot ?? { date: (e as unknown as { date?: string }).date ?? "", startTime: "10:00", endTime: "18:00", venueId: e.venueId };
         if (filterDate && slot.date !== filterDate) return false;
         if (filterRole && e.role !== filterRole) return false;
         return true;
       }),
-    [filteredEntries, filterDate, filterRole]
+    [cleanEntries, filterDate, filterRole]
   );
 
   const managedVenues = useMemo(() => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]), [venues, VENUE_ID]);
@@ -379,7 +371,7 @@ export default function AdminSchedulePage() {
       )}
 
       <FOTReport
-        entries={filteredEntries}
+        entries={cleanEntries}
         staffList={staffList}
         venues={venues}
         filterMonth={filterMonth}
@@ -566,10 +558,9 @@ function AddShiftModal({
               required
               value={staffId}
               onChange={(e) => {
-                const val = e.target.value;
-                setStaffId(val);
-                const selected = staffList.find((s) => s.id === val);
-                if (selected) setRoleDisplay((selected as { role?: string }).role || selected.position || "");
+                const person = staffList.find((p) => p.id === e.target.value);
+                setStaffId(e.target.value);
+                if (person) setRoleDisplay((person as { role?: string }).role || person.position || "waiter");
               }}
               className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm"
             >
@@ -652,15 +643,9 @@ function FOTReport({
   onEditEntry?: (entry: ScheduleEntry) => void;
   onDeleteEntry?: (entry: ScheduleEntry) => void;
 }) {
-  // Только активные сотрудники (staffList уже отфильтрован в onSnapshot) — строки с1 и других уволенных не показываются
-  const activeStaffIds = useMemo(
-    () => new Set(staffList.map((s) => s.id)),
-    [staffList]
-  );
-
+  // entries приходят как cleanEntries — только смены активных сотрудников
   const rows = useMemo(() => {
-    const filteredEntries = entries.filter((e) => activeStaffIds.has(e.staffId));
-    const byEntry = filteredEntries.filter((e) => {
+    const byEntry = entries.filter((e) => {
       const slot = e.slot;
       if (!slot) return false;
       const date = slot?.date;
@@ -687,7 +672,7 @@ function FOTReport({
         endTime: e.slot?.endTime ?? "--:--",
       };
     });
-  }, [entries, staffList, venues, filterMonth, activeStaffIds]);
+  }, [entries, staffList, venues, filterMonth]);
 
   const exportCSV = () => {
     const header = "Сотрудник;Точка;План (ч);Факт (ч);Опоздание (мин);Ранний уход (мин)\n";
