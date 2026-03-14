@@ -5,32 +5,9 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { StaffCareerEntry, UnifiedIdentities, MedicalCard } from "@/lib/types";
 
 /**
- * Нормализует телефон для поиска: только цифры, российский формат +7XXXXXXXXXX.
- */
-function normalizePhone(input: string): string[] {
-  const digits = input.replace(/\D/g, "");
-  if (digits.length === 0) return [];
-  const variants: string[] = [];
-  if (digits.length === 10 && digits.startsWith("9")) {
-    variants.push("+7" + digits);
-    variants.push("7" + digits);
-    variants.push("8" + digits);
-  } else if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
-    const ten = digits.slice(-10);
-    variants.push("+7" + ten);
-    variants.push("7" + ten);
-    variants.push("8" + ten);
-  } else {
-    variants.push("+" + digits);
-    variants.push(digits);
-  }
-  return [...new Set(variants)];
-}
-
-/**
  * GET /api/admin/staff/lookup-by-phone?phone=+79001234567
- * Ищет в global_users по identities.phone. Возвращает «трудовую книжку» (опыт, рейтинг)
- * для приёма в штат. Если не найден — 404 (фронт предложит создать нового).
+ * Ищет в global_users по полям phone и identities.phone (очищенный номер — только цифры).
+ * Возвращает «трудовую книжку» для приёма в штат. Если не найден — 404.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -40,32 +17,48 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "phone is required" }, { status: 400 });
     }
 
-    const variants = normalizePhone(phoneRaw.trim());
-    if (variants.length === 0) {
+    const cleanPhone = phoneRaw.trim().replace(/\D/g, "");
+    if (cleanPhone.length === 0) {
       return NextResponse.json({ error: "Invalid phone" }, { status: 400 });
     }
 
+    console.log("[lookup-by-phone] Входящий номер (raw):", JSON.stringify(phoneRaw.trim()), "| очищенный (cleanPhone):", cleanPhone);
+
     const firestore = getAdminFirestore();
     let userId: string | null = null;
+    let foundBy: "phone" | "identities.phone" | null = null;
 
-    for (const phone of variants) {
-      const snap = await firestore
+    const byPhone = await firestore
+      .collection("global_users")
+      .where("phone", "==", cleanPhone)
+      .limit(1)
+      .get();
+    if (!byPhone.empty) {
+      userId = byPhone.docs[0].id;
+      foundBy = "phone";
+    }
+
+    if (!userId) {
+      const byIdentities = await firestore
         .collection("global_users")
-        .where("identities.phone", "==", phone)
+        .where("identities.phone", "==", cleanPhone)
         .limit(1)
         .get();
-      if (!snap.empty) {
-        userId = snap.docs[0].id;
-        break;
+      if (!byIdentities.empty) {
+        userId = byIdentities.docs[0].id;
+        foundBy = "identities.phone";
       }
     }
 
     if (!userId) {
+      console.log("[lookup-by-phone] Запрос по cleanPhone:", cleanPhone, "— не найден ни в phone, ни в identities.phone");
       return NextResponse.json(
         { found: false, message: "Пользователь с таким телефоном не найден. Можно создать нового." },
         { status: 404 }
       );
     }
+
+    console.log("[lookup-by-phone] Найден userId:", userId, "по полю:", foundBy);
 
     const doc = await firestore.collection("global_users").doc(userId).get();
     if (!doc.exists) {

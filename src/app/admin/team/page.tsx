@@ -555,13 +555,22 @@ export default function TeamPage() {
         {lookupNotFound && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
             <p className="text-sm text-gray-700">Пользователь с таким телефоном не найден в системе.</p>
-            <button
-              type="button"
-              onClick={handleCreateNewFromLookup}
-              className="mt-2 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
-            >
-              Создать нового (телефон будет подставлен)
-            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleCreateNewFromLookup}
+                className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
+              >
+                Создать нового (телефон будет подставлен)
+              </button>
+              <button
+                type="button"
+                onClick={() => { setLookupNotFound(false); setLookupPhone(""); setLookupError(null); setLookupResult(null); }}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+            </div>
           </div>
         )}
       </div>

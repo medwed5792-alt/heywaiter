@@ -8,6 +8,25 @@ import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 
 const VENUE_ID = "current";
 
+/** Номер телефона в БД — только цифры (без +, скобок, пробелов). */
+function cleanPhone(value: string | undefined | null): string {
+  if (value == null || typeof value !== "string") return "";
+  return value.replace(/\D/g, "");
+}
+
+/** Нормализует медкнижку: expiryDate в формате ISO date (YYYY-MM-DD) для корректной проверки за 15 дней. */
+function normalizeMedicalCard(
+  card: { expiryDate?: string | null; lastChecked?: string | null; notes?: string } | undefined | null
+): typeof card {
+  if (card == null) return card;
+  const exp = card.expiryDate;
+  const iso =
+    exp && String(exp).trim()
+      ? new Date(exp).toISOString().slice(0, 10)
+      : null;
+  return { ...card, expiryDate: iso, lastChecked: card.lastChecked ?? null };
+}
+
 /**
  * POST /api/admin/staff/upsert
  * ЛПР: создание или обновление сотрудника.
@@ -27,6 +46,9 @@ export async function POST(request: NextRequest) {
       locale: "ru",
       displayName: [body.firstName, body.lastName].filter(Boolean).join(" "),
     };
+
+    const phoneCleaned = cleanPhone(body.phone);
+    const medicalCardNormalized = normalizeMedicalCard(body.medicalCard);
 
     const firestore = getAdminFirestore();
 
@@ -48,7 +70,7 @@ export async function POST(request: NextRequest) {
         gender: body.gender ?? staffData.gender ?? null,
         birthDate: body.birthDate ?? staffData.birthDate ?? null,
         photoUrl: body.photoUrl ?? staffData.photoUrl ?? null,
-        phone: body.phone ?? staffData.phone ?? null,
+        phone: (body.phone != null && String(body.phone).trim() ? phoneCleaned || null : (staffData.phone as string) ?? null),
         identity: body.identity ?? staffData.identity ?? identity,
         primaryChannel: body.primaryChannel ?? staffData.primaryChannel ?? "telegram",
         tgId: body.tgId ?? staffData.tgId ?? null,
@@ -57,7 +79,7 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
       };
       if (body.globalScore != null) profilePayload.globalScore = body.globalScore;
-      if (body.medicalCard != null) profilePayload.medicalCard = body.medicalCard;
+      if (medicalCardNormalized != null) profilePayload.medicalCard = medicalCardNormalized;
       const identitiesUpdate: UnifiedIdentities =
         typeof body.identities === "object" && body.identities !== null
           ? { ...(staffData.identities as UnifiedIdentities | undefined), ...body.identities }
@@ -69,7 +91,10 @@ export async function POST(request: NextRequest) {
             };
       const identitiesFiltered: UnifiedIdentities = {};
       for (const [k, v] of Object.entries(identitiesUpdate)) {
-        if (v && typeof v === "string" && v.trim()) identitiesFiltered[k as keyof UnifiedIdentities] = v.trim();
+        if (v && typeof v === "string" && v.trim()) {
+          const val = k === "phone" ? phoneCleaned || v.replace(/\D/g, "") : v.trim();
+          if (val) identitiesFiltered[k as keyof UnifiedIdentities] = val;
+        }
       }
       if (Object.keys(identitiesFiltered).length > 0) {
         for (const key of Object.keys(identitiesFiltered) as (keyof UnifiedIdentities)[]) {
@@ -127,7 +152,7 @@ export async function POST(request: NextRequest) {
         updatedAt: FieldValue.serverTimestamp(),
         ...(body.role != null && { role: body.role }),
         ...(body.active != null && { active: body.active }),
-        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
+        ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
       });
 
       return NextResponse.json({ ok: true, staffId });
@@ -136,14 +161,17 @@ export async function POST(request: NextRequest) {
     // Создание: поиск по identities (Единый профиль), затем создание или привязка
     const identities: UnifiedIdentities =
       typeof body.identities === "object" && body.identities !== null
-        ? Object.fromEntries(
-            Object.entries(body.identities).filter(([, v]) => v && typeof v === "string" && String(v).trim())
-          ) as UnifiedIdentities
+        ? (Object.fromEntries(
+            Object.entries(body.identities)
+              .filter(([, v]) => v && typeof v === "string" && String(v).trim())
+              .map(([k, v]) => [k, k === "phone" ? cleanPhone(String(v)) : String(v).trim()])
+              .filter(([, v]) => v !== "")
+          ) as UnifiedIdentities)
         : (() => {
             const out: UnifiedIdentities = {};
             if (body.tgId && String(body.tgId).trim()) out.tg = String(body.tgId).trim();
             if (body.email && String(body.email).trim()) out.email = String(body.email).trim();
-            if (body.phone && String(body.phone).trim()) out.phone = String(body.phone).trim();
+            if (phoneCleaned) out.phone = phoneCleaned;
             return out;
           })();
 
@@ -181,11 +209,11 @@ export async function POST(request: NextRequest) {
         affiliations,
         firstName: body.firstName ?? globalData.firstName,
         lastName: body.lastName ?? globalData.lastName,
-        phone: body.phone ?? globalData.phone,
+        phone: phoneCleaned || globalData.phone ?? null,
         identity: identity ?? globalData.identity,
         tgId: body.tgId ?? globalData.tgId,
         updatedAt: FieldValue.serverTimestamp(),
-        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
+        ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
       });
     } else {
       const newRef = firestore.collection("global_users").doc();
@@ -196,14 +224,14 @@ export async function POST(request: NextRequest) {
         gender: body.gender ?? null,
         birthDate: body.birthDate ?? null,
         photoUrl: body.photoUrl ?? null,
-        phone: body.phone ?? null,
+        phone: phoneCleaned || null,
         identity,
         primaryChannel: body.primaryChannel ?? "telegram",
         tgId: body.tgId ?? null,
         identities: Object.keys(identities).length > 0 ? identities : null,
         affiliations: [affiliation],
         careerHistory: [],
-        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
+        ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
@@ -221,7 +249,7 @@ export async function POST(request: NextRequest) {
         active: true,
         assignedTableIds,
         tgId: body.tgId ?? null,
-        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
+        ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     } else {
@@ -240,7 +268,7 @@ export async function POST(request: NextRequest) {
         call_category: body.call_category ?? null,
         assignedTableIds,
         tgId: body.tgId ?? null,
-        ...(body.medicalCard != null && { medicalCard: body.medicalCard }),
+        ...(medicalCardNormalized != null && { medicalCard: medicalCardNormalized }),
         updatedAt: FieldValue.serverTimestamp(),
       });
     }
