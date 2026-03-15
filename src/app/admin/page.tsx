@@ -558,14 +558,15 @@ export default function AdminDashboardPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {tables.map((table) => {
               const session = sessionsByTable[table.id];
+              const isOccupied = Boolean(session);
               const bookings = bookingsByTable[table.id] ?? [];
               const nextBooking = bookings.sort((a, b) => a.startAt.getTime() - b.startAt.getTime())[0];
               const minsToBooking = nextBooking ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
-              const shouldBlink = minsToBooking != null && minsToBooking < 30 && minsToBooking > 0;
+              const shouldBlink = minsToBooking != null && minsToBooking <= 30 && minsToBooking > 0;
               const assignedStaffId = assignmentsByTable[table.id] ?? "";
               const defaultFromTeam = staffList.find((s) => s.assignedTableIds.includes(table.id));
               const assignedStaff = assignedStaffId ? staffList.find((s) => s.id === assignedStaffId) : null;
-              const isGreenTable = assignedStaffId !== "" && (assignedStaff?.onShift === true);
+              const isGreenSelect = assignedStaffId !== "" && (assignedStaff?.onShift === true);
               const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
               const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
               const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
@@ -575,14 +576,15 @@ export default function AdminDashboardPage() {
                 (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
               const isPlanSelection = Boolean(selectValue && !assignedStaffId);
               const cardBorder = shouldBlink
-                ? "border-amber-400 animate-pulse"
-                : isGreenTable
-                  ? "border-emerald-400 bg-emerald-50/30"
-                  : "border-gray-300 bg-gray-50/80";
+                ? "border-emerald-400 animate-pulse"
+                : isOccupied
+                  ? "border-sky-300"
+                  : "border-emerald-400";
+              const cardBg = isOccupied ? "bg-sky-50/90" : "bg-white";
               return (
                 <div
                   key={table.id}
-                  className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder}`}
+                  className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg}`}
                 >
                   <div className="text-2xl font-bold text-gray-900">{table.number}</div>
                   {isWaiterOffShift && (
@@ -597,7 +599,9 @@ export default function AdminDashboardPage() {
                         setAssignmentsByTable((prev) => ({ ...prev, [table.id]: v }));
                         if (v) saveTableWaiter(table.id, v);
                       }}
-                      className="mt-0.5 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                      className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
+                        isGreenSelect ? "border-emerald-400 bg-emerald-50" : "border-gray-300 bg-white"
+                      }`}
                     >
                       <option value="">—</option>
                       {uniqueStaff.map((w) => (
