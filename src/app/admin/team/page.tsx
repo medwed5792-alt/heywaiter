@@ -414,6 +414,11 @@ export default function TeamPage() {
     ? (POSITION_GROUPS_V2.find((g) => g.groupId === groupFilter)?.roles ?? [])
     : ALL_POSITIONS_FLAT;
 
+  // Принудительный сброс кнопки «Отправить предложение» при смене найденного пользователя или очистке
+  useEffect(() => {
+    setOfferLoading(false);
+  }, [lookupResult]);
+
   const handleLookupByIdentity = async () => {
     const value = lookupValue.trim();
     if (!value) {
@@ -431,20 +436,24 @@ export default function TeamPage() {
       if (res.status === 404) {
         setLookupNotFound(true);
         setLookupResult(null);
+        setOfferLoading(false);
         return;
       }
       if (!res.ok) throw new Error(data.error || "Ошибка поиска");
       if (data.found) {
         setLookupResult(data as LookupByIdentityResult);
         setLookupNotFound(false);
+        setOfferLoading(false);
       } else {
         setLookupNotFound(true);
         setLookupResult(null);
+        setOfferLoading(false);
       }
     } catch (e) {
       setLookupError(e instanceof Error ? e.message : "Ошибка поиска");
       setLookupResult(null);
       setLookupNotFound(false);
+      setOfferLoading(false);
     } finally {
       setLookupLoading(false);
     }
@@ -457,6 +466,11 @@ export default function TeamPage() {
     setLookupValue("");
     setLookupType("phone");
     setOfferLoading(false);
+  };
+
+  const handleCancelLookup = () => {
+    setOfferLoading(false);
+    resetLookupResults();
   };
 
   const handleSendOffer = async () => {
@@ -621,7 +635,7 @@ export default function TeamPage() {
           </button>
           <button
             type="button"
-            onClick={resetLookupResults}
+            onClick={handleCancelLookup}
             className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             Отмена
@@ -691,7 +705,7 @@ export default function TeamPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={resetLookupResults}
+                    onClick={handleCancelLookup}
                     className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
                   >
                     Отмена
@@ -714,7 +728,7 @@ export default function TeamPage() {
               </button>
               <button
                 type="button"
-                onClick={resetLookupResults}
+                onClick={handleCancelLookup}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена

@@ -7,20 +7,30 @@ import { getBotToken } from "@/lib/webhook/channels";
 import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
+const TELEGRAM_TIMEOUT_MS = 2000;
 
 async function sendTelegram(
   token: string,
   method: string,
   body: Record<string, unknown>
 ): Promise<unknown> {
-  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as { ok?: boolean };
-  if (!res.ok || !data.ok) throw new Error("Telegram API error");
-  return data;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean };
+    if (!res.ok || !data.ok) throw new Error("Telegram API error");
+    return data;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
 }
 
 /**
@@ -100,7 +110,7 @@ export async function POST(request: NextRequest) {
     await rootStaffRef.set(staffPayload);
     console.log("[offer] Written to staff/%s", staffDocId);
 
-    // 3) Отправка в Telegram — не блокируем ответ при ошибке
+    // 3) Отправка в Telegram — таймаут 2 с; при ошибке/таймауте не блокируем ответ
     let telegramSent = false;
     try {
       let token = await getBotTokenFromStore("telegram", "staff");
@@ -127,7 +137,7 @@ export async function POST(request: NextRequest) {
         console.log("[offer] Telegram sent OK");
       }
     } catch (tgErr) {
-      console.error("[offer] Telegram send failed:", tgErr);
+      console.error("[offer] Telegram send failed (timeout or error):", tgErr);
     }
 
     if (telegramSent) {
@@ -138,7 +148,7 @@ export async function POST(request: NextRequest) {
       success: true,
       staffId: staffDocId,
       notificationSent: false,
-      message: "Предложение создано, но уведомление в бот не ушло. Сотрудник увидит оффер при входе в Личный кабинет.",
+      message: "Оффер создан, уведомление в бот отправится позже. Сотрудник увидит оффер при входе в Личный кабинет.",
     });
   } catch (err) {
     console.error("[admin/staff/offer]", err);
