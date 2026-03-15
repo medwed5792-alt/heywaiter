@@ -461,6 +461,8 @@ export default function TeamPage() {
   const handleSendOffer = async () => {
     if (!lookupResult?.userId || !lookupResult?.tgId) return;
     setOfferLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch("/api/admin/staff/offer", {
         method: "POST",
@@ -473,13 +475,24 @@ export default function TeamPage() {
           lastName: lookupResult.lastName ?? undefined,
           venueName: "Заведение",
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка отправки");
-      toast.success("Предложение отправлено. Сотрудник получит сообщение в Telegram.");
+      if (data.notificationSent === false) {
+        toast.success("Предложение создано. Сотрудник увидит его при входе в Личный кабинет.");
+      } else {
+        toast.success("Предложение отправлено. Сотрудник получит сообщение в Telegram.");
+      }
       resetLookupResults();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка отправки предложения");
+      clearTimeout(timeoutId);
+      if (e instanceof Error && e.name === "AbortError") {
+        toast.error("Сервер не отвечает. Попробуйте позже.");
+      } else {
+        toast.error(e instanceof Error ? e.message : "Ошибка отправки предложения");
+      }
     } finally {
       setOfferLoading(false);
     }
@@ -660,8 +673,11 @@ export default function TeamPage() {
                   type="button"
                   onClick={handleSendOffer}
                   disabled={offerLoading || !lookupResult.tgId}
-                  className="mt-3 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
                 >
+                  {offerLoading && (
+                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+                  )}
                   {offerLoading ? "Отправка…" : "Отправить предложение"}
                 </button>
               </div>

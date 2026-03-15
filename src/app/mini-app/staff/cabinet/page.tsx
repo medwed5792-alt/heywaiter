@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { User } from "lucide-react";
 
@@ -21,11 +21,19 @@ interface ProfileData {
   isFreeAgent: boolean;
 }
 
+interface PendingOffer {
+  staffId: string;
+  venueId: string;
+  venueName: string;
+}
+
 export default function StaffCabinetPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [pendingOffers, setPendingOffers] = useState<PendingOffer[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [offerActionLoading, setOfferActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [phone, setPhone] = useState("");
@@ -33,6 +41,15 @@ export default function StaffCabinetPage() {
   const [photoUrl, setPhotoUrl] = useState("");
 
   const telegramId = getTelegramUserIdFromWindow();
+
+  const fetchPendingOffers = useCallback(async () => {
+    if (!telegramId) return;
+    const res = await fetch(`/api/staff/pending-offers?telegramId=${encodeURIComponent(telegramId)}`);
+    if (res.ok) {
+      const data = await res.json();
+      setPendingOffers(data.offers ?? []);
+    }
+  }, [telegramId]);
 
   useEffect(() => {
     if (!telegramId) {
@@ -42,26 +59,74 @@ export default function StaffCabinetPage() {
     }
     let cancelled = false;
     (async () => {
-      const res = await fetch(`/api/staff/profile?telegramId=${encodeURIComponent(telegramId)}`);
+      const [profileRes, offersRes] = await Promise.all([
+        fetch(`/api/staff/profile?telegramId=${encodeURIComponent(telegramId)}`),
+        fetch(`/api/staff/pending-offers?telegramId=${encodeURIComponent(telegramId)}`),
+      ]);
       if (cancelled) return;
-      if (res.status === 404) {
+      if (profileRes.status === 404) {
         router.replace("/mini-app/staff");
         return;
       }
-      if (!res.ok) {
+      if (!profileRes.ok) {
         setError("Не удалось загрузить профиль");
         setLoading(false);
         return;
       }
-      const data = await res.json();
+      const data = await profileRes.json();
       setProfile(data);
       setPhone(data.phone ?? "");
       setBirthDate(data.birthDate ?? "");
       setPhotoUrl(data.photoUrl ?? "");
+      if (offersRes.ok) {
+        const offersData = await offersRes.json();
+        setPendingOffers(offersData.offers ?? []);
+      }
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [telegramId, router]);
+
+  const handleAcceptOffer = async (staffId: string) => {
+    if (!telegramId) return;
+    setOfferActionLoading(staffId);
+    try {
+      const res = await fetch("/api/staff/accept-offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staffId, telegramId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка");
+      setPendingOffers((prev) => prev.filter((o) => o.staffId !== staffId));
+      router.replace("/mini-app/staff");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setOfferActionLoading(null);
+    }
+  };
+
+  const handleDeclineOffer = async (staffId: string) => {
+    if (!telegramId) return;
+    setOfferActionLoading(staffId);
+    try {
+      const res = await fetch("/api/staff/decline-offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staffId, telegramId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Ошибка");
+      }
+      setPendingOffers((prev) => prev.filter((o) => o.staffId !== staffId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ошибка");
+    } finally {
+      setOfferActionLoading(null);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,6 +202,40 @@ export default function StaffCabinetPage() {
           Назад
         </button>
       </div>
+
+      {pendingOffers.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-sm font-medium text-amber-900">У вас есть новое предложение о работе</p>
+          {pendingOffers.map((offer) => (
+            <div key={offer.staffId} className="mt-3 rounded-lg border border-amber-100 bg-white p-3">
+              <p className="text-sm text-slate-700">
+                От заведения: <span className="font-medium">{offer.venueName}</span>
+              </p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  disabled={offerActionLoading === offer.staffId}
+                  onClick={() => handleAcceptOffer(offer.staffId)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {offerActionLoading === offer.staffId ? (
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  ) : null}
+                  Принять
+                </button>
+                <button
+                  type="button"
+                  disabled={offerActionLoading === offer.staffId}
+                  onClick={() => handleDeclineOffer(offer.staffId)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Отклонить
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-4">
