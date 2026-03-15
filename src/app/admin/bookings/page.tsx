@@ -119,17 +119,43 @@ export default function AdminBookingsPage() {
         const date = payload.date ?? editing?.date ?? "";
         const startTime = payload.startTime ?? editing?.startTime ?? "12:00";
         const endTime = payload.endTime ?? editing?.endTime ?? "14:00";
-        const startAtDate = toStartAt(date, startTime);
-        const startAt = Timestamp.fromDate(startAtDate);
-        const endAtDate = toEndAt(date, startTime, endTime);
-        const endAt = Timestamp.fromDate(endAtDate);
         const tableIdStr = String(payload.tableId ?? editing?.tableId ?? "").trim();
         const guestNameStr = String(payload.guestName ?? editing?.guestName ?? "");
+
+        // Время: приклеиваем к дате; если «Время ПО» < «Время С» — конец на следующий день
+        const startAtDate = toStartAt(date, startTime);
+        const endAtDate = toEndAt(date, startTime, endTime);
+        if (Number.isNaN(startAtDate.getTime()) || Number.isNaN(endAtDate.getTime())) {
+          toast.error("Некорректная дата или время");
+          return;
+        }
+        const startAt = Timestamp.fromDate(startAtDate);
+        const endAt = Timestamp.fromDate(endAtDate);
+
+        // Обязательные поля перед отправкой в Firestore
+        const venueId = VENUE_ID;
+        if (!venueId || venueId === "undefined" || venueId === "null") {
+          toast.error("Не указано заведение (venueId)");
+          return;
+        }
+        if (!tableIdStr) {
+          toast.error("Укажите стол (tableId)");
+          return;
+        }
+        if (!guestNameStr || !guestNameStr.trim()) {
+          toast.error("Укажите ФИО гостя");
+          return;
+        }
+        if (!date || !startAt) {
+          toast.error("Укажите дату и время брони");
+          return;
+        }
+
         const guestContactStr = String(payload.guestContact ?? editing?.guestContact ?? "");
         const body = {
-          venueId: VENUE_ID,
+          venueId,
           tableId: tableIdStr,
-          guestName: guestNameStr,
+          guestName: guestNameStr.trim(),
           guestContact: guestContactStr,
           guestId: payload.guestId,
           guestExternalId: payload.guestExternalId,
@@ -152,6 +178,7 @@ export default function AdminBookingsPage() {
         }
         setEditing(null);
       } catch (e) {
+        console.error("Booking save error:", e);
         toast.error("Ошибка сохранения");
       } finally {
         setSaving(false);
