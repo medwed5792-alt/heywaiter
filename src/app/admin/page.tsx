@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import {
   collection,
@@ -23,9 +24,9 @@ import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
 
-const VENUE_ID = "current";
 const BOOKING_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 часа для "ближайшие 2 часа"
 const BLINK_IF_LESS_MS = 30 * 60 * 1000; // мерцание если до брони < 30 мин
+const BOOKING_REMINDER_MINS = 15; // уведомление в ленту за 15 мин до брони
 
 interface ClosedSessionForRating {
   id: string;
@@ -106,6 +107,9 @@ function EventSkeleton() {
 }
 
 export default function AdminDashboardPage() {
+  const searchParams = useSearchParams();
+  const venueId = (searchParams.get("v") || searchParams.get("venueId") || "current").trim() || "current";
+
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [tables, setTables] = useState<TableRow[]>([]);
@@ -125,6 +129,7 @@ export default function AdminDashboardPage() {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
   const [resetDone, setResetDone] = useState(false);
+  const activeSessionIdsRef = useRef<Set<string>>(new Set());
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -135,7 +140,7 @@ export default function AdminDashboardPage() {
     fetch("/api/admin/reset-stuck-tables", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ venueId: VENUE_ID }),
+      body: JSON.stringify({ venueId: venueId }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -144,11 +149,11 @@ export default function AdminDashboardPage() {
       .catch(() => {})
       .finally(() => { if (!cancelled) setResetDone(true); });
     return () => { cancelled = true; };
-  }, [venueType, resetDone]);
+  }, [venueType, venueId, resetDone]);
 
   useEffect(() => {
     (async () => {
-      const snap = await getDoc(doc(db, "venues", VENUE_ID));
+      const snap = await getDoc(doc(db, "venues", venueId));
       if (snap.exists()) {
         const data = snap.data();
         setVenueType((data.venueType as VenueType) || "full_service");
@@ -164,8 +169,8 @@ export default function AdminDashboardPage() {
     let cancelled = false;
     (async () => {
       const [venueTablesSnap, rootTablesSnap] = await Promise.all([
-        getDocs(collection(db, "venues", VENUE_ID, "tables")),
-        getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
+        getDocs(collection(db, "venues", venueId, "tables")),
+        getDocs(query(collection(db, "tables"), where("venueId", "==", venueId))),
       ]);
       if (cancelled) return;
       const fromVenue = venueTablesSnap.docs.map((d) => {
@@ -187,10 +192,13 @@ export default function AdminDashboardPage() {
     const unsub = onSnapshot(
       query(
         collection(db, "activeSessions"),
-        where("venueId", "==", VENUE_ID),
+        where("venueId", "==", venueId),
         where("status", "==", "check_in_success")
       ),
       (snap) => {
+        // Копим id активных сессий, чтобы показывать рейтинг только при закрытии стола (не из-за bookings)
+        const nextIds = new Set(snap.docs.map((d) => d.id));
+        activeSessionIdsRef.current = new Set([...activeSessionIdsRef.current, ...nextIds]);
         setOccupiedCount(snap.size);
         const byTable: Record<string, SessionOnTable> = {};
         snap.docs.forEach((d) => {
@@ -207,12 +215,12 @@ export default function AdminDashboardPage() {
       }
     );
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   useEffect(() => {
     if (venueType !== "full_service") return;
     const unsub = onSnapshot(
-      query(collection(db, "bookings"), where("venueId", "==", VENUE_ID)),
+      query(collection(db, "bookings"), where("venueId", "==", venueId)),
       (snap) => {
         const today = new Date().toISOString().slice(0, 10);
         let todayCount = 0;
@@ -228,7 +236,8 @@ export default function AdminDashboardPage() {
           const startTime = (data.startTime as string) ?? "12:00";
           const startAtRaw = data.startAt as { toDate?: () => Date } | undefined;
           const startAt = startAtRaw?.toDate?.() ?? toStartAt(date, startTime);
-          if (startAt.getTime() < now || startAt.getTime() > windowEnd) return;
+          const startMs = startAt.getTime();
+          if (Number.isNaN(startMs) || startMs < now || startMs > windowEnd) return;
           const tableId = String(data.tableId ?? "").trim();
           if (!tableId) return;
           const b: BookingOnTable = {
@@ -246,7 +255,7 @@ export default function AdminDashboardPage() {
       }
     );
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -274,12 +283,12 @@ export default function AdminDashboardPage() {
       }
     );
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   // Список всех активных сотрудников с закреплёнными столами (из Команды) — для отображения «по умолчанию» и проверки onShift
   useEffect(() => {
     const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", VENUE_ID), where("active", "==", true)),
+      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true)),
       (snap) => {
         const list: StaffWithTables[] = snap.docs.map((d) => {
           const data = d.data();
@@ -298,12 +307,12 @@ export default function AdminDashboardPage() {
       }
     );
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     if (tables.length === 0) return;
     const unsub = onSnapshot(
-      collection(db, "venues", VENUE_ID, "tables"),
+      collection(db, "venues", venueId, "tables"),
       (snap) => {
         const next: Record<string, string> = {};
         snap.docs.forEach((d) => {
@@ -316,7 +325,7 @@ export default function AdminDashboardPage() {
       }
     );
     return () => unsub();
-  }, [tables.length]);
+  }, [tables.length, venueId]);
 
   const tableIds = tables.map((t) => t.id).join(",");
   useEffect(() => {
@@ -326,7 +335,7 @@ export default function AdminDashboardPage() {
       const next: Record<string, string> = {};
       for (const t of tables) {
         if (cancelled) return;
-        const snap = await getDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
+        const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const a = data.assignments as Record<string, string> | undefined;
@@ -337,7 +346,7 @@ export default function AdminDashboardPage() {
       if (!cancelled) setAssignmentsByTable((prev) => ({ ...prev, ...next }));
     })();
     return () => { cancelled = true; };
-  }, [tableIds, tables]);
+  }, [tableIds, tables, venueId]);
 
   const guestIds = Object.values(sessionsByTable)
     .map((s) => s.guestId)
@@ -375,7 +384,7 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     const q = query(
       collection(db, "staffNotifications"),
-      where("venueId", "==", VENUE_ID),
+      where("venueId", "==", venueId),
       orderBy("createdAt", "desc"),
       limit(50)
     );
@@ -395,7 +404,7 @@ export default function AdminDashboardPage() {
       setFeedLoading(false);
     });
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   const archiveEvent = useCallback(async (eventId: string) => {
     try {
@@ -407,7 +416,7 @@ export default function AdminDashboardPage() {
 
   const saveTableWaiter = useCallback(async (tableId: string, staffId: string) => {
     try {
-      const ref = doc(db, "venues", VENUE_ID, "tables", tableId);
+      const ref = doc(db, "venues", venueId, "tables", tableId);
       const snap = await getDoc(ref);
       const existing = snap.exists() ? (snap.data()?.assignments as Record<string, string> | undefined) ?? {} : {};
       await setDoc(ref, {
@@ -417,12 +426,12 @@ export default function AdminDashboardPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
     }
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     const q = query(
       collection(db, "activeSessions"),
-      where("venueId", "==", VENUE_ID),
+      where("venueId", "==", venueId),
       where("status", "==", "closed"),
       orderBy("closedAt", "desc"),
       limit(30)
@@ -435,7 +444,10 @@ export default function AdminDashboardPage() {
           return { id: d.id, ...data };
         })
         .filter(Boolean) as { id: string; guestId?: string; waiterId?: string; closedAt: unknown }[];
-      const gids = [...new Set(closed.map((c) => c.guestId).filter(Boolean))] as string[];
+      // Показываем рейтинг только если сессия была активной (стол был занят) — не из-за изменений в bookings
+      const wasOccupied = new Set(activeSessionIdsRef.current);
+      const closedThatWereOccupied = closed.filter((c) => wasOccupied.has(c.id));
+      const gids = [...new Set(closedThatWereOccupied.map((c) => c.guestId).filter(Boolean))] as string[];
       const names: Record<string, string> = {};
       for (const gid of gids) {
         const s = await getDoc(doc(db, "guests", gid));
@@ -445,7 +457,7 @@ export default function AdminDashboardPage() {
         }
       }
       setUnratedClosedSessions(
-        closed.map((c) => ({
+        closedThatWereOccupied.map((c) => ({
           id: c.id,
           guestId: c.guestId,
           guestName: c.guestId ? (names[c.guestId] ?? "Гость") : "Гость",
@@ -455,7 +467,7 @@ export default function AdminDashboardPage() {
       );
     });
     return () => unsubClosed();
-  }, []);
+  }, [venueId]);
 
   const openGuestModal = useCallback(async (guestId: string) => {
     const snap = await getDoc(doc(db, "guests", guestId));
@@ -464,6 +476,42 @@ export default function AdminDashboardPage() {
   }, []);
 
   const totalTables = tables.length || 0;
+
+  const nextBookingInMinutes = useMemo(() => {
+    const now = Date.now();
+    let nearest: number | null = null;
+    Object.values(bookingsByTable).flat().forEach((b) => {
+      const ms = b.startAt.getTime() - now;
+      if (ms > 0 && (nearest == null || ms < nearest * 60000)) nearest = ms / 60000;
+    });
+    return nearest;
+  }, [bookingsByTable]);
+
+  const bookingReminderEvents = useMemo(() => {
+    const now = Date.now();
+    const list: { id: string; type: string; message: string; tableId?: string; read: boolean }[] = [];
+    Object.entries(bookingsByTable).forEach(([tableId, bookings]) => {
+      const table = tables.find((t) => t.id === tableId);
+      const num = table?.number ?? tableId;
+      bookings.forEach((b) => {
+        const mins = (b.startAt.getTime() - now) / 60000;
+        if (mins >= 12 && mins <= 18) {
+          list.push({
+            id: `booking_reminder_${b.id}`,
+            type: "booking_reminder",
+            message: `Гость для Стола ${num} придет через 15 минут`,
+            tableId,
+            read: false,
+          });
+        }
+      });
+    });
+    return list;
+  }, [bookingsByTable, tables]);
+
+  const feedWithReminders = useMemo(() => {
+    return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...feedEvents];
+  }, [bookingReminderEvents, feedEvents]);
 
   return (
     <div>
@@ -492,6 +540,9 @@ export default function AdminDashboardPage() {
               <h3 className="text-sm font-medium text-gray-600">Брони сегодня</h3>
               <p className="mt-1 text-2xl font-bold text-blue-700">{bookingsTodayCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">{todayStr}</p>
+              {nextBookingInMinutes != null && nextBookingInMinutes > 0 && (
+                <p className="mt-1 text-xs font-medium text-blue-600">Следующая бронь через {Math.round(nextBookingInMinutes)} мин.</p>
+              )}
             </Link>
             <Link href="/admin/team" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block">
               <h3 className="text-sm font-medium text-gray-600">На смене</h3>
@@ -516,34 +567,39 @@ export default function AdminDashboardPage() {
               <EventSkeleton />
               <EventSkeleton />
             </div>
-          ) : feedEvents.length === 0 ? (
+          ) : feedWithReminders.length === 0 ? (
             <p className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Нет событий</p>
           ) : (
             <ul className="mt-3 space-y-2">
-              {feedEvents.map((ev) => {
+              {feedWithReminders.map((ev) => {
                 const isOrphan = ev.type === "orphan_call";
+                const isBookingReminder = ev.type === "booking_reminder";
                 return (
                 <li
                   key={ev.id}
                   className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
                     ev.read
                       ? "border-gray-100 bg-gray-50/50 text-gray-500"
-                      : isOrphan
-                        ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
-                        : "border-amber-200 bg-amber-50/80 text-amber-900"
+                      : isBookingReminder
+                        ? "border-amber-300 bg-amber-50/80 text-amber-900"
+                        : isOrphan
+                          ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                          : "border-amber-200 bg-amber-50/80 text-amber-900"
                   }`}
                 >
                   <span>
-                    {ev.type === "sos" ? "🚨 SOS" : isOrphan ? "⚠️ Стол без ответственного" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
-                    {ev.tableId != null && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
+                    {isBookingReminder ? "⚠️ " : ev.type === "sos" ? "🚨 SOS" : isOrphan ? "⚠️ Стол без ответственного" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
+                    {ev.tableId != null && !isBookingReminder && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => archiveEvent(ev.id)}
-                    className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    ОК
-                  </button>
+                  {!isBookingReminder && (
+                    <button
+                      type="button"
+                      onClick={() => archiveEvent(ev.id)}
+                      className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      ОК
+                    </button>
+                  )}
                 </li>
               );
               })}
@@ -642,10 +698,19 @@ export default function AdminDashboardPage() {
       {unratedClosedSessions.length > 0 && (
         <RateGuestVisitModal
           session={unratedClosedSessions[0]}
-          onRated={() => setUnratedClosedSessions((prev) => prev.slice(1))}
-          onDismiss={() => setUnratedClosedSessions((prev) => prev.slice(1))}
+          onRated={() => {
+            const id = unratedClosedSessions[0]?.id;
+            if (id) activeSessionIdsRef.current.delete(id);
+            setUnratedClosedSessions((prev) => prev.slice(1));
+          }}
+          onDismiss={() => {
+            const id = unratedClosedSessions[0]?.id;
+            if (id) activeSessionIdsRef.current.delete(id);
+            setUnratedClosedSessions((prev) => prev.slice(1));
+          }}
           submitting={ratingSubmitting}
           setSubmitting={setRatingSubmitting}
+          venueId={venueId}
         />
       )}
 
@@ -679,12 +744,14 @@ function RateGuestVisitModal({
   onDismiss,
   submitting,
   setSubmitting,
+  venueId,
 }: {
   session: ClosedSessionForRating;
   onRated: () => void;
   onDismiss: () => void;
   submitting: boolean;
   setSubmitting: (v: boolean) => void;
+  venueId: string;
 }) {
   const [stars, setStars] = useState<number | null>(null);
 
@@ -696,7 +763,7 @@ function RateGuestVisitModal({
       if (guestId) {
         const ref = doc(db, "global_guests", guestId);
         const snap = await getDoc(ref);
-        const data = snap.exists ? snap.data() : {};
+        const data = snap.exists() ? snap.data() : {};
         const ratings: number[] = Array.isArray(data?.ratings) ? data.ratings : [];
         const newRatings = [...ratings, stars];
         const avg = Math.round((newRatings.reduce((a, b) => a + b, 0) / newRatings.length) * 10) / 10;
@@ -707,7 +774,7 @@ function RateGuestVisitModal({
         updatedAt: serverTimestamp(),
       });
       const notifRef = await addDoc(collection(db, "staffNotifications"), {
-        venueId: "current",
+        venueId,
         tableId: "",
         type: "guest_rated",
         message: `Ваш гость оценён на ${stars} звёзд. Отличная работа!`,
@@ -731,6 +798,11 @@ function RateGuestVisitModal({
     }
   };
 
+  const handleDismiss = () => {
+    setStars(null);
+    onDismiss();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
@@ -751,7 +823,7 @@ function RateGuestVisitModal({
           ))}
         </div>
         <div className="mt-4 flex gap-2">
-          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={onDismiss}>
+          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={handleDismiss}>
             Позже
           </button>
           <button
