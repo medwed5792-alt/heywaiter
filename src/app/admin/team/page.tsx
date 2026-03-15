@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -261,6 +262,7 @@ export interface HallWithTables {
 }
 
 export default function TeamPage() {
+  const router = useRouter();
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [tables, setTables] = useState<TableItem[]>([]);
   const [halls, setHalls] = useState<{ id: string; name: string }[]>([]);
@@ -424,7 +426,16 @@ export default function TeamPage() {
     setLookupLoading(false);
   }, [lookupResult]);
 
-  // Проверка статуса оффера для найденного пользователя (показать "Отменить предложение" при pending_offer)
+  const fetchOfferStatus = useCallback(async (userId: string) => {
+    const res = await fetch(
+      `/api/admin/staff/offer-status?userId=${encodeURIComponent(userId)}&venueId=${encodeURIComponent(VENUE_ID)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return { status: data.status ?? null, staffId: data.staffId ?? null } as { status: string | null; staffId: string | null };
+  }, []);
+
+  // Проверка статуса оффера для найденного пользователя + авто-обновление (если сотрудник принял оффер в чате/Mini App)
   useEffect(() => {
     if (!lookupResult?.userId) {
       setOfferStatus(null);
@@ -432,19 +443,21 @@ export default function TeamPage() {
     }
     let cancelled = false;
     (async () => {
-      const res = await fetch(
-        `/api/admin/staff/offer-status?userId=${encodeURIComponent(lookupResult.userId)}&venueId=${encodeURIComponent(VENUE_ID)}`
-      );
-      if (cancelled) return;
-      if (res.ok) {
-        const data = await res.json();
-        setOfferStatus({ status: data.status ?? null, staffId: data.staffId ?? null });
-      } else {
-        setOfferStatus(null);
-      }
+      const next = await fetchOfferStatus(lookupResult.userId);
+      if (!cancelled && next) setOfferStatus(next);
     })();
     return () => { cancelled = true; };
-  }, [lookupResult?.userId]);
+  }, [lookupResult?.userId, fetchOfferStatus]);
+
+  // Периодическое обновление статуса оффера, чтобы при принятии в чате/Mini App карточка показала "В штате"
+  useEffect(() => {
+    if (!lookupResult?.userId) return;
+    const interval = setInterval(async () => {
+      const next = await fetchOfferStatus(lookupResult.userId);
+      if (next) setOfferStatus(next);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [lookupResult?.userId, fetchOfferStatus]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -523,7 +536,9 @@ export default function TeamPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка отмены");
       toast.success("Предложение отменено. Можно отправить заново.");
-      setOfferStatus(null);
+      const next = await fetchOfferStatus(lookupResult.userId);
+      if (next) setOfferStatus(next);
+      router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка отмены предложения");
     } finally {
@@ -570,6 +585,7 @@ export default function TeamPage() {
       } else {
         toast.success("Предложение отправлено. Сотрудник получит сообщение в Telegram.");
       }
+      router.refresh();
       resetLookupResults();
     } catch (e) {
       clearTimeout(timeoutId);
@@ -764,34 +780,32 @@ export default function TeamPage() {
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSendOffer}
-                    disabled={offerLoading}
-                    className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
-                  >
-                    {offerLoading && (
-                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
-                    )}
-                    {offerLoading ? "Отправка…" : "Отправить предложение"}
-                  </button>
-                  {offerStatus?.status === "pending_offer" && (
+                  {offerStatus?.status === "active" ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800">
+                      <span aria-hidden>✅</span> Сотрудник уже в штате заведения
+                    </span>
+                  ) : offerStatus?.status === "pending_offer" ? (
                     <button
                       type="button"
                       onClick={handleCancelOffer}
                       disabled={cancelOfferLoading}
-                      className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                     >
                       {cancelOfferLoading ? "…" : "Отменить предложение"}
                     </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSendOffer}
+                      disabled={offerLoading}
+                      className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
+                    >
+                      {offerLoading && (
+                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+                      )}
+                      {offerLoading ? "Отправка…" : "Отправить предложение"}
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={handleCancelLookup}
-                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    Отмена
-                  </button>
                 </div>
               </div>
             </div>
