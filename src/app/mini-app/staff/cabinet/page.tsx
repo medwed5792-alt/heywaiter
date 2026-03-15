@@ -99,6 +99,7 @@ export default function StaffCabinetPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
       setPendingOffers((prev) => prev.filter((o) => o.staffId !== staffId));
+      await router.refresh();
       router.replace("/mini-app/staff");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");

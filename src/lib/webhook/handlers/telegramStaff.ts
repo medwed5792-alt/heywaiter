@@ -126,95 +126,32 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "OK" });
       return;
     }
-    // Цифровой контракт: Принять / Отклонить. СТРОГО: сначала Firestore (root staff + venues/staff + global_users), потом answerCallbackQuery.
+    // Цифровой контракт: Принять — СРАЗУ answerCallbackQuery (кнопка не висит), затем единая логика acceptOffer().
     if (typeof data === "string" && data.startsWith("offer_accept_")) {
       const staffDocId = data.slice("offer_accept_".length);
       const chatId = update.callback_query.message?.chat?.id;
-      console.log("ACCEPT OFFER: starting update for staffId:", staffDocId, "chatId:", chatId);
-      let answered = false;
-      const answerOnce = async (text: string) => {
-        if (answered) return;
-        answered = true;
-        try {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text });
-        } catch (e) {
-          console.error("[telegramStaff] answerCallbackQuery failed:", e);
-        }
-      };
+      console.log("ACCEPT OFFER: staffId:", staffDocId, "chatId:", chatId);
       try {
-        if (!staffDocId || !chatId) {
-          await answerOnce("Ошибка данных");
-          return;
-        }
-        const adminDb = getAdminFirestore();
-        const staffRef = adminDb.collection("staff").doc(staffDocId);
-        const staffSnap = await staffRef.get();
-        if (!staffSnap.exists) {
-          console.log("ACCEPT OFFER: staff doc not found", staffDocId);
-          await answerOnce("Предложение устарело");
-          return;
-        }
-        const staffData = staffSnap.data() ?? {};
-        const userId = staffData.userId as string;
-        const venueId = staffData.venueId as string;
-        console.log("ACCEPT OFFER: venueId:", venueId, "userId:", userId);
-        if (staffData.active === true) {
-          await answerOnce("Вы уже в штате");
-          return;
-        }
-        const joinedAt = new Date().toISOString();
-        await staffRef.update({
-          active: true,
-          status: "active",
-          joinedAt,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-        const venueStaffRef = adminDb.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
-        await venueStaffRef.set(
-          {
-            active: true,
-            status: "active",
-            joinedAt,
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-        const globalRef = adminDb.collection("global_users").doc(userId);
-        const globalSnap = await globalRef.get();
-        if (globalSnap.exists) {
-          await globalRef.update({
-            affiliations: FieldValue.arrayUnion({
-              venueId,
-              role: "waiter",
-              status: "active",
-              onShift: false,
-            }),
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        }
-        console.log("SUCCESS: Staff", staffDocId, "accepted in Venue", venueId);
-        await answerOnce("Вы приняты в команду!");
-        await sendTelegram(token, "sendMessage", {
-          chat_id: chatId,
-          text: "✅ Поздравляем! Вы приняты в штат. Теперь вам доступен рабочий пульт в Mini App.",
-        });
-      } catch (err) {
-        console.error("[telegramStaff] offer_accept Firestore/Telegram error:", err);
-        await answerOnce("Ошибка");
+        await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ожидайте…" });
+      } catch (e) {
+        console.error("[telegramStaff] answerCallbackQuery failed:", e);
+      }
+      const { acceptOffer: doAcceptOffer } = await import("@/lib/accept-offer");
+      const result = await doAcceptOffer(staffDocId);
+      const successText = "✅ Поздравляем! Вы приняты в штат. Теперь вам доступен рабочий пульт в Mini App.";
+      const errorText = "⚠️ Ошибка при зачислении в штат. Попробуйте еще раз или обратитесь к админу.";
+      if (chatId) {
         try {
           await sendTelegram(token, "sendMessage", {
-            chat_id: update.callback_query.message?.chat?.id,
-            text: "⚠️ Ошибка при зачислении в штат. Попробуйте еще раз или обратитесь к админу.",
+            chat_id: chatId,
+            text: result.ok ? successText : errorText,
           });
-        } catch (_) {}
-      } finally {
-        if (!answered) {
-          try {
-            await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка" });
-          } catch (e) {
-            console.error("[telegramStaff] answerCallbackQuery in finally failed:", e);
-          }
+        } catch (e) {
+          console.error("[telegramStaff] sendMessage after accept failed:", e);
         }
+      }
+      if (!result.ok) {
+        console.error("[telegramStaff] acceptOffer failed:", result.error);
       }
       return;
     }
