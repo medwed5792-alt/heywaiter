@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
       isOrphan = false;
     } else {
       targetUids = await getLprStaffIds(firestore, venueId);
-      message = `⚠️ SOS: Вызов со стола без ответственного! ${baseMessage}`;
+      message = `⚠️ SOS: Безхозный вызов! ${baseMessage}`;
       notificationType = "orphan_call";
       isOrphan = true;
     }

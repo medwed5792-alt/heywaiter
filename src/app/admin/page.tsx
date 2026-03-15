@@ -564,9 +564,10 @@ export default function AdminDashboardPage() {
               const shouldBlink = minsToBooking != null && minsToBooking < 30 && minsToBooking > 0;
               const assignedStaffId = assignmentsByTable[table.id] ?? "";
               const defaultFromTeam = staffList.find((s) => s.assignedTableIds.includes(table.id));
+              const assignedStaff = assignedStaffId ? staffList.find((s) => s.id === assignedStaffId) : null;
+              const isGreenTable = assignedStaffId !== "" && (assignedStaff?.onShift === true);
               const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
               const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
-              const isGreenTable = effectiveWaiterId !== "" && effectiveStaff?.onShift === true;
               const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
               const uniqueStaff = Array.from(new Map(onShiftWaiters.map((w) => [w.id, w])).values());
               const selectValue =
@@ -599,16 +600,9 @@ export default function AdminDashboardPage() {
                       className="mt-0.5 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
                     >
                       <option value="">—</option>
-                      {uniqueStaff.map((w) => {
-                        const full = staffList.find((s) => s.id === w.id);
-                        const hasThisTableInPlan = full?.assignedTableIds.includes(table.id) ?? false;
-                        const label = hasThisTableInPlan ? `${w.displayName} (план)` : w.displayName;
-                        return (
-                          <option key={w.id} value={w.id}>
-                            {label}
-                          </option>
-                        );
-                      })}
+                      {uniqueStaff.map((w) => (
+                        <option key={w.id} value={w.id}>{w.displayName}</option>
+                      ))}
                     </select>
                   </div>
                   {isPlanSelection && (

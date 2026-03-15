@@ -3,7 +3,34 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import type { DocumentReference } from "firebase-admin/firestore";
+import type { DocumentReference, Firestore } from "firebase-admin/firestore";
+
+/** При завершении смены — очистить waiterId у всех столов, где сотрудник был назначен с Дашборда */
+async function clearWaiterFromTables(
+  firestore: Firestore,
+  venueId: string,
+  staffId: string
+): Promise<void> {
+  const tablesSnap = await firestore
+    .collection("venues")
+    .doc(venueId)
+    .collection("tables")
+    .get();
+  let count = 0;
+  const batch = firestore.batch();
+  for (const doc of tablesSnap.docs) {
+    const data = doc.data();
+    const waiter = (data.assignments as { waiter?: string } | undefined)?.waiter;
+    if (waiter === staffId) {
+      batch.update(doc.ref, {
+        "assignments.waiter": FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      count++;
+    }
+  }
+  if (count > 0) await batch.commit();
+}
 
 /** Текущее время в формате HH:mm */
 function nowHHmm(): string {
@@ -127,6 +154,9 @@ export async function POST(request: NextRequest) {
           shiftEndTime: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
+        if (venueId) {
+          await clearWaiterFromTables(firestore, venueId, legacyId);
+        }
       }
       return NextResponse.json({
         ok: true,
@@ -193,6 +223,9 @@ export async function POST(request: NextRequest) {
       shiftEndTime: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
+    if (staffVenueId) {
+      await clearWaiterFromTables(firestore, staffVenueId, staffDocId);
+    }
     return NextResponse.json({
       ok: true,
       onShift: false,
