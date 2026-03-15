@@ -568,7 +568,11 @@ export default function AdminDashboardPage() {
               const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
               const isGreenTable = effectiveWaiterId !== "" && effectiveStaff?.onShift === true;
               const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
-              const selectValue = assignedStaffId || (defaultFromTeam ? `__plan__${defaultFromTeam.id}` : "");
+              const uniqueStaff = Array.from(new Map(onShiftWaiters.map((w) => [w.id, w])).values());
+              const selectValue =
+                assignedStaffId ||
+                (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
+              const isPlanSelection = Boolean(selectValue && !assignedStaffId);
               const cardBorder = shouldBlink
                 ? "border-amber-400 animate-pulse"
                 : isGreenTable
@@ -589,27 +593,25 @@ export default function AdminDashboardPage() {
                       value={selectValue}
                       onChange={(e) => {
                         const v = e.target.value;
-                        if (v.startsWith("__plan__")) {
-                          setAssignmentsByTable((prev) => ({ ...prev, [table.id]: "" }));
-                          return;
-                        }
                         setAssignmentsByTable((prev) => ({ ...prev, [table.id]: v }));
                         if (v) saveTableWaiter(table.id, v);
                       }}
                       className="mt-0.5 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
                     >
                       <option value="">—</option>
-                      {defaultFromTeam && (
-                        <option value={`__plan__${defaultFromTeam.id}`} className="italic text-gray-500">
-                          {defaultFromTeam.displayName} (план)
-                        </option>
-                      )}
-                      {onShiftWaiters.map((w) => (
-                        <option key={w.id} value={w.id}>{w.displayName}</option>
-                      ))}
+                      {uniqueStaff.map((w) => {
+                        const full = staffList.find((s) => s.id === w.id);
+                        const hasThisTableInPlan = full?.assignedTableIds.includes(table.id) ?? false;
+                        const label = hasThisTableInPlan ? `${w.displayName} (план)` : w.displayName;
+                        return (
+                          <option key={w.id} value={w.id}>
+                            {label}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
-                  {selectValue.startsWith("__plan__") && (
+                  {isPlanSelection && (
                     <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
                   )}
                   {nextBooking && (
