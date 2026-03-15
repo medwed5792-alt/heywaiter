@@ -126,31 +126,56 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "OK" });
       return;
     }
-    // Цифровой контракт: Принять / Отклонить. СТРОГО: сначала Firestore, потом answerCallbackQuery (разблокирует кнопку).
+    // Цифровой контракт: Принять / Отклонить. СТРОГО: сначала Firestore (root staff + venues/staff + global_users), потом answerCallbackQuery.
     if (typeof data === "string" && data.startsWith("offer_accept_")) {
       const staffDocId = data.slice("offer_accept_".length);
       const chatId = update.callback_query.message?.chat?.id;
-      if (!staffDocId || !chatId) return;
+      console.log("ACCEPT OFFER: starting update for staffId:", staffDocId, "chatId:", chatId);
+      let answered = false;
+      const answerOnce = async (text: string) => {
+        if (answered) return;
+        answered = true;
+        try {
+          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text });
+        } catch (e) {
+          console.error("[telegramStaff] answerCallbackQuery failed:", e);
+        }
+      };
       try {
+        if (!staffDocId || !chatId) {
+          await answerOnce("Ошибка данных");
+          return;
+        }
         const adminDb = getAdminFirestore();
         const staffRef = adminDb.collection("staff").doc(staffDocId);
         const staffSnap = await staffRef.get();
         if (!staffSnap.exists) {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Предложение устарело" });
+          console.log("ACCEPT OFFER: staff doc not found", staffDocId);
+          await answerOnce("Предложение устарело");
           return;
         }
         const staffData = staffSnap.data() ?? {};
-        if (staffData.active === true) {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Вы уже в штате" });
-          return;
-        }
         const userId = staffData.userId as string;
         const venueId = staffData.venueId as string;
+        console.log("ACCEPT OFFER: venueId:", venueId, "userId:", userId);
+        if (staffData.active === true) {
+          await answerOnce("Вы уже в штате");
+          return;
+        }
         await staffRef.update({
           active: true,
           status: "active",
           updatedAt: FieldValue.serverTimestamp(),
         });
+        const venueStaffRef = adminDb.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
+        const venueStaffSnap = await venueStaffRef.get();
+        if (venueStaffSnap.exists) {
+          await venueStaffRef.update({
+            active: true,
+            status: "active",
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
         const globalRef = adminDb.collection("global_users").doc(userId);
         const globalSnap = await globalRef.get();
         if (globalSnap.exists) {
@@ -169,17 +194,27 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
             });
           }
         }
-        await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Вы приняты в команду!" });
+        await answerOnce("Вы приняты в команду!");
         await sendTelegram(token, "sendMessage", {
           chat_id: chatId,
           text: "Вы приняли предложение. Теперь вам доступна кнопка «Начать смену» в приложении. Откройте пульт сотрудника.",
         });
       } catch (err) {
         console.error("[telegramStaff] offer_accept Firestore/Telegram error:", err);
+        await answerOnce("Ошибка");
         try {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка. Попробуйте позже или обратитесь в заведение." });
-        } catch (e2) {
-          console.error("[telegramStaff] answerCallbackQuery after error failed:", e2);
+          await sendTelegram(token, "sendMessage", {
+            chat_id: update.callback_query.message?.chat?.id,
+            text: "⚠️ Ошибка при зачислении в штат. Попробуйте еще раз или обратитесь к админу.",
+          });
+        } catch (_) {}
+      } finally {
+        if (!answered) {
+          try {
+            await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка" });
+          } catch (e) {
+            console.error("[telegramStaff] answerCallbackQuery in finally failed:", e);
+          }
         }
       }
       return;
@@ -187,8 +222,22 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     if (typeof data === "string" && data.startsWith("offer_decline_")) {
       const staffDocId = data.slice("offer_decline_".length);
       const chatId = update.callback_query.message?.chat?.id;
-      if (!staffDocId || !chatId) return;
+      console.log("DECLINE OFFER: staffId:", staffDocId, "chatId:", chatId);
+      let answered = false;
+      const answerOnce = async (text: string) => {
+        if (answered) return;
+        answered = true;
+        try {
+          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text });
+        } catch (e) {
+          console.error("[telegramStaff] answerCallbackQuery decline failed:", e);
+        }
+      };
       try {
+        if (!staffDocId || !chatId) {
+          await answerOnce("Ошибка данных");
+          return;
+        }
         const adminDb = getAdminFirestore();
         const staffRef = adminDb.collection("staff").doc(staffDocId);
         const staffSnap = await staffRef.get();
@@ -198,17 +247,21 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
             updatedAt: FieldValue.serverTimestamp(),
           });
         }
-        await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Предложение отклонено" });
+        await answerOnce("Предложение отклонено");
         await sendTelegram(token, "sendMessage", {
           chat_id: chatId,
           text: "Вы отклонили предложение. Если передумаете — обратитесь к администратору заведения.",
         });
       } catch (err) {
         console.error("[telegramStaff] offer_decline Firestore/Telegram error:", err);
-        try {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка. Попробуйте позже." });
-        } catch (e2) {
-          console.error("[telegramStaff] answerCallbackQuery after decline error failed:", e2);
+        await answerOnce("Ошибка");
+      } finally {
+        if (!answered) {
+          try {
+            await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка" });
+          } catch (e) {
+            console.error("[telegramStaff] answerCallbackQuery decline finally failed:", e);
+          }
         }
       }
       return;
