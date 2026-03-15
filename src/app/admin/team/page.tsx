@@ -421,6 +421,12 @@ export default function TeamPage() {
     setOfferLoading(false);
   }, [lookupResult]);
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      console.log("Button State - isLoading:", offerLoading);
+    }
+  }, [offerLoading]);
+
   const handleLookupByIdentity = async () => {
     const value = lookupValue.trim();
     if (!value) {
@@ -443,21 +449,25 @@ export default function TeamPage() {
         clearTimeout(timeoutId);
         setLookupNotFound(true);
         setLookupResult(null);
+        setOfferLoading(false);
         return;
       }
       if (!res.ok) throw new Error(data.error || "Ошибка поиска");
       if (data.found) {
         setLookupResult(data as LookupByIdentityResult);
         setLookupNotFound(false);
+        setOfferLoading(false);
       } else {
         setLookupNotFound(true);
         setLookupResult(null);
+        setOfferLoading(false);
       }
     } catch (e) {
       clearTimeout(timeoutId);
       setLookupError(e instanceof Error ? (e.name === "AbortError" ? "Сервер не ответил" : e.message) : "Ошибка поиска");
       setLookupResult(null);
       setLookupNotFound(false);
+      setOfferLoading(false);
     } finally {
       setLookupLoading(false);
       setOfferLoading(false);
@@ -483,6 +493,7 @@ export default function TeamPage() {
     setLookupError(null);
     setLookupType("phone");
   };
+  // Отмена: принудительно setIsLoading(false), setSearching(false), setFoundUser(null)
 
   const handleSendOffer = async () => {
     if (!lookupResult?.userId || !lookupResult?.tgId) return;
@@ -524,6 +535,7 @@ export default function TeamPage() {
       setLookupLoading(false);
     }
   };
+  // sendOffer: finally всегда разблокирует кнопку (setIsLoading(false))
 
   const handleCreateNewFromLookup = () => {
     const value = lookupValue.trim();
