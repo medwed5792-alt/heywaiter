@@ -152,6 +152,7 @@ export default function AdminBookingsPage() {
         }
 
         const guestContactStr = String(payload.guestContact ?? editing?.guestContact ?? "");
+        const seatsNum = Number(payload.seats ?? editing?.seats ?? 2) || 2;
         const body = {
           venueId,
           tableId: tableIdStr,
@@ -159,7 +160,7 @@ export default function AdminBookingsPage() {
           guestContact: guestContactStr,
           guestId: payload.guestId,
           guestExternalId: payload.guestExternalId,
-          seats: payload.seats ?? 2,
+          seats: seatsNum,
           startTime: payload.startTime ?? "12:00",
           endTime: payload.endTime ?? "14:00",
           date: payload.date ?? "",
@@ -168,7 +169,21 @@ export default function AdminBookingsPage() {
           endAt,
           updatedAt: serverTimestamp(),
         };
-        console.log("Saving Booking Data:", body);
+        const newBooking = {
+          venueId: body.venueId,
+          tableId: body.tableId,
+          guestName: body.guestName,
+          guestContact: body.guestContact,
+          guests: body.seats,
+          seats: body.seats,
+          date: body.date,
+          startTime: body.startTime,
+          endTime: body.endTime,
+          startAt: startAtDate.toISOString(),
+          endAt: endAtDate.toISOString(),
+          status: body.status,
+        };
+        console.log("FULL PAYLOAD:", JSON.stringify(newBooking, null, 2));
         if (payload.id) {
           await updateDoc(doc(db, "bookings", payload.id), body);
           toast.success("Бронь обновлена");
@@ -179,7 +194,9 @@ export default function AdminBookingsPage() {
         setEditing(null);
       } catch (e) {
         console.error("Booking save error:", e);
-        toast.error("Ошибка сохранения");
+        const msg = e instanceof Error ? e.message : String(e);
+        const code = e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+        toast.error(code ? `Ошибка сохранения: ${code} — ${msg}` : msg || "Ошибка сохранения");
       } finally {
         setSaving(false);
       }
