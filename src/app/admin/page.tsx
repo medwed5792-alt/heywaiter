@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 import {
   collection,
   doc,
   getDoc,
+  getDocs,
   query,
   where,
   onSnapshot,
   limit,
   orderBy,
-  Timestamp,
   updateDoc,
   addDoc,
   setDoc,
@@ -19,10 +20,11 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
+import type { Guest } from "@/lib/types";
 
 const VENUE_ID = "current";
-const EMERGENCY_LIMIT = 10;
-const RESERVATION_WINDOW_MS = 30 * 60 * 1000;
+const BOOKING_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 часа для "ближайшие 2 часа"
+const BLINK_IF_LESS_MS = 30 * 60 * 1000; // мерцание если до брони < 30 мин
 
 interface ClosedSessionForRating {
   id: string;
@@ -32,13 +34,48 @@ interface ClosedSessionForRating {
   closedAt: unknown;
 }
 
-interface EmergencyEvent {
+interface TableRow {
+  id: string;
+  number: number;
+  hallId?: string;
+  name?: string;
+}
+
+interface SessionOnTable {
+  sessionId: string;
+  tableId: string;
+  tableNumber: number;
+  guestId?: string;
+}
+
+interface BookingOnTable {
+  id: string;
+  date: string;
+  startTime: string;
+  startAt: Date;
+  guestName?: string;
+}
+
+interface ShiftStaff {
+  id: string;
+  displayName: string;
+  position?: string;
+}
+
+interface FeedEvent {
   id: string;
   type: string;
   message: string;
-  venueId: string;
   tableId?: string;
+  read: boolean;
   createdAt: unknown;
+}
+
+function toStartAt(date: string, startTime: string): Date {
+  const [h, m] = startTime.split(":").map(Number);
+  const d = new Date(date);
+  d.setHours(h ?? 0, m ?? 0, 0, 0);
+  return d;
 }
 
 function TableSkeleton() {
@@ -62,16 +99,42 @@ function EventSkeleton() {
 export default function AdminDashboardPage() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
+  const [tables, setTables] = useState<TableRow[]>([]);
   const [occupiedCount, setOccupiedCount] = useState(0);
-  const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
-  const [reservedCount, setReservedCount] = useState(0);
-  const [tablesCount, setTablesCount] = useState(0);
-  const [emergencies, setEmergencies] = useState<EmergencyEvent[]>([]);
-  const [emergenciesLoading, setEmergenciesLoading] = useState(true);
-  const [occupiedTables, setOccupiedTables] = useState<{ tableId: string; tableNumber: number; guestId?: string }[]>([]);
+  const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
+  const [onShiftCount, setOnShiftCount] = useState(0);
+  const [onShiftWaiters, setOnShiftWaiters] = useState<ShiftStaff[]>([]);
+  const [sessionsByTable, setSessionsByTable] = useState<Record<string, SessionOnTable>>({});
+  const [bookingsByTable, setBookingsByTable] = useState<Record<string, BookingOnTable[]>>({});
+  const [assignmentsByTable, setAssignmentsByTable] = useState<Record<string, string>>({});
   const [guestNames, setGuestNames] = useState<Record<string, string>>({});
+  const [guestRatings, setGuestRatings] = useState<Record<string, number>>({});
+  const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([]);
+  const [feedLoading, setFeedLoading] = useState(true);
   const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [guestModal, setGuestModal] = useState<Guest | null>(null);
+  const [resetDone, setResetDone] = useState(false);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Reset stuck tables once on load
+  useEffect(() => {
+    if (resetDone || venueType === null) return;
+    let cancelled = false;
+    fetch("/api/admin/reset-stuck-tables", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ venueId: VENUE_ID }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data?.closed > 0) toast.success(`Сброшено зависших столов: ${data.closed}`);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setResetDone(true); });
+    return () => { cancelled = true; };
+  }, [venueType, resetDone]);
 
   useEffect(() => {
     (async () => {
@@ -79,7 +142,6 @@ export default function AdminDashboardPage() {
       if (snap.exists()) {
         const data = snap.data();
         setVenueType((data.venueType as VenueType) || "full_service");
-        setTablesCount(data.tablesCount ?? 0);
       } else {
         setVenueType("full_service");
       }
@@ -89,75 +151,237 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     if (venueType !== "full_service") return;
-    const q = query(
-      collection(db, "activeSessions"),
-      where("venueId", "==", VENUE_ID),
-      where("status", "==", "check_in_success")
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setOccupiedCount(snap.size);
-      const list = snap.docs.map((d) => {
+    let cancelled = false;
+    (async () => {
+      const [venueTablesSnap, rootTablesSnap] = await Promise.all([
+        getDocs(collection(db, "venues", VENUE_ID, "tables")),
+        getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
+      ]);
+      if (cancelled) return;
+      const fromVenue = venueTablesSnap.docs.map((d) => {
         const data = d.data();
-        return { tableId: data.tableId ?? "", tableNumber: data.tableNumber ?? 0, guestId: data.guestId };
+        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined, name: data.name as string | undefined };
       });
-      setOccupiedTables(list);
-    });
+      const fromRoot = rootTablesSnap.docs.map((d) => {
+        const data = d.data();
+        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined, name: data.name as string | undefined };
+      });
+      const list = fromVenue.length ? fromVenue : fromRoot;
+      setTables(list);
+    })();
+    return () => { cancelled = true; };
+  }, [venueType]);
+
+  useEffect(() => {
+    if (venueType !== "full_service") return;
+    const unsub = onSnapshot(
+      query(
+        collection(db, "activeSessions"),
+        where("venueId", "==", VENUE_ID),
+        where("status", "==", "check_in_success")
+      ),
+      (snap) => {
+        setOccupiedCount(snap.size);
+        const byTable: Record<string, SessionOnTable> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const tableId = data.tableId ?? d.id;
+          byTable[tableId] = {
+            sessionId: d.id,
+            tableId,
+            tableNumber: data.tableNumber ?? 0,
+            guestId: data.guestId,
+          };
+        });
+        setSessionsByTable(byTable);
+      }
+    );
     return () => unsub();
   }, [venueType]);
 
   useEffect(() => {
-    const ids = [...new Set(occupiedTables.map((t) => t.guestId).filter(Boolean))] as string[];
-    if (ids.length === 0) {
+    if (venueType !== "full_service") return;
+    const unsub = onSnapshot(
+      query(collection(db, "bookings"), where("venueId", "==", VENUE_ID)),
+      (snap) => {
+        const today = new Date().toISOString().slice(0, 10);
+        let todayCount = 0;
+        const now = Date.now();
+        const windowEnd = now + BOOKING_WINDOW_MS;
+        const byTable: Record<string, BookingOnTable[]> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const status = data.status as string;
+          if (status === "cancelled") return;
+          const date = (data.date as string) ?? "";
+          if (date === today) todayCount++;
+          const startTime = (data.startTime as string) ?? "12:00";
+          const startAt = toStartAt(date, startTime);
+          if (startAt.getTime() < now || startAt.getTime() > windowEnd) return;
+          const tableId = (data.tableId as string) ?? "";
+          if (!tableId) return;
+          const b: BookingOnTable = {
+            id: d.id,
+            date,
+            startTime,
+            startAt,
+            guestName: data.guestName as string | undefined,
+          };
+          if (!byTable[tableId]) byTable[tableId] = [];
+          byTable[tableId].push(b);
+        });
+        setBookingsTodayCount(todayCount);
+        setBookingsByTable(byTable);
+      }
+    );
+    return () => unsub();
+  }, [venueType]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(
+        collection(db, "staff"),
+        where("venueId", "==", VENUE_ID),
+        where("active", "==", true),
+        where("onShift", "==", true)
+      ),
+      (snap) => {
+        setOnShiftCount(snap.size);
+        const waiters: ShiftStaff[] = [];
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const position = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string) ?? "";
+          const isWaiter = position === "waiter" || (data.role as string) === "waiter" || (data.serviceRole as string) === "waiter";
+          if (!isWaiter) return;
+          const firstName = data.firstName as string ?? "";
+          const lastName = data.lastName as string ?? "";
+          const name = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
+          waiters.push({ id: d.id, displayName: name, position });
+        });
+        setOnShiftWaiters(waiters);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (tables.length === 0) return;
+    const unsub = onSnapshot(
+      collection(db, "venues", VENUE_ID, "tables"),
+      (snap) => {
+        const next: Record<string, string> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const a = data.assignments as Record<string, string> | undefined;
+          const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
+          if (staffId) next[d.id] = staffId;
+        });
+        setAssignmentsByTable((prev) => ({ ...prev, ...next }));
+      }
+    );
+    return () => unsub();
+  }, [tables.length]);
+
+  const tableIds = tables.map((t) => t.id).join(",");
+  useEffect(() => {
+    if (tables.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const t of tables) {
+        if (cancelled) return;
+        const snap = await getDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
+        if (snap.exists()) {
+          const data = snap.data() ?? {};
+          const a = data.assignments as Record<string, string> | undefined;
+          const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
+          if (staffId) next[t.id] = staffId;
+        }
+      }
+      if (!cancelled) setAssignmentsByTable((prev) => ({ ...prev, ...next }));
+    })();
+    return () => { cancelled = true; };
+  }, [tableIds, tables]);
+
+  const guestIds = Object.values(sessionsByTable)
+    .map((s) => s.guestId)
+    .filter(Boolean) as string[];
+  useEffect(() => {
+    if (guestIds.length === 0) {
       setGuestNames({});
+      setGuestRatings({});
       return;
     }
     let cancelled = false;
     (async () => {
       const names: Record<string, string> = {};
+      const ratings: Record<string, number> = {};
       await Promise.all(
-        ids.map(async (id) => {
+        guestIds.map(async (id) => {
           if (cancelled) return;
           const snap = await getDoc(doc(db, "guests", id));
           if (snap.exists()) {
             const d = snap.data();
             names[id] = (d.name as string) || (d.nickname as string) || (d.phone as string) || id.slice(0, 8);
+            const r = (d.globalGuestScore as number) ?? (d.rating as number);
+            if (r != null) ratings[id] = r;
           }
         })
       );
-      if (!cancelled) setGuestNames(names);
+      if (!cancelled) {
+        setGuestNames(names);
+        setGuestRatings(ratings);
+      }
     })();
     return () => { cancelled = true; };
-  }, [occupiedTables]);
+  }, [guestIds.join(",")]);
 
   useEffect(() => {
-    const now = new Date();
-    const windowStart = Timestamp.fromDate(new Date(now.getTime() - RESERVATION_WINDOW_MS));
-    const windowEnd = Timestamp.fromDate(new Date(now.getTime() + RESERVATION_WINDOW_MS));
-    if (venueType !== "full_service") return;
     const q = query(
-      collection(db, "reservations"),
+      collection(db, "staffNotifications"),
       where("venueId", "==", VENUE_ID),
-      where("reservedAt", ">=", windowStart),
-      where("reservedAt", "<=", windowEnd)
+      orderBy("createdAt", "desc"),
+      limit(50)
     );
     const unsub = onSnapshot(q, (snap) => {
-      setReservedCount(snap.size);
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          type: data.type ?? "",
+          message: data.message ?? "",
+          tableId: data.tableId,
+          read: data.read === true,
+          createdAt: data.createdAt,
+        };
+      });
+      setFeedEvents(list);
+      setFeedLoading(false);
     });
     return () => unsub();
-  }, [venueType]);
+  }, []);
 
-  useEffect(() => {
-    if (venueType !== "fast_food") return;
-    const q = query(
-      collection(db, "orders"),
-      where("venueId", "==", VENUE_ID),
-      where("status", "==", "pending")
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setPendingOrdersCount(snap.size);
-    });
-    return () => unsub();
-  }, [venueType]);
+  const archiveEvent = useCallback(async (eventId: string) => {
+    try {
+      await updateDoc(doc(db, "staffNotifications", eventId), { read: true, updatedAt: serverTimestamp() });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    }
+  }, []);
+
+  const saveTableWaiter = useCallback(async (tableId: string, staffId: string) => {
+    try {
+      const ref = doc(db, "venues", VENUE_ID, "tables", tableId);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? (snap.data()?.assignments as Record<string, string> | undefined) ?? {} : {};
+      await setDoc(ref, {
+        assignments: { ...existing, waiter: staffId },
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+    }
+  }, []);
 
   useEffect(() => {
     const q = query(
@@ -175,9 +399,9 @@ export default function AdminDashboardPage() {
           return { id: d.id, ...data };
         })
         .filter(Boolean) as { id: string; guestId?: string; waiterId?: string; closedAt: unknown }[];
-      const guestIds = [...new Set(closed.map((c) => c.guestId).filter(Boolean))] as string[];
+      const gids = [...new Set(closed.map((c) => c.guestId).filter(Boolean))] as string[];
       const names: Record<string, string> = {};
-      for (const gid of guestIds) {
+      for (const gid of gids) {
         const s = await getDoc(doc(db, "guests", gid));
         if (s.exists()) {
           const d = s.data();
@@ -197,126 +421,156 @@ export default function AdminDashboardPage() {
     return () => unsubClosed();
   }, []);
 
-  useEffect(() => {
-    const q = query(
-      collection(db, "staffNotifications"),
-      where("venueId", "==", VENUE_ID),
-      orderBy("createdAt", "desc"),
-      limit(50)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs
-        .filter((d) => {
-          const t = d.data().type;
-          return t === "sos" || t === "geo_escape";
-        })
-        .slice(0, EMERGENCY_LIMIT)
-        .map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            type: data.type ?? "",
-            message: data.message ?? "",
-            venueId: data.venueId ?? "",
-            tableId: data.tableId,
-            createdAt: data.createdAt,
-          };
-        });
-      setEmergencies(list);
-      setEmergenciesLoading(false);
-    });
-    return () => unsub();
+  const openGuestModal = useCallback(async (guestId: string) => {
+    const snap = await getDoc(doc(db, "guests", guestId));
+    if (snap.exists()) setGuestModal({ id: snap.id, ...snap.data() } as Guest);
+    else toast.error("Гость не найден");
   }, []);
+
+  const totalTables = tables.length || 0;
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-gray-900">Пульт управления</h2>
+      <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
       <p className="mt-2 text-sm text-gray-600">
-        Сводка по залу, кухне и экстренным событиям в реальном времени.
+        Живой зал, брони, смена и события в реальном времени.
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
           <>
             <TableSkeleton />
             <TableSkeleton />
+            <TableSkeleton />
           </>
-        ) : venueType === "fast_food" ? (
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <h3 className="text-sm font-medium text-gray-600">Нагрузка кухни</h3>
-            <p className="mt-1 text-2xl font-bold text-gray-900">{pendingOrdersCount}</p>
-            <p className="mt-0.5 text-xs text-gray-500">заказов в очереди (pending)</p>
-          </div>
-        ) : (
+        ) : venueType === "full_service" ? (
           <>
             <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-gray-600">Живой зал — занято</h3>
-              <p className="mt-1 text-2xl font-bold text-amber-700">{occupiedCount}</p>
-              <p className="mt-0.5 text-xs text-gray-500">столов с гостями</p>
+              <h3 className="text-sm font-medium text-gray-600">Живой зал</h3>
+              <p className="mt-1 text-2xl font-bold text-gray-900">
+                {occupiedCount} <span className="text-gray-400 font-normal">/ {totalTables || "—"}</span>
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500">занято / всего столов</p>
             </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-gray-600">Бронь</h3>
-              <p className="mt-1 text-2xl font-bold text-blue-700">{reservedCount}</p>
-              <p className="mt-0.5 text-xs text-gray-500">в окне ±30 мин</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-gray-600">Всего столов</h3>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{tablesCount}</p>
-              <p className="mt-0.5 text-xs text-gray-500">свободно: {Math.max(0, tablesCount - occupiedCount)}</p>
-            </div>
-            {occupiedTables.length > 0 && (
-              <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:col-span-2 lg:col-span-3">
-                <h3 className="text-sm font-medium text-gray-600">Занятые столы</h3>
-                <ul className="mt-2 space-y-1 text-sm">
-                  {occupiedTables.map((t, i) => (
-                    <li key={t.tableId + i} className="flex justify-between gap-2">
-                      <span className="text-gray-700">Стол {t.tableNumber || t.tableId || "—"}</span>
-                      <span className="font-medium text-gray-900">{t.guestId ? (guestNames[t.guestId] ?? "…") : "—"}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <Link href="/admin/bookings" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block">
+              <h3 className="text-sm font-medium text-gray-600">Брони сегодня</h3>
+              <p className="mt-1 text-2xl font-bold text-blue-700">{bookingsTodayCount}</p>
+              <p className="mt-0.5 text-xs text-gray-500">{todayStr}</p>
+            </Link>
+            <Link href="/admin/team" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block">
+              <h3 className="text-sm font-medium text-gray-600">На смене</h3>
+              <p className="mt-1 text-2xl font-bold text-emerald-700">{onShiftCount}</p>
+              <p className="mt-0.5 text-xs text-gray-500">сотрудников</p>
+            </Link>
           </>
+        ) : (
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:col-span-3">
+            <h3 className="text-sm font-medium text-gray-600">Режим фастфуд</h3>
+            <p className="mt-1 text-sm text-gray-500">Дашборд столов доступен для полного сервиса.</p>
+          </div>
         )}
       </div>
 
-      <section className="mt-8">
-        <h3 className="text-base font-semibold text-gray-900">Экстренные события</h3>
-        <p className="mt-1 text-sm text-gray-500">Последние SOS и Escape-алерты</p>
-        {emergenciesLoading ? (
-          <div className="mt-3 space-y-2">
-            <EventSkeleton />
-            <EventSkeleton />
-            <EventSkeleton />
+      {venueType === "full_service" && (
+        <section className="mt-8 w-full">
+          <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
+          <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — архивировать.</p>
+          {feedLoading ? (
+            <div className="mt-3 space-y-2">
+              <EventSkeleton />
+              <EventSkeleton />
+            </div>
+          ) : feedEvents.length === 0 ? (
+            <p className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Нет событий</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {feedEvents.map((ev) => (
+                <li
+                  key={ev.id}
+                  className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
+                    ev.read ? "border-gray-100 bg-gray-50/50 text-gray-500" : "border-amber-200 bg-amber-50/80 text-amber-900"
+                  }`}
+                >
+                  <span>
+                    {ev.type === "sos" ? "🚨 SOS" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
+                    {ev.tableId != null && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => archiveEvent(ev.id)}
+                    className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    ОК
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {venueType === "full_service" && tables.length > 0 && (
+        <section className="mt-8">
+          <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
+          <p className="mt-1 text-sm text-gray-500">Назначьте официанта — уведомления с стола пойдут ему в Telegram.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {tables.map((table) => {
+              const session = sessionsByTable[table.id];
+              const bookings = bookingsByTable[table.id] ?? [];
+              const nextBooking = bookings.sort((a, b) => a.startAt.getTime() - b.startAt.getTime())[0];
+              const minsToBooking = nextBooking ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
+              const shouldBlink = minsToBooking != null && minsToBooking < 30 && minsToBooking > 0;
+              const assignedStaffId = assignmentsByTable[table.id] ?? "";
+              return (
+                <div
+                  key={table.id}
+                  className={`rounded-xl border-2 bg-white p-4 shadow-sm ${
+                    shouldBlink ? "border-amber-400 animate-pulse" : "border-gray-200"
+                  }`}
+                >
+                  <div className="text-2xl font-bold text-gray-900">{table.number}</div>
+                  <div className="mt-2">
+                    <label className="block text-xs text-gray-500">Официант</label>
+                    <select
+                      value={assignedStaffId}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAssignmentsByTable((prev) => ({ ...prev, [table.id]: v }));
+                        if (v) saveTableWaiter(table.id, v);
+                      }}
+                      className="mt-0.5 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+                    >
+                      <option value="">—</option>
+                      {onShiftWaiters.map((w) => (
+                        <option key={w.id} value={w.id}>{w.displayName}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {nextBooking && (
+                    <div className="mt-2 text-xs text-blue-700">
+                      Бронь: {nextBooking.startTime} {nextBooking.guestName ? ` · ${nextBooking.guestName}` : ""}
+                    </div>
+                  )}
+                  {session?.guestId ? (
+                    <button
+                      type="button"
+                      onClick={() => openGuestModal(session.guestId!)}
+                      className="mt-2 w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm hover:bg-gray-100"
+                    >
+                      {guestNames[session.guestId] ?? "Гость"}
+                      {guestRatings[session.guestId] != null && (
+                        <span className="ml-1 text-amber-600">★ {guestRatings[session.guestId]}</span>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="mt-2 text-xs text-gray-400">Свободен</div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ) : emergencies.length === 0 ? (
-          <p className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
-            Нет экстренных событий
-          </p>
-        ) : (
-          <ul className="mt-3 space-y-2">
-            {emergencies.map((ev) => (
-              <li
-                key={ev.id}
-                className={`rounded-lg border p-3 text-sm ${
-                  ev.type === "sos"
-                    ? "border-red-200 bg-red-50 text-red-900"
-                    : "border-amber-200 bg-amber-50 text-amber-900"
-                }`}
-              >
-                <span className="font-medium">
-                  {ev.type === "sos" ? "🚨 SOS" : "📍 Escape"}
-                </span>{" "}
-                {ev.message}
-                {ev.tableId != null && (
-                  <span className="ml-1 text-gray-600">Стол №{ev.tableId}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        </section>
+      )}
 
       {unratedClosedSessions.length > 0 && (
         <RateGuestVisitModal
@@ -326,6 +580,27 @@ export default function AdminDashboardPage() {
           submitting={ratingSubmitting}
           setSubmitting={setRatingSubmitting}
         />
+      )}
+
+      {guestModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="font-semibold text-gray-900">Карточка гостя</h3>
+            <div className="mt-3 space-y-1 text-sm">
+              <p><span className="text-gray-500">Имя:</span> {guestModal.name ?? guestModal.nickname ?? "—"}</p>
+              <p><span className="text-gray-500">Телефон:</span> {guestModal.phone ?? "—"}</p>
+              <p><span className="text-gray-500">TG:</span> {guestModal.tgId ?? "—"}</p>
+              <p><span className="text-gray-500">Тип:</span> {guestModal.type ?? "—"}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setGuestModal(null)}
+              className="mt-4 w-full rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Закрыть
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -354,7 +629,7 @@ function RateGuestVisitModal({
       if (guestId) {
         const ref = doc(db, "global_guests", guestId);
         const snap = await getDoc(ref);
-        const data = snap.exists() ? snap.data() : {};
+        const data = snap.exists ? snap.data() : {};
         const ratings: number[] = Array.isArray(data?.ratings) ? data.ratings : [];
         const newRatings = [...ratings, stars];
         const avg = Math.round((newRatings.reduce((a, b) => a + b, 0) / newRatings.length) * 10) / 10;
@@ -393,9 +668,7 @@ function RateGuestVisitModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
         <h3 className="font-semibold text-gray-900">Оцените визит гостя</h3>
-        <p className="mt-2 text-sm text-gray-600">
-          {session.guestName} (1–5 звёзд)
-        </p>
+        <p className="mt-2 text-sm text-gray-600">{session.guestName} (1–5 звёзд)</p>
         <div className="mt-4 flex gap-2">
           {([1, 2, 3, 4, 5] as const).map((n) => (
             <button
@@ -411,11 +684,7 @@ function RateGuestVisitModal({
           ))}
         </div>
         <div className="mt-4 flex gap-2">
-          <button
-            type="button"
-            className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            onClick={onDismiss}
-          >
+          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={onDismiss}>
             Позже
           </button>
           <button

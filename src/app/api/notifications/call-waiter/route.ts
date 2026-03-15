@@ -158,6 +158,14 @@ async function getAssignedStaffForTable(
   tableId: string,
   role: ServiceRole
 ): Promise<string | null> {
+  const tableRef = firestore.collection("venues").doc(venueId).collection("tables").doc(tableId);
+  const tableSnap = await tableRef.get();
+  if (tableSnap.exists) {
+    const data = tableSnap.data() ?? {};
+    const assignments = data.assignments as Record<string, string> | undefined;
+    const staffId = assignments?.[role] ?? (data.assignedStaffId as string | undefined);
+    if (staffId) return staffId;
+  }
   const snap = await firestore
     .collection("activeSessions")
     .where("venueId", "==", venueId)
