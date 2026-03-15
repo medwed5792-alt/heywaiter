@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
@@ -106,7 +106,7 @@ function EventSkeleton() {
   );
 }
 
-export default function AdminDashboardPage() {
+function AdminDashboardContent() {
   const searchParams = useSearchParams();
   const venueId = (searchParams.get("v") || searchParams.get("venueId") || "current").trim() || "current";
 
@@ -735,6 +735,14 @@ export default function AdminDashboardPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function AdminDashboardPage() {
+  return (
+    <Suspense fallback={<div>Загрузка...</div>}>
+      <AdminDashboardContent />
+    </Suspense>
   );
 }
 
