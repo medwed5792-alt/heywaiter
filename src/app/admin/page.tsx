@@ -135,7 +135,7 @@ function AdminDashboardContent() {
 
   // Reset stuck tables once on load
   useEffect(() => {
-    if (resetDone || venueType === null) return;
+    if (!venueId || resetDone || venueType === null) return;
     let cancelled = false;
     fetch("/api/admin/reset-stuck-tables", {
       method: "POST",
@@ -152,20 +152,29 @@ function AdminDashboardContent() {
   }, [venueType, venueId, resetDone]);
 
   useEffect(() => {
+    if (!venueId) return;
+    let cancelled = false;
     (async () => {
-      const snap = await getDoc(doc(db, "venues", venueId));
-      if (snap.exists()) {
-        const data = snap.data();
-        setVenueType((data.venueType as VenueType) || "full_service");
-      } else {
-        setVenueType("full_service");
+      try {
+        const snap = await getDoc(doc(db, "venues", venueId));
+        if (cancelled) return;
+        if (snap.exists()) {
+          const data = snap.data();
+          setVenueType((data?.venueType as VenueType) || "full_service");
+        } else {
+          setVenueType("full_service");
+        }
+      } catch {
+        if (!cancelled) setVenueType("full_service");
+      } finally {
+        if (!cancelled) setVenueLoading(false);
       }
-      setVenueLoading(false);
     })();
+    return () => { cancelled = true; };
   }, [venueId]);
 
   useEffect(() => {
-    if (venueType !== "full_service") return;
+    if (!venueId || venueType !== "full_service") return;
     let cancelled = false;
     (async () => {
       const [venueTablesSnap, rootTablesSnap] = await Promise.all([
@@ -185,10 +194,10 @@ function AdminDashboardContent() {
       setTables(list);
     })();
     return () => { cancelled = true; };
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   useEffect(() => {
-    if (venueType !== "full_service") return;
+    if (!venueId || venueType !== "full_service") return;
     const unsub = onSnapshot(
       query(
         collection(db, "activeSessions"),
@@ -218,7 +227,7 @@ function AdminDashboardContent() {
   }, [venueType, venueId]);
 
   useEffect(() => {
-    if (venueType !== "full_service") return;
+    if (!venueId || venueType !== "full_service") return;
     const unsub = onSnapshot(
       query(collection(db, "bookings"), where("venueId", "==", venueId)),
       (snap) => {
@@ -258,10 +267,11 @@ function AdminDashboardContent() {
   }, [venueType, venueId]);
 
   useEffect(() => {
+    if (!venueId) return;
     const unsub = onSnapshot(
       query(
         collection(db, "staff"),
-        where("venueId", "==", VENUE_ID),
+        where("venueId", "==", venueId),
         where("active", "==", true),
         where("onShift", "==", true)
       ),
@@ -287,6 +297,7 @@ function AdminDashboardContent() {
 
   // Список всех активных сотрудников с закреплёнными столами (из Команды) — для отображения «по умолчанию» и проверки onShift
   useEffect(() => {
+    if (!venueId) return;
     const unsub = onSnapshot(
       query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true)),
       (snap) => {
@@ -310,7 +321,7 @@ function AdminDashboardContent() {
   }, [venueId]);
 
   useEffect(() => {
-    if (tables.length === 0) return;
+    if (!venueId || tables.length === 0) return;
     const unsub = onSnapshot(
       collection(db, "venues", venueId, "tables"),
       (snap) => {
@@ -327,14 +338,14 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [tables.length, venueId]);
 
-  const tableIds = tables.map((t) => t.id).join(",");
+  const tableIds = tables.map((t) => t?.id).filter(Boolean).join(",");
   useEffect(() => {
-    if (tables.length === 0) return;
+    if (!venueId || tables.length === 0) return;
     let cancelled = false;
     (async () => {
       const next: Record<string, string> = {};
       for (const t of tables) {
-        if (cancelled) return;
+        if (cancelled || !t?.id) return;
         const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
@@ -429,6 +440,7 @@ function AdminDashboardContent() {
   }, [venueId]);
 
   useEffect(() => {
+    if (!venueId) return;
     const q = query(
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
@@ -535,8 +547,16 @@ function AdminDashboardContent() {
 
   if (!venueId) {
     return (
-      <div className="p-10 text-center text-gray-600">
+      <div className="p-20 text-center text-gray-600">
         Не указано заведение. Добавьте ?v=venueId в адрес.
+      </div>
+    );
+  }
+
+  if (venueLoading) {
+    return (
+      <div className="p-20 text-center text-gray-600">
+        Инициализация заведения...
       </div>
     );
   }
@@ -636,10 +656,15 @@ function AdminDashboardContent() {
         </section>
       )}
 
-      {venueType === "full_service" && safeTables.length > 0 && (
+      {venueType === "full_service" && (
         <section className="mt-8">
           <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
           <p className="mt-1 text-sm text-gray-500">Назначьте официанта — уведомления с стола пойдут ему в Telegram.</p>
+          {!safeTables || safeTables.length === 0 ? (
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
+              Загрузка столов...
+            </div>
+          ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {safeTables.map((table) => {
               if (!table?.id) return null;
@@ -681,11 +706,12 @@ function AdminDashboardContent() {
                   <div className="mt-2">
                     <label className="block text-xs text-gray-500">Официант</label>
                     <select
-                      value={selectValue}
+                      value={selectValue ?? ""}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setAssignmentsByTable((prev) => ({ ...prev, [table.id]: v }));
-                        if (v) saveTableWaiter(table.id, v);
+                        const tid = table?.id;
+                        if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
+                        if (v && tid) saveTableWaiter(tid, v);
                       }}
                       className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
                         isGreenSelect ? "border-emerald-400 bg-emerald-50" : "border-gray-300 bg-white"
@@ -726,6 +752,7 @@ function AdminDashboardContent() {
               }
             })}
           </div>
+          )}
         </section>
       )}
 
