@@ -284,6 +284,8 @@ export default function TeamPage() {
   const [offerLoading, setOfferLoading] = useState(false);
 
   useEffect(() => {
+    setOfferLoading(false);
+    setLookupLoading(false);
     if (typeof window !== "undefined") {
       console.log("TEAM_PAGE_VERSION: 2.0_GROUPS_ADDED");
     }
@@ -429,33 +431,36 @@ export default function TeamPage() {
     setLookupResult(null);
     setLookupNotFound(false);
     setLookupLoading(true);
+    setOfferLoading(false);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
       const params = new URLSearchParams({ type: lookupType, value });
-      const res = await fetch(`/api/admin/staff/lookup-by-identity?${params.toString()}`);
+      const res = await fetch(`/api/admin/staff/lookup-by-identity?${params.toString()}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.status === 404) {
+        clearTimeout(timeoutId);
         setLookupNotFound(true);
         setLookupResult(null);
-        setOfferLoading(false);
         return;
       }
       if (!res.ok) throw new Error(data.error || "Ошибка поиска");
       if (data.found) {
         setLookupResult(data as LookupByIdentityResult);
         setLookupNotFound(false);
-        setOfferLoading(false);
       } else {
         setLookupNotFound(true);
         setLookupResult(null);
-        setOfferLoading(false);
       }
     } catch (e) {
-      setLookupError(e instanceof Error ? e.message : "Ошибка поиска");
+      clearTimeout(timeoutId);
+      setLookupError(e instanceof Error ? (e.name === "AbortError" ? "Сервер не ответил" : e.message) : "Ошибка поиска");
       setLookupResult(null);
       setLookupNotFound(false);
-      setOfferLoading(false);
     } finally {
       setLookupLoading(false);
+      setOfferLoading(false);
     }
   };
 
@@ -466,11 +471,17 @@ export default function TeamPage() {
     setLookupValue("");
     setLookupType("phone");
     setOfferLoading(false);
+    setLookupLoading(false);
   };
 
   const handleCancelLookup = () => {
     setOfferLoading(false);
-    resetLookupResults();
+    setLookupLoading(false);
+    setLookupResult(null);
+    setLookupValue("");
+    setLookupNotFound(false);
+    setLookupError(null);
+    setLookupType("phone");
   };
 
   const handleSendOffer = async () => {
@@ -510,6 +521,7 @@ export default function TeamPage() {
       }
     } finally {
       setOfferLoading(false);
+      setLookupLoading(false);
     }
   };
 
