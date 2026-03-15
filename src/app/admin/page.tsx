@@ -63,6 +63,14 @@ interface ShiftStaff {
   position?: string;
 }
 
+/** Сотрудник с закреплёнными столами (из Команды) для отображения «по умолчанию» на Дашборде */
+interface StaffWithTables {
+  id: string;
+  displayName: string;
+  assignedTableIds: string[];
+  onShift: boolean;
+}
+
 interface FeedEvent {
   id: string;
   type: string;
@@ -105,6 +113,7 @@ export default function AdminDashboardPage() {
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
   const [onShiftCount, setOnShiftCount] = useState(0);
   const [onShiftWaiters, setOnShiftWaiters] = useState<ShiftStaff[]>([]);
+  const [staffList, setStaffList] = useState<StaffWithTables[]>([]);
   const [sessionsByTable, setSessionsByTable] = useState<Record<string, SessionOnTable>>({});
   const [bookingsByTable, setBookingsByTable] = useState<Record<string, BookingOnTable[]>>({});
   const [assignmentsByTable, setAssignmentsByTable] = useState<Record<string, string>>({});
@@ -261,6 +270,30 @@ export default function AdminDashboardPage() {
           list.push({ id: d.id, displayName: name, position });
         });
         setOnShiftWaiters(list);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // Список всех активных сотрудников с закреплёнными столами (из Команды) — для отображения «по умолчанию» и проверки onShift
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, "staff"), where("venueId", "==", VENUE_ID), where("active", "==", true)),
+      (snap) => {
+        const list: StaffWithTables[] = snap.docs.map((d) => {
+          const data = d.data();
+          const firstName = (data.firstName as string) ?? "";
+          const lastName = (data.lastName as string) ?? "";
+          const displayName = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
+          const assignedTableIds = (data.assignedTableIds as string[] | undefined) ?? [];
+          return {
+            id: d.id,
+            displayName,
+            assignedTableIds,
+            onShift: data.onShift === true,
+          };
+        });
+        setStaffList(list);
       }
     );
     return () => unsub();
@@ -523,31 +556,51 @@ export default function AdminDashboardPage() {
               const minsToBooking = nextBooking ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
               const shouldBlink = minsToBooking != null && minsToBooking < 30 && minsToBooking > 0;
               const assignedStaffId = assignmentsByTable[table.id] ?? "";
+              const defaultFromTeam = staffList.find((s) => s.assignedTableIds.includes(table.id));
+              const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
+              const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
+              const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
+              const selectValue = assignedStaffId || (defaultFromTeam ? `__plan__${defaultFromTeam.id}` : "");
               return (
                 <div
                   key={table.id}
                   className={`rounded-xl border-2 bg-white p-4 shadow-sm ${
-                    shouldBlink ? "border-amber-400 animate-pulse" : "border-gray-200"
+                    shouldBlink ? "border-amber-400 animate-pulse" : isWaiterOffShift ? "border-amber-300 bg-amber-50/50" : "border-gray-200"
                   }`}
                 >
                   <div className="text-2xl font-bold text-gray-900">{table.number}</div>
+                  {isWaiterOffShift && (
+                    <p className="mt-1 text-xs font-medium text-amber-700">Официант не на смене</p>
+                  )}
                   <div className="mt-2">
                     <label className="block text-xs text-gray-500">Официант</label>
                     <select
-                      value={assignedStaffId}
+                      value={selectValue}
                       onChange={(e) => {
                         const v = e.target.value;
+                        if (v.startsWith("__plan__")) {
+                          setAssignmentsByTable((prev) => ({ ...prev, [table.id]: "" }));
+                          return;
+                        }
                         setAssignmentsByTable((prev) => ({ ...prev, [table.id]: v }));
                         if (v) saveTableWaiter(table.id, v);
                       }}
                       className="mt-0.5 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
                     >
                       <option value="">—</option>
+                      {defaultFromTeam && (
+                        <option value={`__plan__${defaultFromTeam.id}`} className="italic text-gray-500">
+                          {defaultFromTeam.displayName} (план)
+                        </option>
+                      )}
                       {onShiftWaiters.map((w) => (
                         <option key={w.id} value={w.id}>{w.displayName}</option>
                       ))}
                     </select>
                   </div>
+                  {selectValue.startsWith("__plan__") && (
+                    <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
+                  )}
                   {nextBooking && (
                     <div className="mt-2 text-xs text-blue-700">
                       Бронь: {nextBooking.startTime} {nextBooking.guestName ? ` · ${nextBooking.guestName}` : ""}
