@@ -162,42 +162,41 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
           await answerOnce("Вы уже в штате");
           return;
         }
+        const joinedAt = new Date().toISOString();
         await staffRef.update({
           active: true,
           status: "active",
+          joinedAt,
           updatedAt: FieldValue.serverTimestamp(),
         });
         const venueStaffRef = adminDb.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
-        const venueStaffSnap = await venueStaffRef.get();
-        if (venueStaffSnap.exists) {
-          await venueStaffRef.update({
+        await venueStaffRef.set(
+          {
             active: true,
             status: "active",
+            joinedAt,
             updatedAt: FieldValue.serverTimestamp(),
-          });
-        }
+          },
+          { merge: true }
+        );
         const globalRef = adminDb.collection("global_users").doc(userId);
         const globalSnap = await globalRef.get();
         if (globalSnap.exists) {
-          const globalData = globalSnap.data() ?? {};
-          const affiliations = Array.isArray(globalData.affiliations) ? [...globalData.affiliations] : [];
-          if (!affiliations.some((a: { venueId: string }) => a.venueId === venueId)) {
-            affiliations.push({
+          await globalRef.update({
+            affiliations: FieldValue.arrayUnion({
               venueId,
               role: "waiter",
               status: "active",
               onShift: false,
-            });
-            await globalRef.update({
-              affiliations,
-              updatedAt: FieldValue.serverTimestamp(),
-            });
-          }
+            }),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
         }
+        console.log("SUCCESS: Staff", staffDocId, "accepted in Venue", venueId);
         await answerOnce("Вы приняты в команду!");
         await sendTelegram(token, "sendMessage", {
           chat_id: chatId,
-          text: "Вы приняли предложение. Теперь вам доступна кнопка «Начать смену» в приложении. Откройте пульт сотрудника.",
+          text: "✅ Поздравляем! Вы приняты в штат. Теперь вам доступен рабочий пульт в Mini App.",
         });
       } catch (err) {
         console.error("[telegramStaff] offer_accept Firestore/Telegram error:", err);
