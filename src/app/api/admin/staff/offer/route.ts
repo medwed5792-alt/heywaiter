@@ -32,6 +32,7 @@ async function sendTelegram(
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
+    console.log("SENDING OFFER TO:", body);
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
     const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "current";
     const tgId = typeof body.tgId === "string" ? body.tgId.trim() : "";

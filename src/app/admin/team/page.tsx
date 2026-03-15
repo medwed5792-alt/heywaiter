@@ -456,6 +456,7 @@ export default function TeamPage() {
     setLookupError(null);
     setLookupValue("");
     setLookupType("phone");
+    setOfferLoading(false);
   };
 
   const handleSendOffer = async () => {
@@ -489,7 +490,7 @@ export default function TeamPage() {
     } catch (e) {
       clearTimeout(timeoutId);
       if (e instanceof Error && e.name === "AbortError") {
-        toast.error("Сервер не отвечает. Попробуйте позже.");
+        toast.error("Ошибка связи с сервером");
       } else {
         toast.error(e instanceof Error ? e.message : "Ошибка отправки предложения");
       }
@@ -618,6 +619,13 @@ export default function TeamPage() {
           >
             {lookupLoading ? "Поиск…" : "Найти"}
           </button>
+          <button
+            type="button"
+            onClick={resetLookupResults}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Отмена
+          </button>
         </div>
         {lookupError && <p className="mt-2 text-sm text-red-600">{lookupError}</p>}
         {lookupResult && (
@@ -669,17 +677,26 @@ export default function TeamPage() {
                     Медкнижка до: {lookupResult.medicalCard.expiryDate}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={handleSendOffer}
-                  disabled={offerLoading || !lookupResult.tgId}
-                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
-                >
-                  {offerLoading && (
-                    <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
-                  )}
-                  {offerLoading ? "Отправка…" : "Отправить предложение"}
-                </button>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSendOffer}
+                    disabled={offerLoading || !lookupResult.tgId}
+                    className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
+                  >
+                    {offerLoading && (
+                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+                    )}
+                    {offerLoading ? "Отправка…" : "Отправить предложение"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetLookupResults}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Отмена
+                  </button>
+                </div>
               </div>
             </div>
           </div>
