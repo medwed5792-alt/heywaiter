@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import toast from "react-hot-toast";
 import { collection, doc, addDoc, updateDoc, getDoc, query, where, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -108,7 +108,20 @@ export default function AdminGuestsPage() {
     });
   }, [guests, inHallGuestIds, typeFilter]);
 
+  const newGuests = useMemo(() => visibleGuests.filter((g) => g.type === "regular"), [visibleGuests]);
+  const ownGuests = useMemo(() => visibleGuests.filter((g) => isOwnType(g)), [visibleGuests]);
+
   const visibleGuestIds = useMemo(() => visibleGuests.map((g) => g.id).sort().join(","), [visibleGuests]);
+
+  const convertToOwn = useCallback(async (g: Guest) => {
+    try {
+      await updateDoc(doc(db, "guests", g.id), { type: "constant", updatedAt: serverTimestamp() });
+      setEditingGuest({ ...g, type: "constant" });
+      toast.success("Гость переведён в «Свои». Заполните доп. данные при необходимости.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Ошибка");
+    }
+  }, []);
 
   useEffect(() => {
     if (visibleGuestIds === "") {
@@ -175,6 +188,72 @@ export default function AdminGuestsPage() {
           <p className="p-6 text-sm text-gray-500">Загрузка…</p>
         ) : visibleGuests.length === 0 ? (
           <p className="p-6 text-center text-sm text-gray-500">Нет гостей по выбранным условиям</p>
+        ) : typeFilter === "all" ? (
+          <div className="divide-y divide-gray-200">
+            <section className="p-4">
+              <h3 className="text-sm font-semibold text-gray-700">Новые</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Попали в базу через бронь впервые</p>
+              {newGuests.length === 0 ? (
+                <p className="mt-2 text-sm text-gray-500">Нет новых гостей</p>
+              ) : (
+                <table className="w-full min-w-[500px] mt-2">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">ФИО / Контакт</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">В зале</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {newGuests.map((g) => (
+                      <tr key={g.id} className="border-b border-gray-100">
+                        <td className="p-3 text-sm">{g.name || g.nickname || g.phone || g.id.slice(0, 8)}</td>
+                        <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
+                        <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
+                        <td className="p-3 flex flex-wrap gap-1">
+                          <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => setEditingGuest(g)}>Редактировать</button>
+                          <button type="button" className="rounded border border-emerald-600 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50" onClick={() => convertToOwn(g)}>Перевести в Свои</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+            <section className="p-4">
+              <h3 className="text-sm font-semibold text-gray-700">Свои</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Постоянные гости с заполненными профилями</p>
+              {ownGuests.length === 0 ? (
+                <p className="mt-2 text-sm text-gray-500">Нет гостей в категории «Свои»</p>
+              ) : (
+                <table className="w-full min-w-[500px] mt-2">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">ФИО / Контакт</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">Тип</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">Рейтинг</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">В зале</th>
+                      <th className="p-3 text-left text-xs font-medium text-gray-600">Действие</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ownGuests.map((g) => (
+                      <tr key={g.id} className="border-b border-gray-100">
+                        <td className="p-3 text-sm">{g.name || g.nickname || g.phone || g.id.slice(0, 8)}</td>
+                        <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
+                        <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
+                        <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
+                        <td className="p-3">
+                          <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => setEditingGuest(g)}>Редактировать</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          </div>
         ) : (
           <table className="w-full min-w-[500px]">
             <thead>
@@ -195,8 +274,11 @@ export default function AdminGuestsPage() {
                   <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
                   <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
                   <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
-                  <td className="p-3">
+                  <td className="p-3 flex flex-wrap gap-1">
                     <button type="button" className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50" onClick={() => setEditingGuest(g)}>Редактировать</button>
+                    {g.type === "regular" && (
+                      <button type="button" className="rounded border border-emerald-600 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50" onClick={() => convertToOwn(g)}>Перевести в Свои</button>
+                    )}
                   </td>
                 </tr>
               ))}

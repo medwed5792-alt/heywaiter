@@ -132,7 +132,7 @@ export default function AdminBookingsPage() {
         const startAt = Timestamp.fromDate(startAtDate);
         const endAt = Timestamp.fromDate(endAtDate);
 
-        // Обязательные поля перед отправкой в Firestore
+        // Обязательные поля перед отправкой в Firestore (при мульти-заведениях брать venueId из контекста/URL)
         const venueId = VENUE_ID;
         if (!venueId || venueId === "undefined" || venueId === "null") {
           toast.error("Не указано заведение (venueId)");
@@ -153,13 +153,27 @@ export default function AdminBookingsPage() {
 
         const guestContactStr = String(payload.guestContact ?? editing?.guestContact ?? "");
         const seatsNum = Number(payload.seats ?? editing?.seats ?? 2) || 2;
-        const body = {
+
+        // Если гостя нет в базе — создаём запись в коллекции guests с type "regular" (Новый), чтобы не слать undefined в Firestore
+        let guestIdResolved: string | null = payload.guestId != null && payload.guestId !== "" ? String(payload.guestId) : null;
+        if (guestIdResolved == null) {
+          const newGuestRef = await addDoc(collection(db, "guests"), {
+            venueId,
+            name: guestNameStr.trim() || null,
+            phone: guestContactStr.trim() || null,
+            type: "regular",
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          });
+          guestIdResolved = newGuestRef.id;
+        }
+
+        const body: Record<string, unknown> = {
           venueId,
           tableId: tableIdStr,
           guestName: guestNameStr.trim(),
           guestContact: guestContactStr,
-          guestId: payload.guestId,
-          guestExternalId: payload.guestExternalId,
+          guestId: guestIdResolved,
           seats: seatsNum,
           startTime: payload.startTime ?? "12:00",
           endTime: payload.endTime ?? "14:00",
@@ -169,9 +183,11 @@ export default function AdminBookingsPage() {
           endAt,
           updatedAt: serverTimestamp(),
         };
+        if (payload.guestExternalId != null && payload.guestExternalId !== "") body.guestExternalId = payload.guestExternalId;
         const newBooking = {
           venueId: body.venueId,
           tableId: body.tableId,
+          guestId: body.guestId,
           guestName: body.guestName,
           guestContact: body.guestContact,
           guests: body.seats,
