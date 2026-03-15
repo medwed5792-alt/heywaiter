@@ -281,6 +281,7 @@ export default function TeamPage() {
   const [lookupNotFound, setLookupNotFound] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
+  const [offerLoading, setOfferLoading] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -457,28 +458,31 @@ export default function TeamPage() {
     setLookupType("phone");
   };
 
-  const handleHireFromLookup = () => {
-    if (!lookupResult) return;
-    const name = [lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ").trim();
-    const staffFromLookup: Staff = {
-      id: "",
-      venueId: VENUE_ID,
-      role: "waiter",
-      primaryChannel: "telegram",
-      identity: { channel: "telegram", externalId: lookupResult.tgId ?? "", locale: "ru", displayName: name || undefined },
-      onShift: false,
-      firstName: lookupResult.firstName ?? undefined,
-      lastName: lookupResult.lastName ?? undefined,
-      phone: lookupResult.phone ?? undefined,
-      identities: lookupResult.identities,
-      tgId: lookupResult.tgId ?? undefined,
-      globalScore: lookupResult.globalScore ?? undefined,
-      medicalCard: lookupResult.medicalCard ?? undefined,
-      careerHistory: lookupResult.careerHistory as Staff["careerHistory"],
-      photoUrl: lookupResult.photoUrl ?? undefined,
-    };
-    resetLookupResults();
-    setEditingStaff(staffFromLookup);
+  const handleSendOffer = async () => {
+    if (!lookupResult?.userId || !lookupResult?.tgId) return;
+    setOfferLoading(true);
+    try {
+      const res = await fetch("/api/admin/staff/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: lookupResult.userId,
+          venueId: VENUE_ID,
+          tgId: lookupResult.tgId,
+          firstName: lookupResult.firstName ?? undefined,
+          lastName: lookupResult.lastName ?? undefined,
+          venueName: "Заведение",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка отправки");
+      toast.success("Предложение отправлено. Сотрудник получит сообщение в Telegram.");
+      resetLookupResults();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка отправки предложения");
+    } finally {
+      setOfferLoading(false);
+    }
   };
 
   const handleCreateNewFromLookup = () => {
@@ -654,10 +658,11 @@ export default function TeamPage() {
                 )}
                 <button
                   type="button"
-                  onClick={handleHireFromLookup}
-                  className="mt-3 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600"
+                  onClick={handleSendOffer}
+                  disabled={offerLoading || !lookupResult.tgId}
+                  className="mt-3 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
                 >
-                  Принять в штат
+                  {offerLoading ? "Отправка…" : "Отправить предложение"}
                 </button>
               </div>
             </div>

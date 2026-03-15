@@ -65,24 +65,18 @@ function getTelegramUserIdFromWindow(): string | null {
   return id != null ? String(id) : null;
 }
 
-function StaffOnboardingScreen({
-  venueId,
-  onSuccess,
-}: {
-  venueId: string;
-  onSuccess: () => void;
-}) {
+/** Первая регистрация: только Имя и Фамилия → создаётся global_user, редирект в Личный кабинет. */
+function StaffOnboardingScreen({ onSuccess }: { onSuccess: () => void }) {
+  const router = useRouter();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [showPhoneLink, setShowPhoneLink] = useState(false);
-  const [linkPhone, setLinkPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const platformId = getTelegramUserIdFromWindow();
   const platform = "tg";
 
-  const handleRegister = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!platformId) {
       setError("Откройте приложение из Telegram");
@@ -91,7 +85,7 @@ function StaffOnboardingScreen({
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/staff/register", {
+      const res = await fetch("/api/staff/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -99,41 +93,12 @@ function StaffOnboardingScreen({
           lastName: lastName.trim(),
           platform,
           platformId,
-          venueId,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка регистрации");
       onSuccess();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLinkByPhone = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!platformId || !linkPhone.trim()) {
-      setError("Введите номер телефона");
-      return;
-    }
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await fetch("/api/staff/link-identity", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: linkPhone.trim(),
-          platform,
-          platformId,
-          venueId,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Ошибка входа");
-      onSuccess();
+      router.replace("/mini-app/staff/cabinet");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
     } finally {
@@ -145,9 +110,9 @@ function StaffOnboardingScreen({
     <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
       <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-lg font-semibold text-slate-900">Добро пожаловать</h1>
-        <p className="mt-1 text-sm text-slate-500">Заполните данные или войдите по номеру телефона</p>
+        <p className="mt-1 text-sm text-slate-500">Укажите имя и фамилию. После этого откроется Личный кабинет.</p>
 
-        <form onSubmit={handleRegister} className="mt-6 space-y-4">
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <label className="block">
             <span className="block text-xs font-medium text-slate-600">Имя</span>
             <input
@@ -173,41 +138,9 @@ function StaffOnboardingScreen({
             disabled={loading}
             className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
-            {loading ? "…" : "Зарегистрироваться"}
+            {loading ? "…" : "Готово"}
           </button>
         </form>
-
-        <div className="mt-6 border-t border-slate-200 pt-6">
-          {!showPhoneLink ? (
-            <button
-              type="button"
-              onClick={() => setShowPhoneLink(true)}
-              className="w-full rounded-xl border border-slate-300 bg-white py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              У меня уже есть аккаунт (вход по номеру телефона)
-            </button>
-          ) : (
-            <form onSubmit={handleLinkByPhone} className="space-y-3">
-              <label className="block">
-                <span className="block text-xs font-medium text-slate-600">Номер телефона</span>
-                <input
-                  type="tel"
-                  value={linkPhone}
-                  onChange={(e) => setLinkPhone(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  placeholder="+7 900 123-45-67"
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-xl bg-slate-800 py-3 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-              >
-                {loading ? "…" : "Войти"}
-              </button>
-            </form>
-          )}
-        </div>
 
         {error && (
           <p className="mt-4 text-center text-sm text-red-600">{error}</p>
@@ -239,6 +172,7 @@ function StaffContentInner() {
   const [geoLoading, setGeoLoading] = useState(false);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
+  const [freeAgentProfileChecked, setFreeAgentProfileChecked] = useState(false);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -399,6 +333,33 @@ function StaffContentInner() {
     (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp?.ready?.();
   }
 
+  // Нет заведений: проверяем профиль → редирект в кабинет или онбординг
+  useEffect(() => {
+    if (loading || venuesList.length > 0) return;
+    const tgId = getTelegramUserIdFromWindow();
+    if (!tgId) return;
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/staff/profile?telegramId=${encodeURIComponent(tgId)}`);
+      if (cancelled) return;
+      if (res.ok) {
+        router.replace("/mini-app/staff/cabinet");
+      } else {
+        setFreeAgentProfileChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loading, venuesList.length, router]);
+
+  // Пока проверяем профиль при отсутствии заведений — показываем ожидание
+  if (venuesList.length === 0 && !freeAgentProfileChecked && !loading) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-slate-500">Проверка профиля…</p>
+      </main>
+    );
+  }
+
   // Экран выбора заведения при нескольких привязках
   if (venuesList.length > 1 && !currentVenueId && !loading) {
     return (
@@ -417,11 +378,25 @@ function StaffContentInner() {
     );
   }
 
+  // Нет заведений и профиль не найден (или ещё не проверен) → онбординг
+  if (venuesList.length === 0 && (freeAgentProfileChecked || !staffError)) {
+    return (
+      <StaffOnboardingScreen
+        onSuccess={() => {
+          setFreeAgentProfileChecked(false);
+          refreshStaffData();
+        }}
+      />
+    );
+  }
+
   if (staffError && !userId && !staffId) {
     return (
       <StaffOnboardingScreen
-        venueId={currentVenueId ?? "current"}
-        onSuccess={refreshStaffData}
+        onSuccess={() => {
+          setFreeAgentProfileChecked(false);
+          refreshStaffData();
+        }}
       />
     );
   }
