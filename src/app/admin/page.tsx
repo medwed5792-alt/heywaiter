@@ -162,7 +162,7 @@ function AdminDashboardContent() {
       }
       setVenueLoading(false);
     })();
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     if (venueType !== "full_service") return;
@@ -475,43 +475,71 @@ function AdminDashboardContent() {
     else toast.error("Гость не найден");
   }, []);
 
-  const totalTables = tables.length || 0;
-
   const nextBookingInMinutes = useMemo(() => {
+    const bookings = bookingsByTable ?? {};
     const now = Date.now();
     let nearest: number | null = null;
-    Object.values(bookingsByTable).flat().forEach((b) => {
-      const ms = b.startAt.getTime() - now;
-      if (ms > 0 && (nearest == null || ms < nearest * 60000)) nearest = ms / 60000;
-    });
+    try {
+      Object.values(bookings).flat().forEach((b) => {
+        if (!b?.startAt) return;
+        const ms = b.startAt.getTime?.() - now;
+        if (Number.isFinite(ms) && ms > 0 && (nearest == null || ms < nearest * 60000)) nearest = ms / 60000;
+      });
+    } catch {
+      // ignore
+    }
     return nearest;
   }, [bookingsByTable]);
 
   const bookingReminderEvents = useMemo(() => {
+    const bookings = bookingsByTable ?? {};
+    const tbls = tables ?? [];
     const now = Date.now();
     const list: { id: string; type: string; message: string; tableId?: string; read: boolean }[] = [];
-    Object.entries(bookingsByTable).forEach(([tableId, bookings]) => {
-      const table = tables.find((t) => t.id === tableId);
-      const num = table?.number ?? tableId;
-      bookings.forEach((b) => {
-        const mins = (b.startAt.getTime() - now) / 60000;
-        if (mins >= 12 && mins <= 18) {
-          list.push({
-            id: `booking_reminder_${b.id}`,
-            type: "booking_reminder",
-            message: `Гость для Стола ${num} придет через 15 минут`,
-            tableId,
-            read: false,
-          });
-        }
+    try {
+      Object.entries(bookings).forEach(([tableId, listForTable]) => {
+        const table = tbls.find((t) => t?.id === tableId);
+        const num = table?.number ?? tableId;
+        (listForTable ?? []).forEach((b) => {
+          if (!b?.startAt) return;
+          const mins = (b.startAt.getTime?.() - now) / 60000;
+          if (Number.isFinite(mins) && mins >= 12 && mins <= 18) {
+            list.push({
+              id: `booking_reminder_${b.id}`,
+              type: "booking_reminder",
+              message: `Гость для Стола ${num} придет через 15 минут`,
+              tableId,
+              read: false,
+            });
+          }
+        });
       });
-    });
+    } catch {
+      // ignore
+    }
     return list;
   }, [bookingsByTable, tables]);
 
   const feedWithReminders = useMemo(() => {
-    return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...feedEvents];
+    const feed = feedEvents ?? [];
+    return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...feed];
   }, [bookingReminderEvents, feedEvents]);
+
+  const safeStaffList = staffList ?? [];
+  const safeBookingsByTable = bookingsByTable ?? {};
+  const safeTables = tables ?? [];
+  const safeSessionsByTable = sessionsByTable ?? {};
+  const safeAssignmentsByTable = assignmentsByTable ?? {};
+  const safeOnShiftWaiters = onShiftWaiters ?? [];
+  const totalTables = safeTables.length || 0;
+
+  if (!venueId) {
+    return (
+      <div className="p-10 text-center text-gray-600">
+        Не указано заведение. Добавьте ?v=venueId в адрес.
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -608,26 +636,29 @@ function AdminDashboardContent() {
         </section>
       )}
 
-      {venueType === "full_service" && tables.length > 0 && (
+      {venueType === "full_service" && safeTables.length > 0 && (
         <section className="mt-8">
           <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
           <p className="mt-1 text-sm text-gray-500">Назначьте официанта — уведомления с стола пойдут ему в Telegram.</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {tables.map((table) => {
-              const session = sessionsByTable[table.id];
+            {safeTables.map((table) => {
+              if (!table?.id) return null;
+              try {
+              const session = safeSessionsByTable[table.id];
               const isOccupied = Boolean(session);
-              const bookings = bookingsByTable[table.id] ?? [];
-              const nextBooking = bookings.sort((a, b) => a.startAt.getTime() - b.startAt.getTime())[0];
-              const minsToBooking = nextBooking ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
-              const shouldBlink = minsToBooking != null && minsToBooking <= 30 && minsToBooking > 0;
-              const assignedStaffId = assignmentsByTable[table.id] ?? "";
-              const defaultFromTeam = staffList.find((s) => s.assignedTableIds.includes(table.id));
-              const assignedStaff = assignedStaffId ? staffList.find((s) => s.id === assignedStaffId) : null;
+              const bookingsList = safeBookingsByTable[table.id] ?? [];
+              const sortedBookings = [...bookingsList].sort((a, b) => (a?.startAt?.getTime?.() ?? 0) - (b?.startAt?.getTime?.() ?? 0));
+              const nextBooking = sortedBookings[0];
+              const minsToBooking = nextBooking?.startAt ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
+              const shouldBlink = Number.isFinite(minsToBooking) && minsToBooking != null && minsToBooking <= 30 && minsToBooking > 0;
+              const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
+              const defaultFromTeam = safeStaffList.find((s) => s?.assignedTableIds?.includes(table.id));
+              const assignedStaff = assignedStaffId ? safeStaffList.find((s) => s?.id === assignedStaffId) : null;
               const isGreenSelect = assignedStaffId !== "" && (assignedStaff?.onShift === true);
               const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
-              const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
+              const effectiveStaff = effectiveWaiterId ? safeStaffList.find((s) => s?.id === effectiveWaiterId) : null;
               const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
-              const uniqueStaff = Array.from(new Map(onShiftWaiters.map((w) => [w.id, w])).values());
+              const uniqueStaff = Array.from(new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values());
               const selectValue =
                 assignedStaffId ||
                 (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
@@ -643,7 +674,7 @@ function AdminDashboardContent() {
                   key={table.id}
                   className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg}`}
                 >
-                  <div className="text-2xl font-bold text-gray-900">{table.number}</div>
+                  <div className="text-2xl font-bold text-gray-900">{table?.number ?? table.id ?? "—"}</div>
                   {isWaiterOffShift && (
                     <p className="mt-1 text-xs font-medium text-amber-700">Официант не на смене</p>
                   )}
@@ -690,6 +721,9 @@ function AdminDashboardContent() {
                   )}
                 </div>
               );
+              } catch {
+                return null;
+              }
             })}
           </div>
         </section>
@@ -738,9 +772,9 @@ function AdminDashboardContent() {
   );
 }
 
-export default function AdminDashboardPage() {
+export default function AdminPage() {
   return (
-    <Suspense fallback={<div>Загрузка...</div>}>
+    <Suspense fallback={<div className="p-10 text-center">Загрузка интерфейса...</div>}>
       <AdminDashboardContent />
     </Suspense>
   );
