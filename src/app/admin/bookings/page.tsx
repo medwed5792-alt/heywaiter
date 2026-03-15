@@ -34,6 +34,13 @@ function isLate(b: Booking): boolean {
   return startAt ? startAt.getTime() < Date.now() : false;
 }
 
+const DISABLE_OPTIONS = [
+  { value: 1, label: "1 день" },
+  { value: 2, label: "2 дня" },
+  { value: 3, label: "3 дня" },
+  { value: 9999, label: "Бессрочно" },
+];
+
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<(Booking & { startAt?: unknown })[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
@@ -41,6 +48,9 @@ export default function AdminBookingsPage() {
   const [editing, setEditing] = useState<Partial<Booking> & { id?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [notifyCooldown, setNotifyCooldown] = useState<Record<string, number>>({});
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [disableBookingModalOpen, setDisableBookingModalOpen] = useState(false);
+  const [disableBookingDays, setDisableBookingDays] = useState<number>(1);
 
   useEffect(() => {
     const q = query(collection(db, "bookings"), where("venueId", "==", VENUE_ID));
@@ -130,38 +140,49 @@ export default function AdminBookingsPage() {
   );
 
   const deleteBooking = useCallback(async (id: string) => {
-    if (!confirm("Удалить бронь?")) return;
     try {
       await deleteDoc(doc(db, "bookings", id));
       toast.success("Бронь удалена");
       setEditing(null);
+      setDeleteConfirmId(null);
     } catch {
       toast.error("Ошибка удаления");
     }
   }, []);
 
-  const toggleBookingMaster = useCallback(async () => {
+  const applyDisableBooking = useCallback(async () => {
     try {
       const snap = await getDoc(doc(db, "venues", VENUE_ID));
       const data = snap.exists() ? snap.data() : {};
-      const config = { ...(data?.config ?? {}), bookingEnabled: !bookingSwitch.enabled };
-      if (config.bookingEnabled === false) {
-        const days = prompt("Отключить онлайн-бронирование на сколько дней? (1, 2, 3 или пусто = бессрочно)", "1");
-        if (days === null) return;
-        const n = days.trim() === "" ? 9999 : parseInt(days, 10);
-        const until = Number.isNaN(n) ? null : new Date(Date.now() + n * 24 * 60 * 60 * 1000);
-        (config as Record<string, unknown>).bookingEnabledUntil = until;
-      } else {
-        delete (config as Record<string, unknown>).bookingEnabledUntil;
-      }
+      const config = { ...(data?.config ?? {}), bookingEnabled: false };
+      const n = disableBookingDays;
+      const until = n >= 9999 ? null : new Date(Date.now() + n * 24 * 60 * 60 * 1000);
+      (config as Record<string, unknown>).bookingEnabledUntil = until;
       await updateDoc(doc(db, "venues", VENUE_ID), { config, updatedAt: serverTimestamp() });
-      setBookingSwitch((prev) => ({
-        enabled: !prev.enabled,
-        until: (config as { bookingEnabledUntil?: Date }).bookingEnabledUntil
-          ? (config as { bookingEnabledUntil: Date }).bookingEnabledUntil.toISOString().slice(0, 16)
-          : null,
-      }));
-      toast.success(bookingSwitch.enabled ? "Онлайн-бронирование отключено" : "Онлайн-бронирование включено");
+      setBookingSwitch({
+        enabled: false,
+        until: until ? until.toISOString().slice(0, 16) : null,
+      });
+      setDisableBookingModalOpen(false);
+      toast.success("Онлайн-бронирование отключено");
+    } catch {
+      toast.error("Ошибка переключателя");
+    }
+  }, [disableBookingDays]);
+
+  const toggleBookingMaster = useCallback(async () => {
+    try {
+      if (bookingSwitch.enabled) {
+        setDisableBookingModalOpen(true);
+        return;
+      }
+      const snap = await getDoc(doc(db, "venues", VENUE_ID));
+      const data = snap.exists() ? snap.data() : {};
+      const config = { ...(data?.config ?? {}), bookingEnabled: true };
+      delete (config as Record<string, unknown>).bookingEnabledUntil;
+      await updateDoc(doc(db, "venues", VENUE_ID), { config, updatedAt: serverTimestamp() });
+      setBookingSwitch({ enabled: true, until: null });
+      toast.success("Онлайн-бронирование включено");
     } catch {
       toast.error("Ошибка переключателя");
     }
@@ -275,7 +296,7 @@ export default function AdminBookingsPage() {
             <div className="flex gap-2 sm:col-span-2">
               <button type="submit" disabled={saving} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
               {editing.id && (
-                <button type="button" onClick={() => editing.id && deleteBooking(editing.id)} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Удалить</button>
+                <button type="button" onClick={() => editing.id && setDeleteConfirmId(editing.id)} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Удалить</button>
               )}
               <button type="button" onClick={() => setEditing(null)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600">Отмена</button>
             </div>
@@ -320,6 +341,72 @@ export default function AdminBookingsPage() {
           </table>
         )}
       </div>
+
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-booking-title">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 id="delete-booking-title" className="font-semibold text-gray-900">Удалить бронь?</h3>
+            <p className="mt-2 text-sm text-gray-600">Действие нельзя отменить.</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(null)}
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteConfirmId && deleteBooking(deleteConfirmId)}
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {disableBookingModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="disable-booking-title">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 id="disable-booking-title" className="font-semibold text-gray-900">Отключить онлайн-бронирование</h3>
+            <p className="mt-2 text-sm text-gray-600">На сколько отключить приём заявок?</p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {DISABLE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setDisableBookingDays(opt.value)}
+                  className={`rounded-lg border py-2.5 text-sm font-medium transition-colors ${
+                    disableBookingDays === opt.value
+                      ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                      : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDisableBookingModalOpen(false)}
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={applyDisableBooking}
+                className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800"
+              >
+                Отключить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

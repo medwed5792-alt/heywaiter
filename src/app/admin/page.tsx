@@ -226,9 +226,10 @@ export default function AdminDashboardPage() {
           const date = (data.date as string) ?? "";
           if (date === today) todayCount++;
           const startTime = (data.startTime as string) ?? "12:00";
-          const startAt = toStartAt(date, startTime);
+          const startAtRaw = data.startAt as { toDate?: () => Date } | undefined;
+          const startAt = startAtRaw?.toDate?.() ?? toStartAt(date, startTime);
           if (startAt.getTime() < now || startAt.getTime() > windowEnd) return;
-          const tableId = (data.tableId as string) ?? "";
+          const tableId = String(data.tableId ?? "").trim();
           if (!tableId) return;
           const b: BookingOnTable = {
             id: d.id,
