@@ -29,6 +29,18 @@ function toStartAt(date: string, startTime: string): Date {
   return d;
 }
 
+/** Конец брони: если «Время По» < «Время С» — считаем следующий день. */
+function toEndAt(date: string, startTime: string, endTime: string): Date {
+  const [hS, mS] = startTime.split(":").map(Number);
+  const [hE, mE] = endTime.split(":").map(Number);
+  const startMins = (hS ?? 0) * 60 + (mS ?? 0);
+  const endMins = (hE ?? 0) * 60 + (mE ?? 0);
+  const endDate = new Date(date);
+  endDate.setHours(hE ?? 0, mE ?? 0, 0, 0);
+  if (endMins <= startMins) endDate.setDate(endDate.getDate() + 1);
+  return endDate;
+}
+
 function isLate(b: Booking): boolean {
   const startAt = b.startAt ? (b.startAt as { toDate?: () => Date }).toDate?.() : toStartAt(b.date, b.startTime);
   return startAt ? startAt.getTime() < Date.now() : false;
@@ -106,12 +118,19 @@ export default function AdminBookingsPage() {
       try {
         const date = payload.date ?? editing?.date ?? "";
         const startTime = payload.startTime ?? editing?.startTime ?? "12:00";
-        const startAt = Timestamp.fromDate(toStartAt(date, startTime));
+        const endTime = payload.endTime ?? editing?.endTime ?? "14:00";
+        const startAtDate = toStartAt(date, startTime);
+        const startAt = Timestamp.fromDate(startAtDate);
+        const endAtDate = toEndAt(date, startTime, endTime);
+        const endAt = Timestamp.fromDate(endAtDate);
+        const tableIdStr = String(payload.tableId ?? editing?.tableId ?? "").trim();
+        const guestNameStr = String(payload.guestName ?? editing?.guestName ?? "");
+        const guestContactStr = String(payload.guestContact ?? editing?.guestContact ?? "");
         const body = {
           venueId: VENUE_ID,
-          tableId: payload.tableId ?? "",
-          guestName: payload.guestName ?? "",
-          guestContact: payload.guestContact ?? "",
+          tableId: tableIdStr,
+          guestName: guestNameStr,
+          guestContact: guestContactStr,
           guestId: payload.guestId,
           guestExternalId: payload.guestExternalId,
           seats: payload.seats ?? 2,
@@ -120,8 +139,10 @@ export default function AdminBookingsPage() {
           date: payload.date ?? "",
           status: payload.status ?? "pending",
           startAt,
+          endAt,
           updatedAt: serverTimestamp(),
         };
+        console.log("Saving Booking Data:", body);
         if (payload.id) {
           await updateDoc(doc(db, "bookings", payload.id), body);
           toast.success("Бронь обновлена");
