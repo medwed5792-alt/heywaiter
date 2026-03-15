@@ -11,10 +11,13 @@ import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
 const VENUE_ID = "current";
 
+/** Тип поиска: номер телефона или одна из соцсетей (совпадает с API). */
+type LookupSearchType = "phone" | keyof Pick<UnifiedIdentities, "tg" | "wa" | "vk" | "viber" | "wechat" | "inst" | "fb" | "line">;
+
 /** Ответ API lookup-by-identity: трудовая книжка из global_users */
 type LookupByIdentityResult = {
   found: true;
-  foundBy?: "phone" | "identities.phone" | "tg" | "wa" | "vk" | "viber" | "wechat" | "inst" | "fb" | "line";
+  foundBy?: LookupSearchType;
   userId: string;
   firstName: string | null;
   lastName: string | null;
@@ -100,6 +103,32 @@ const IDENTITY_OPTIONS: { value: keyof UnifiedIdentities; label: string; short: 
   { value: "phone", label: "Телефон", short: "📞" },
   { value: "email", label: "Email", short: "✉" },
 ];
+
+/** Варианты типа поиска: Номер телефона по умолчанию + 8 соцсетей (для dropdown поиска в Трудовой книжке). */
+const SEARCH_TYPE_OPTIONS: { value: LookupSearchType; label: string }[] = [
+  { value: "phone", label: "Номер телефона" },
+  { value: "tg", label: "Telegram" },
+  { value: "wa", label: "WhatsApp" },
+  { value: "vk", label: "VK" },
+  { value: "viber", label: "Viber" },
+  { value: "wechat", label: "WeChat" },
+  { value: "inst", label: "Instagram" },
+  { value: "fb", label: "Facebook" },
+  { value: "line", label: "Line" },
+];
+
+/** Placeholder для поля ввода в зависимости от выбранного типа поиска. */
+const SEARCH_PLACEHOLDERS: Record<LookupSearchType, string> = {
+  phone: "79991234567 или 375336555200",
+  tg: "Введите @username или числовой ID",
+  wa: "Номер с кодом страны (например 79001234567)",
+  vk: "ID или short name",
+  viber: "Номер или ID",
+  wechat: "ID пользователя",
+  inst: "Username или ID",
+  fb: "ID или username",
+  line: "ID пользователя",
+};
 
 function identitiesToEntries(identities?: UnifiedIdentities | null): { type: keyof UnifiedIdentities; value: string }[] {
   if (!identities) return [];
@@ -246,7 +275,8 @@ export default function TeamPage() {
   const [exitReasonText, setExitReasonText] = useState("");
   const [rating, setRating] = useState(3);
   const [loading, setLoading] = useState(false);
-  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupType, setLookupType] = useState<LookupSearchType>("phone");
+  const [lookupValue, setLookupValue] = useState("");
   const [lookupResult, setLookupResult] = useState<LookupByIdentityResult | null>(null);
   const [lookupNotFound, setLookupNotFound] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -384,9 +414,9 @@ export default function TeamPage() {
     : ALL_POSITIONS_FLAT;
 
   const handleLookupByIdentity = async () => {
-    const query = lookupQuery.trim();
-    if (!query) {
-      toast.error("Введите номер телефона или ID соцсети");
+    const value = lookupValue.trim();
+    if (!value) {
+      toast.error("Введите значение для поиска");
       return;
     }
     setLookupError(null);
@@ -394,7 +424,8 @@ export default function TeamPage() {
     setLookupNotFound(false);
     setLookupLoading(true);
     try {
-      const res = await fetch(`/api/admin/staff/lookup-by-identity?query=${encodeURIComponent(query)}`);
+      const params = new URLSearchParams({ type: lookupType, value });
+      const res = await fetch(`/api/admin/staff/lookup-by-identity?${params.toString()}`);
       const data = await res.json();
       if (res.status === 404) {
         setLookupNotFound(true);
@@ -418,6 +449,14 @@ export default function TeamPage() {
     }
   };
 
+  const resetLookupResults = () => {
+    setLookupResult(null);
+    setLookupNotFound(false);
+    setLookupError(null);
+    setLookupValue("");
+    setLookupType("phone");
+  };
+
   const handleHireFromLookup = () => {
     if (!lookupResult) return;
     const name = [lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ").trim();
@@ -438,15 +477,19 @@ export default function TeamPage() {
       careerHistory: lookupResult.careerHistory as Staff["careerHistory"],
       photoUrl: lookupResult.photoUrl ?? undefined,
     };
-    setLookupResult(null);
-    setLookupQuery("");
-    setLookupNotFound(false);
+    resetLookupResults();
     setEditingStaff(staffFromLookup);
   };
 
   const handleCreateNewFromLookup = () => {
-    const query = lookupQuery.trim();
-    const digitsOnly = query.replace(/\D/g, "");
+    const value = lookupValue.trim();
+    const digitsOnly = value.replace(/\D/g, "");
+    const identities: UnifiedIdentities = {};
+    if (lookupType === "phone" && digitsOnly) {
+      identities.phone = digitsOnly;
+    } else if (lookupType !== "phone" && value) {
+      identities[lookupType] = value.startsWith("@") ? value.slice(1) : value;
+    }
     const staffNew: Staff = {
       id: "",
       venueId: VENUE_ID,
@@ -454,12 +497,10 @@ export default function TeamPage() {
       primaryChannel: "telegram",
       identity: { channel: "telegram", externalId: "", locale: "ru" },
       onShift: false,
-      phone: digitsOnly.length > 0 ? digitsOnly : undefined,
-      identities: digitsOnly.length > 0 ? { phone: digitsOnly } : query ? { tg: query } : undefined,
+      phone: lookupType === "phone" && digitsOnly ? digitsOnly : undefined,
+      identities: Object.keys(identities).length > 0 ? identities : undefined,
     };
-    setLookupNotFound(false);
-    setLookupQuery("");
-    setLookupResult(null);
+    resetLookupResults();
     setEditingStaff(staffNew);
   };
 
@@ -516,21 +557,46 @@ export default function TeamPage() {
           Принять по телефону или ID соцсети
         </h3>
         <p className="mt-1 text-xs text-gray-600">
-          Введите номер телефона (без +) или ID соцсети (Telegram, VK и др.) — система найдёт трудовую книжку и предложит принять в штат. Если человека нет — создаём нового.
+          Выберите тип идентификатора и введите значение — поиск идёт строго по выбранной платформе (без пересечения цифровых ID).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            placeholder="Номер или ID (например 79001234567, @username)"
-            value={lookupQuery}
-            onChange={(e) => { setLookupQuery(e.target.value); setLookupError(null); setLookupResult(null); setLookupNotFound(false); }}
-            onKeyDown={(e) => e.key === "Enter" && handleLookupByIdentity()}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-64"
-          />
+          <div className="inline-flex rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:ring-2 focus-within:ring-gray-900 focus-within:border-gray-900">
+            <select
+              value={lookupType}
+              onChange={(e) => {
+                setLookupType(e.target.value as LookupSearchType);
+                setLookupError(null);
+                setLookupResult(null);
+                setLookupNotFound(false);
+              }}
+              className="rounded-l-lg border-0 bg-gray-50 px-3 py-2 text-sm text-gray-700 focus:ring-0"
+              aria-label="Тип поиска"
+            >
+              {SEARCH_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              placeholder={SEARCH_PLACEHOLDERS[lookupType]}
+              value={lookupValue}
+              onChange={(e) => {
+                setLookupValue(e.target.value);
+                setLookupError(null);
+                setLookupResult(null);
+                setLookupNotFound(false);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && handleLookupByIdentity()}
+              className="min-w-[200px] max-w-[280px] rounded-r-lg border-0 border-l border-gray-200 px-3 py-2 text-sm focus:ring-0"
+              aria-label="Значение для поиска"
+            />
+          </div>
           <button
             type="button"
             onClick={handleLookupByIdentity}
-            disabled={lookupLoading || !lookupQuery.trim()}
+            disabled={lookupLoading || !lookupValue.trim()}
             className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
           >
             {lookupLoading ? "Поиск…" : "Найти"}
@@ -610,7 +676,7 @@ export default function TeamPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { setLookupNotFound(false); setLookupQuery(""); setLookupError(null); setLookupResult(null); }}
+                onClick={resetLookupResults}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена

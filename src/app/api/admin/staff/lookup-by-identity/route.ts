@@ -4,63 +4,74 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { StaffCareerEntry, UnifiedIdentities, MedicalCard } from "@/lib/types";
 
-/** Ключи identities для соцсетей (поиск по ID мессенджера / username). */
+/** Ключи identities для соцсетей (поиск строго по одному полю). */
 const SOCIAL_IDENTITY_KEYS = ["tg", "wa", "vk", "viber", "wechat", "inst", "fb", "line"] as const;
-type SocialKey = (typeof SOCIAL_IDENTITY_KEYS)[number];
+export type SocialKey = (typeof SOCIAL_IDENTITY_KEYS)[number];
+
+/** Допустимый type для поиска: номер телефона или одна из соцсетей. */
+export type LookupType = "phone" | SocialKey;
 
 /**
- * GET /api/admin/staff/lookup-by-identity?query=...
- * Универсальный поиск по Unified ID V.2.0:
- * - Если query после очистки — только цифры: поиск по полям phone и identities.phone.
- * - Если строка начинается с @ или содержит буквы: поиск по всем полям identities (tg, wa, vk, …).
- * Поиск параллельный (Promise.all) для скорости.
- * Возвращает трудовую книжку и foundBy (каким полем найден).
+ * GET /api/admin/staff/lookup-by-identity?type=...&value=...
+ * Поиск по типу идентификатора (защита от пересечения цифровых ID между платформами):
+ * - type=phone: поиск строго по полю phone (value очищается от нецифровых символов).
+ * - type=tg|wa|vk|...: поиск строго в identities.[type] по value.
+ * Возвращает трудовую книжку и foundBy = type.
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const queryRaw = searchParams.get("query");
-    if (!queryRaw || !queryRaw.trim()) {
-      return NextResponse.json({ error: "query is required" }, { status: 400 });
+    const typeRaw = searchParams.get("type");
+    const valueRaw = searchParams.get("value");
+
+    if (!typeRaw || !typeRaw.trim()) {
+      return NextResponse.json({ error: "type is required (phone | tg | wa | vk | viber | wechat | inst | fb | line)" }, { status: 400 });
+    }
+    if (valueRaw == null || String(valueRaw).trim() === "") {
+      return NextResponse.json({ error: "value is required" }, { status: 400 });
     }
 
-    const trimmed = queryRaw.trim();
-    const normalizedForSocial = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
-    const digitsOnly = trimmed.replace(/\D/g, "");
-    const isDigitsOnly = digitsOnly.length > 0 && trimmed === digitsOnly;
+    const type = typeRaw.trim().toLowerCase() as LookupType;
+    const allowedTypes: LookupType[] = ["phone", ...SOCIAL_IDENTITY_KEYS];
+    if (!allowedTypes.includes(type)) {
+      return NextResponse.json(
+        { error: `type must be one of: ${allowedTypes.join(", ")}` },
+        { status: 400 }
+      );
+    }
 
     const firestore = getAdminFirestore();
     let userId: string | null = null;
-    let foundBy: "phone" | "identities.phone" | SocialKey | null = null;
+    let foundBy: LookupType | null = null;
 
-    if (isDigitsOnly) {
-      const [byPhone, byIdentitiesPhone] = await Promise.all([
-        firestore.collection("global_users").where("phone", "==", digitsOnly).limit(1).get(),
-        firestore.collection("global_users").where("identities.phone", "==", digitsOnly).limit(1).get(),
-      ]);
+    if (type === "phone") {
+      const digitsOnly = String(valueRaw).trim().replace(/\D/g, "");
+      if (!digitsOnly) {
+        return NextResponse.json({ error: "Для типа «Номер телефона» укажите цифры" }, { status: 400 });
+      }
+      const byPhone = await firestore
+        .collection("global_users")
+        .where("phone", "==", digitsOnly)
+        .limit(1)
+        .get();
       if (!byPhone.empty) {
         userId = byPhone.docs[0].id;
         foundBy = "phone";
-      } else if (!byIdentitiesPhone.empty) {
-        userId = byIdentitiesPhone.docs[0].id;
-        foundBy = "identities.phone";
       }
     } else {
-      const searches = SOCIAL_IDENTITY_KEYS.map((key) =>
-        firestore
-          .collection("global_users")
-          .where(`identities.${key}`, "==", normalizedForSocial)
-          .limit(1)
-          .get()
-          .then((snap) => ({ key, snap }))
-      );
-      const results = await Promise.all(searches);
-      for (const { key, snap } of results) {
-        if (!snap.empty) {
-          userId = snap.docs[0].id;
-          foundBy = key;
-          break;
-        }
+      const value = String(valueRaw).trim();
+      const normalized = value.startsWith("@") ? value.slice(1) : value;
+      if (!normalized) {
+        return NextResponse.json({ error: "Укажите значение для поиска" }, { status: 400 });
+      }
+      const snap = await firestore
+        .collection("global_users")
+        .where(`identities.${type}`, "==", normalized)
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        userId = snap.docs[0].id;
+        foundBy = type;
       }
     }
 
