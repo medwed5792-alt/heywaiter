@@ -519,15 +519,21 @@ export default function AdminDashboardPage() {
             <p className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Нет событий</p>
           ) : (
             <ul className="mt-3 space-y-2">
-              {feedEvents.map((ev) => (
+              {feedEvents.map((ev) => {
+                const isOrphan = ev.type === "orphan_call";
+                return (
                 <li
                   key={ev.id}
                   className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
-                    ev.read ? "border-gray-100 bg-gray-50/50 text-gray-500" : "border-amber-200 bg-amber-50/80 text-amber-900"
+                    ev.read
+                      ? "border-gray-100 bg-gray-50/50 text-gray-500"
+                      : isOrphan
+                        ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                        : "border-amber-200 bg-amber-50/80 text-amber-900"
                   }`}
                 >
                   <span>
-                    {ev.type === "sos" ? "🚨 SOS" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
+                    {ev.type === "sos" ? "🚨 SOS" : isOrphan ? "⚠️ Стол без ответственного" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
                     {ev.tableId != null && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
                   </span>
                   <button
@@ -538,7 +544,8 @@ export default function AdminDashboardPage() {
                     ОК
                   </button>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           )}
         </section>
@@ -559,14 +566,18 @@ export default function AdminDashboardPage() {
               const defaultFromTeam = staffList.find((s) => s.assignedTableIds.includes(table.id));
               const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
               const effectiveStaff = effectiveWaiterId ? staffList.find((s) => s.id === effectiveWaiterId) : null;
+              const isGreenTable = effectiveWaiterId !== "" && effectiveStaff?.onShift === true;
               const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
               const selectValue = assignedStaffId || (defaultFromTeam ? `__plan__${defaultFromTeam.id}` : "");
+              const cardBorder = shouldBlink
+                ? "border-amber-400 animate-pulse"
+                : isGreenTable
+                  ? "border-emerald-400 bg-emerald-50/30"
+                  : "border-gray-300 bg-gray-50/80";
               return (
                 <div
                   key={table.id}
-                  className={`rounded-xl border-2 bg-white p-4 shadow-sm ${
-                    shouldBlink ? "border-amber-400 animate-pulse" : isWaiterOffShift ? "border-amber-300 bg-amber-50/50" : "border-gray-200"
-                  }`}
+                  className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder}`}
                 >
                   <div className="text-2xl font-bold text-gray-900">{table.number}</div>
                   {isWaiterOffShift && (

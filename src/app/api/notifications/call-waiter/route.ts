@@ -75,29 +75,31 @@ export async function POST(request: NextRequest) {
 
     const firestore = getAdminFirestore();
 
-    // Собираем ВСЕХ, у кого стол «родной» (Команда) или «оперативный» (Дашборд); только onShift; только официанты и ЛПР
-    const operationalId = await getOperationalWaiterForTable(firestore, venueId, tableId);
-    const nativeIds = await getNativeStaffIdsForTable(firestore, venueId, tableId);
-    const lprIds = await getLprStaffIds(firestore, venueId);
-    const rawTargetUids = Array.from(
-      new Set([
-        ...(operationalId ? [operationalId] : []),
-        ...nativeIds,
-        ...lprIds,
-      ])
-    );
-    const targetUids: string[] = [];
-    for (const id of rawTargetUids) {
-      const onShift = await isStaffOnShift(firestore, id, venueId);
-      if (onShift) targetUids.push(id);
-    }
-
-    const message = isRequestBill
+    const baseMessage = isRequestBill
       ? `Запрос счёта, стол №${tableId}`
       : `Вызов официанта, стол №${tableId}`;
 
+    const waiterId = await getOperationalWaiterForTable(firestore, venueId, tableId);
+    const waiterOnShift = waiterId ? await isStaffOnShift(firestore, waiterId, venueId) : false;
+
+    let targetUids: string[];
+    let message: string;
+    let notificationType: string;
+    let isOrphan: boolean;
+
+    if (waiterId && waiterOnShift) {
+      targetUids = [waiterId];
+      message = baseMessage;
+      notificationType = isRequestBill ? "request_bill" : "role_call";
+      isOrphan = false;
+    } else {
+      targetUids = await getLprStaffIds(firestore, venueId);
+      message = `⚠️ SOS: Вызов со стола без ответственного! ${baseMessage}`;
+      notificationType = "orphan_call";
+      isOrphan = true;
+    }
+
     const tgIds = await getTelegramIdsForStaff(firestore, targetUids);
-    // Только Staff Bot: Firestore (tg_staff_token) → env TELEGRAM_STAFF_TOKEN. Клиентский токен не используем.
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
     const token =
       (await getBotTokenFromStore("telegram", "staff")) ||
@@ -116,11 +118,12 @@ export async function POST(request: NextRequest) {
       venueId,
       tableId,
       sessionId: null,
-      type: isRequestBill ? "request_bill" : "role_call",
+      type: notificationType,
       role: "waiter" as ServiceRole,
       message,
       read: false,
       targetUids,
+      ...(isOrphan && { orphanTable: true }),
       ...(visitorId && { visitorId }),
       createdAt: new Date(),
     });
@@ -146,7 +149,7 @@ async function isStaffOnShift(
   return (d?.venueId === venueId && d?.onShift === true) || false;
 }
 
-/** Оперативное назначение с Дашборда (приоритет на смену). */
+/** Ответственный за стол: waiterId из документа стола (коллекция tables / venues/.../tables). */
 async function getOperationalWaiterForTable(
   firestore: Firestore,
   venueId: string,
@@ -157,7 +160,7 @@ async function getOperationalWaiterForTable(
   if (!tableSnap.exists) return null;
   const data = tableSnap.data() ?? {};
   const assignments = data.assignments as Record<string, string> | undefined;
-  return assignments?.waiter ?? (data.assignedStaffId as string | undefined) ?? null;
+  return (data.waiterId as string) ?? assignments?.waiter ?? (data.assignedStaffId as string) ?? null;
 }
 
 /** Сотрудники, у которых этот стол закреплён в Команде (assignedTableIds). Только официанты и ЛПР. */
