@@ -282,6 +282,8 @@ export default function TeamPage() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [offerLoading, setOfferLoading] = useState(false);
+  const [offerStatus, setOfferStatus] = useState<{ status: string | null; staffId: string | null } | null>(null);
+  const [cancelOfferLoading, setCancelOfferLoading] = useState(false);
 
   useEffect(() => {
     setOfferLoading(false);
@@ -422,6 +424,28 @@ export default function TeamPage() {
     setLookupLoading(false);
   }, [lookupResult]);
 
+  // Проверка статуса оффера для найденного пользователя (показать "Отменить предложение" при pending_offer)
+  useEffect(() => {
+    if (!lookupResult?.userId) {
+      setOfferStatus(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(
+        `/api/admin/staff/offer-status?userId=${encodeURIComponent(lookupResult.userId)}&venueId=${encodeURIComponent(VENUE_ID)}`
+      );
+      if (cancelled) return;
+      if (res.ok) {
+        const data = await res.json();
+        setOfferStatus({ status: data.status ?? null, staffId: data.staffId ?? null });
+      } else {
+        setOfferStatus(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [lookupResult?.userId]);
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       console.log("Button State - isLoading:", offerLoading);
@@ -483,6 +507,28 @@ export default function TeamPage() {
     setLookupType("phone");
     setOfferLoading(false);
     setLookupLoading(false);
+    setOfferStatus(null);
+  };
+
+  const handleCancelOffer = async () => {
+    if (!lookupResult?.userId || cancelOfferLoading) return;
+    const staffId = offerStatus?.staffId ?? `${VENUE_ID}_${lookupResult.userId}`;
+    setCancelOfferLoading(true);
+    try {
+      const res = await fetch("/api/admin/staff/cancel-offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staffId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Ошибка отмены");
+      toast.success("Предложение отменено. Можно отправить заново.");
+      setOfferStatus(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка отмены предложения");
+    } finally {
+      setCancelOfferLoading(false);
+    }
   };
 
   const handleCancelLookup = () => {
@@ -493,8 +539,8 @@ export default function TeamPage() {
     setLookupNotFound(false);
     setLookupError(null);
     setLookupType("phone");
+    setOfferStatus(null);
   };
-  // Отмена: принудительно setIsLoading(false), setSearching(false), setFoundUser(null)
 
   const handleSendOffer = async () => {
     const tgId = lookupResult?.tgId ?? lookupResult?.identities?.tg ?? "";
@@ -729,6 +775,16 @@ export default function TeamPage() {
                     )}
                     {offerLoading ? "Отправка…" : "Отправить предложение"}
                   </button>
+                  {offerStatus?.status === "pending_offer" && (
+                    <button
+                      type="button"
+                      onClick={handleCancelOffer}
+                      disabled={cancelOfferLoading}
+                      className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {cancelOfferLoading ? "…" : "Отменить предложение"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleCancelLookup}
