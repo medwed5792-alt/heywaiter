@@ -416,9 +416,10 @@ export default function TeamPage() {
     ? (POSITION_GROUPS_V2.find((g) => g.groupId === groupFilter)?.roles ?? [])
     : ALL_POSITIONS_FLAT;
 
-  // Принудительный сброс кнопки «Отправить предложение» при смене найденного пользователя или очистке
+  // Как только прилетает новый найденный юзер (foundUser), все флаги загрузки — false
   useEffect(() => {
     setOfferLoading(false);
+    setLookupLoading(false);
   }, [lookupResult]);
 
   useEffect(() => {
@@ -496,7 +497,8 @@ export default function TeamPage() {
   // Отмена: принудительно setIsLoading(false), setSearching(false), setFoundUser(null)
 
   const handleSendOffer = async () => {
-    if (!lookupResult?.userId || !lookupResult?.tgId) return;
+    const tgId = lookupResult?.tgId ?? lookupResult?.identities?.tg ?? "";
+    if (!lookupResult?.userId || !tgId) return;
     setOfferLoading(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -507,7 +509,7 @@ export default function TeamPage() {
         body: JSON.stringify({
           userId: lookupResult.userId,
           venueId: VENUE_ID,
-          tgId: lookupResult.tgId,
+          tgId,
           firstName: lookupResult.firstName ?? undefined,
           lastName: lookupResult.lastName ?? undefined,
           venueName: "Заведение",
@@ -719,7 +721,7 @@ export default function TeamPage() {
                   <button
                     type="button"
                     onClick={handleSendOffer}
-                    disabled={offerLoading || !lookupResult.tgId}
+                    disabled={offerLoading}
                     className="inline-flex items-center gap-2 rounded-lg bg-green-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50"
                   >
                     {offerLoading && (
