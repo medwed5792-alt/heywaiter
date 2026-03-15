@@ -75,23 +75,17 @@ export async function POST(request: NextRequest) {
 
     const firestore = getAdminFirestore();
 
-    const assignedId = await getAssignedStaffForTable(firestore, venueId, tableId, "waiter");
-    const assignedOnShift = assignedId
-      ? await isStaffOnShift(firestore, assignedId, venueId)
-      : false;
-
-    const waiterIds = await getStaffIdsByRoleOnShift(firestore, venueId, "waiter");
+    // Собираем ВСЕХ, у кого стол «родной» (Команда) или «оперативный» (Дашборд); только onShift; только официанты и ЛПР
+    const operationalId = await getOperationalWaiterForTable(firestore, venueId, tableId);
+    const nativeIds = await getNativeStaffIdsForTable(firestore, venueId, tableId);
     const lprIds = await getLprStaffIds(firestore, venueId);
-
     const rawTargetUids = Array.from(
       new Set([
-        ...(assignedOnShift && assignedId ? [assignedId] : []),
-        ...waiterIds,
+        ...(operationalId ? [operationalId] : []),
+        ...nativeIds,
         ...lprIds,
       ])
     );
-
-    // Уведомления только сотрудникам на смене (onShift: true) → @waitertalk_bot (Персонал)
     const targetUids: string[] = [];
     for (const id of rawTargetUids) {
       const onShift = await isStaffOnShift(firestore, id, venueId);
@@ -152,31 +146,41 @@ async function isStaffOnShift(
   return (d?.venueId === venueId && d?.onShift === true) || false;
 }
 
-async function getAssignedStaffForTable(
+/** Оперативное назначение с Дашборда (приоритет на смену). */
+async function getOperationalWaiterForTable(
   firestore: Firestore,
   venueId: string,
-  tableId: string,
-  role: ServiceRole
+  tableId: string
 ): Promise<string | null> {
   const tableRef = firestore.collection("venues").doc(venueId).collection("tables").doc(tableId);
   const tableSnap = await tableRef.get();
-  if (tableSnap.exists) {
-    const data = tableSnap.data() ?? {};
-    const assignments = data.assignments as Record<string, string> | undefined;
-    const staffId = assignments?.[role] ?? (data.assignedStaffId as string | undefined);
-    if (staffId) return staffId;
-  }
+  if (!tableSnap.exists) return null;
+  const data = tableSnap.data() ?? {};
+  const assignments = data.assignments as Record<string, string> | undefined;
+  return assignments?.waiter ?? (data.assignedStaffId as string | undefined) ?? null;
+}
+
+/** Сотрудники, у которых этот стол закреплён в Команде (assignedTableIds). Только официанты и ЛПР. */
+async function getNativeStaffIdsForTable(
+  firestore: Firestore,
+  venueId: string,
+  tableId: string
+): Promise<string[]> {
   const snap = await firestore
-    .collection("activeSessions")
+    .collection("staff")
     .where("venueId", "==", venueId)
-    .where("tableId", "==", tableId)
-    .where("status", "==", "check_in_success")
-    .limit(1)
+    .where("active", "==", true)
+    .where("assignedTableIds", "array-contains", tableId)
     .get();
-  const doc = snap.docs[0];
-  if (!doc?.exists) return null;
-  const assignments = doc.data()?.assignments as Record<string, string> | undefined;
-  return assignments?.[role] ?? null;
+  const ids: string[] = [];
+  snap.docs.forEach((d) => {
+    const data = d.data();
+    const position = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string) ?? "";
+    const isWaiter = position === "waiter" || (data.role as string) === "waiter";
+    const isLpr = position && LPR_ROLES.includes(position as ServiceRole);
+    if (isWaiter || isLpr) ids.push(d.id);
+  });
+  return ids;
 }
 
 async function getLprStaffIds(
@@ -191,23 +195,10 @@ async function getLprStaffIds(
     .get();
   const ids: string[] = [];
   snap.docs.forEach((d) => {
-    const role = d.data().serviceRole as ServiceRole | undefined;
-    if (role && LPR_ROLES.includes(role)) ids.push(d.id);
+    const data = d.data();
+    const role = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string);
+    if (role && LPR_ROLES.includes(role as ServiceRole)) ids.push(d.id);
   });
   return ids;
 }
 
-async function getStaffIdsByRoleOnShift(
-  firestore: Firestore,
-  venueId: string,
-  role: ServiceRole
-): Promise<string[]> {
-  const snap = await firestore
-    .collection("staff")
-    .where("venueId", "==", venueId)
-    .where("active", "==", true)
-    .where("onShift", "==", true)
-    .where("serviceRole", "==", role)
-    .get();
-  return snap.docs.map((d) => d.id);
-}

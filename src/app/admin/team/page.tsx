@@ -964,6 +964,18 @@ export default function TeamPage() {
           staff={editingStaff}
           tables={tables}
           halls={halls}
+          conflictByTableId={(() => {
+            const other = staffList.filter((s) => s.id !== editingStaff.id && s.active !== false);
+            const out: Record<string, { staffId: string; displayName: string }[]> = {};
+            for (const s of other) {
+              const name = [s.firstName, s.lastName].filter(Boolean).join(" ") || s.identity?.displayName || s.id.slice(-8);
+              for (const tid of s.assignedTableIds ?? []) {
+                if (!out[tid]) out[tid] = [];
+                out[tid].push({ staffId: s.id, displayName: name });
+              }
+            }
+            return out;
+          })()}
           onClose={() => setEditingStaff(null)}
           onSaved={(updated) => {
             if (editingStaff.id) {
@@ -1037,12 +1049,15 @@ function StaffFormModal({
   staff,
   tables,
   halls,
+  conflictByTableId,
   onClose,
   onSaved,
 }: {
   staff: Staff;
   tables: TableItem[];
   halls: { id: string; name: string }[];
+  /** По tableId — список других активных сотрудников, у которых уже закреплён этот стол */
+  conflictByTableId: Record<string, { staffId: string; displayName: string }[]>;
   onClose: () => void;
   onSaved: (data: Partial<Staff> & { id?: string }) => void;
 }) {
@@ -1285,23 +1300,55 @@ function StaffFormModal({
                 {tables.length === 0 ? (
                   <span className="text-xs text-gray-500">Нет столов. Добавьте залы и столы в Зал & QR.</span>
                 ) : tablesByHall.length === 0 ? (
-                  tables.map((t) => (
-                    <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50 mr-2 mb-1">
-                      <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} className="rounded border-gray-300" />
-                      <span>Стол {t.number}</span>
-                    </label>
-                  ))
+                  tables.map((t) => {
+                    const conflict = conflictByTableId[t.id];
+                    const isConflict = conflict && conflict.length > 0;
+                    const tooltip = isConflict ? `Уже закреплен за ${conflict.map((c) => c.displayName).join(", ")}` : undefined;
+                    return (
+                      <label
+                        key={t.id}
+                        title={tooltip}
+                        className={`inline-flex items-center gap-1.5 rounded border px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50 mr-2 mb-1 ${
+                          isConflict ? "border-amber-400 bg-amber-50/80" : "border-gray-200"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={assignedTableIds.includes(t.id)}
+                          onChange={() => toggleTable(t.id)}
+                          className={`rounded ${isConflict ? "border-amber-500 text-amber-600" : "border-gray-300"}`}
+                        />
+                        <span>Стол {t.number}</span>
+                      </label>
+                    );
+                  })
                 ) : (
                   tablesByHall.map((group) => (
                     <div key={group.hallId || "none"}>
                       <p className="text-xs font-medium text-gray-500 mb-1">{group.hallName}:</p>
                       <div className="flex flex-wrap gap-2">
-                        {group.tables.map((t) => (
-                          <label key={t.id} className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50">
-                            <input type="checkbox" checked={assignedTableIds.includes(t.id)} onChange={() => toggleTable(t.id)} className="rounded border-gray-300" />
-                            <span>{t.number}</span>
-                          </label>
-                        ))}
+                        {group.tables.map((t) => {
+                          const conflict = conflictByTableId[t.id];
+                          const isConflict = conflict && conflict.length > 0;
+                          const tooltip = isConflict ? `Уже закреплен за ${conflict.map((c) => c.displayName).join(", ")}` : undefined;
+                          return (
+                            <label
+                              key={t.id}
+                              title={tooltip}
+                              className={`inline-flex items-center gap-1.5 rounded border px-2 py-1.5 text-sm cursor-pointer hover:bg-gray-50 ${
+                                isConflict ? "border-amber-400 bg-amber-50/80" : "border-gray-200"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={assignedTableIds.includes(t.id)}
+                                onChange={() => toggleTable(t.id)}
+                                className={`rounded ${isConflict ? "border-amber-500 text-amber-600" : "border-gray-300"}`}
+                              />
+                              <span>{t.number}</span>
+                            </label>
+                          );
+                        })}
                       </div>
                     </div>
                   ))

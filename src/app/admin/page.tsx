@@ -21,6 +21,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
+import { LPR_ROLES } from "@/lib/types";
 
 const VENUE_ID = "current";
 const BOOKING_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 часа для "ближайшие 2 часа"
@@ -247,18 +248,19 @@ export default function AdminDashboardPage() {
       ),
       (snap) => {
         setOnShiftCount(snap.size);
-        const waiters: ShiftStaff[] = [];
+        const list: ShiftStaff[] = [];
         snap.docs.forEach((d) => {
           const data = d.data();
           const position = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string) ?? "";
           const isWaiter = position === "waiter" || (data.role as string) === "waiter" || (data.serviceRole as string) === "waiter";
-          if (!isWaiter) return;
+          const isLpr = position && LPR_ROLES.includes(position);
+          if (!isWaiter && !isLpr) return;
           const firstName = data.firstName as string ?? "";
           const lastName = data.lastName as string ?? "";
           const name = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
-          waiters.push({ id: d.id, displayName: name, position });
+          list.push({ id: d.id, displayName: name, position });
         });
-        setOnShiftWaiters(waiters);
+        setOnShiftWaiters(list);
       }
     );
     return () => unsub();
