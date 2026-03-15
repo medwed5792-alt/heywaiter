@@ -11,9 +11,10 @@ import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
 const VENUE_ID = "current";
 
-/** Ответ API lookup-by-phone: трудовая книжка из global_users */
-type LookupByPhoneResult = {
+/** Ответ API lookup-by-identity: трудовая книжка из global_users */
+type LookupByIdentityResult = {
   found: true;
+  foundBy?: "phone" | "identities.phone" | "tg" | "wa" | "vk" | "viber" | "wechat" | "inst" | "fb" | "line";
   userId: string;
   firstName: string | null;
   lastName: string | null;
@@ -245,8 +246,8 @@ export default function TeamPage() {
   const [exitReasonText, setExitReasonText] = useState("");
   const [rating, setRating] = useState(3);
   const [loading, setLoading] = useState(false);
-  const [lookupPhone, setLookupPhone] = useState("");
-  const [lookupResult, setLookupResult] = useState<LookupByPhoneResult | null>(null);
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupResult, setLookupResult] = useState<LookupByIdentityResult | null>(null);
   const [lookupNotFound, setLookupNotFound] = useState(false);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -382,10 +383,10 @@ export default function TeamPage() {
     ? (POSITION_GROUPS_V2.find((g) => g.groupId === groupFilter)?.roles ?? [])
     : ALL_POSITIONS_FLAT;
 
-  const handleLookupByPhone = async () => {
-    const phone = lookupPhone.trim();
-    if (!phone) {
-      toast.error("Введите номер телефона");
+  const handleLookupByIdentity = async () => {
+    const query = lookupQuery.trim();
+    if (!query) {
+      toast.error("Введите номер телефона или ID соцсети");
       return;
     }
     setLookupError(null);
@@ -393,7 +394,7 @@ export default function TeamPage() {
     setLookupNotFound(false);
     setLookupLoading(true);
     try {
-      const res = await fetch(`/api/admin/staff/lookup-by-phone?phone=${encodeURIComponent(phone)}`);
+      const res = await fetch(`/api/admin/staff/lookup-by-identity?query=${encodeURIComponent(query)}`);
       const data = await res.json();
       if (res.status === 404) {
         setLookupNotFound(true);
@@ -402,7 +403,7 @@ export default function TeamPage() {
       }
       if (!res.ok) throw new Error(data.error || "Ошибка поиска");
       if (data.found) {
-        setLookupResult(data as LookupByPhoneResult);
+        setLookupResult(data as LookupByIdentityResult);
         setLookupNotFound(false);
       } else {
         setLookupNotFound(true);
@@ -438,13 +439,14 @@ export default function TeamPage() {
       photoUrl: lookupResult.photoUrl ?? undefined,
     };
     setLookupResult(null);
-    setLookupPhone("");
+    setLookupQuery("");
     setLookupNotFound(false);
     setEditingStaff(staffFromLookup);
   };
 
   const handleCreateNewFromLookup = () => {
-    const phone = lookupPhone.trim();
+    const query = lookupQuery.trim();
+    const digitsOnly = query.replace(/\D/g, "");
     const staffNew: Staff = {
       id: "",
       venueId: VENUE_ID,
@@ -452,11 +454,11 @@ export default function TeamPage() {
       primaryChannel: "telegram",
       identity: { channel: "telegram", externalId: "", locale: "ru" },
       onShift: false,
-      phone: phone || undefined,
-      identities: phone ? { phone } : undefined,
+      phone: digitsOnly.length > 0 ? digitsOnly : undefined,
+      identities: digitsOnly.length > 0 ? { phone: digitsOnly } : query ? { tg: query } : undefined,
     };
     setLookupNotFound(false);
-    setLookupPhone("");
+    setLookupQuery("");
     setLookupResult(null);
     setEditingStaff(staffNew);
   };
@@ -511,24 +513,24 @@ export default function TeamPage() {
       <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
           <Phone className="h-4 w-4" />
-          Принять по телефону
+          Принять по телефону или ID соцсети
         </h3>
         <p className="mt-1 text-xs text-gray-600">
-          Введите номер — система найдёт трудовую книжку (опыт, рейтинг) в global_users и предложит принять в штат. Если человека нет — создаём нового.
+          Введите номер телефона (без +) или ID соцсети (Telegram, VK и др.) — система найдёт трудовую книжку и предложит принять в штат. Если человека нет — создаём нового.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input
-            type="tel"
-            placeholder="+7 900 123-45-67"
-            value={lookupPhone}
-            onChange={(e) => { setLookupPhone(e.target.value); setLookupError(null); setLookupResult(null); setLookupNotFound(false); }}
-            onKeyDown={(e) => e.key === "Enter" && handleLookupByPhone()}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-48"
+            type="text"
+            placeholder="Номер или ID (например 79001234567, @username)"
+            value={lookupQuery}
+            onChange={(e) => { setLookupQuery(e.target.value); setLookupError(null); setLookupResult(null); setLookupNotFound(false); }}
+            onKeyDown={(e) => e.key === "Enter" && handleLookupByIdentity()}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-64"
           />
           <button
             type="button"
-            onClick={handleLookupByPhone}
-            disabled={lookupLoading || !lookupPhone.trim()}
+            onClick={handleLookupByIdentity}
+            disabled={lookupLoading || !lookupQuery.trim()}
             className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
           >
             {lookupLoading ? "Поиск…" : "Найти"}
@@ -549,6 +551,23 @@ export default function TeamPage() {
                 <p className="font-medium text-gray-900">
                   {[lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ") || "Без имени"}
                 </p>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {IDENTITY_OPTIONS.filter((o) => o.value !== "email").map((opt) => {
+                    const linked = !!(lookupResult!.identities?.[opt.value] ?? (opt.value === "tg" && lookupResult!.tgId));
+                    const isFoundBy = lookupResult!.foundBy === opt.value;
+                    return (
+                      <span
+                        key={opt.value}
+                        title={`${opt.label}: ${linked ? "привязан" : "нет"}${isFoundBy ? " (найден по этому полю)" : ""}`}
+                        className={`inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded px-1 text-[10px] font-medium ${
+                          isFoundBy ? "ring-2 ring-blue-500 bg-blue-100 text-blue-800" : linked ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-400"
+                        }`}
+                      >
+                        {opt.short}
+                      </span>
+                    );
+                  })}
+                </div>
                 {lookupResult.globalScore != null && (
                   <p className="mt-0.5 flex items-center gap-1 text-sm text-amber-700">
                     <Star className="h-3.5 w-3.5" /> Рейтинг: {lookupResult.globalScore}
@@ -580,18 +599,18 @@ export default function TeamPage() {
         )}
         {lookupNotFound && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3">
-            <p className="text-sm text-gray-700">Пользователь с таким телефоном не найден в системе.</p>
+            <p className="text-sm text-gray-700">Пользователь не найден в системе.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={handleCreateNewFromLookup}
                 className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500"
               >
-                Создать нового (телефон будет подставлен)
+                Создать нового (данные будут подставлены)
               </button>
               <button
                 type="button"
-                onClick={() => { setLookupNotFound(false); setLookupPhone(""); setLookupError(null); setLookupResult(null); }}
+                onClick={() => { setLookupNotFound(false); setLookupQuery(""); setLookupError(null); setLookupResult(null); }}
                 className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена
