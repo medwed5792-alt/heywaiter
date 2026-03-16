@@ -174,6 +174,12 @@ function AdminDashboardContent() {
   const searchParams = useSearchParams();
   const venueId = (searchParams.get("v") || searchParams.get("venueId") || "current").trim() || "current";
 
+  useEffect(() => {
+    if (venueId && venueId !== "current" && typeof window !== "undefined") {
+      localStorage.setItem("lastVenueId", venueId);
+    }
+  }, [venueId]);
+
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [tables, setTables] = useState<TableRow[]>([]);

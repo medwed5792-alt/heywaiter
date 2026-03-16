@@ -91,22 +91,33 @@ export function useFinalVenueId() {
     localVenueId ||
     "";
   const hasVenue = Boolean(finalVenueId && finalVenueId !== "current");
-  return { finalVenueId, hasVenue };
+  const venueIdSource: "url" | "profile" | "localStorage" | null =
+    urlVenueId && urlVenueId !== "current"
+      ? "url"
+      : currentUserVenueId
+        ? "profile"
+        : localVenueId
+          ? "localStorage"
+          : null;
+  return { finalVenueId, hasVenue, venueIdSource };
 }
 
 interface SettingsOperatingHoursSectionProps {
   /** Если переданы с страницы — используются; иначе вычисляются внутри через useFinalVenueId */
   finalVenueId?: string;
   hasVenue?: boolean;
+  venueIdSource?: "url" | "profile" | "localStorage" | null;
 }
 
 export function SettingsOperatingHoursSection({
   finalVenueId: propFinalVenueId,
   hasVenue: propHasVenue,
+  venueIdSource: propVenueIdSource,
 }: SettingsOperatingHoursSectionProps = {}) {
   const resolved = useFinalVenueId();
   const finalVenueId = propFinalVenueId ?? resolved.finalVenueId;
   const hasVenue = propHasVenue ?? Boolean(finalVenueId && finalVenueId !== "current");
+  const venueIdSource = propVenueIdSource ?? resolved.venueIdSource;
 
   const [hours, setHours] = useState<OperatingHours>(defaultHours);
   const [loading, setLoading] = useState(false);
@@ -181,6 +192,9 @@ export function SettingsOperatingHoursSection({
 
   return (
     <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      {venueIdSource === "localStorage" && finalVenueId && (
+        <p className="mb-2 text-xs text-gray-500">Настройки для заведения: {finalVenueId}</p>
+      )}
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium text-gray-900">Режим работы</h4>
         <button
