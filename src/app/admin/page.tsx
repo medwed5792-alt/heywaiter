@@ -244,31 +244,56 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     if (!venueId || venueType !== "full_service") return;
-    const unsub = onSnapshot(
-      query(collection(db, "bookings"), where("venueId", "==", venueId)),
-      (snap) => {
-        const today = new Date().toISOString().slice(0, 10);
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const q = query(
+      collection(db, "venues", venueId, "bookings"),
+      orderBy("startAt", "asc"),
+      where("startAt", ">=", startOfDay),
+      where("startAt", "<=", endOfDay)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      try {
         let todayCount = 0;
         const now = Date.now();
         const windowEnd = now + BOOKING_WINDOW_MS;
         const byTable: Record<string, BookingOnTable[]> = {};
+
         snap.docs.forEach((d) => {
           const data = d.data();
-          const status = data.status as string;
+          const status = (data.status as string) ?? "pending";
           if (status === "cancelled") return;
-          const date = (data.date as string) ?? "";
-          if (date === today) todayCount++;
-          const startTime = (data.startTime as string) ?? "12:00";
+
           const startAtRaw = data.startAt as { toDate?: () => Date } | undefined;
-          const startAt = startAtRaw?.toDate?.() ?? toStartAt(date, startTime);
+          const startAt = startAtRaw?.toDate?.() ?? new Date();
           const startMs = startAt.getTime();
-          if (Number.isNaN(startMs) || startMs < now || startMs > windowEnd) return;
-          const tableId = String(data.tableId ?? "").trim();
+          if (Number.isNaN(startMs)) return;
+
+          const dateStr = startAt.toISOString().slice(0, 10);
+          const todayStr = today.toISOString().slice(0, 10);
+          if (dateStr === todayStr) todayCount++;
+
+          // Ограничиваем окнами «ближайшие 2 часа»
+          if (startMs < now || startMs > windowEnd) return;
+
+          const tableNumber = data.tableNumber as number | undefined;
+          const tableId =
+            String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
           if (!tableId) return;
+
           const b: BookingOnTable = {
             id: d.id,
-            date,
-            startTime,
+            date: dateStr,
+            startTime:
+              (data.startTime as string) ??
+              `${String(startAt.getHours()).padStart(2, "0")}:${String(
+                startAt.getMinutes()
+              ).padStart(2, "0")}`,
             startAt,
             guestName: data.guestName as string | undefined,
             isUrgent: data.isUrgent === true,
@@ -276,10 +301,13 @@ function AdminDashboardContent() {
           if (!byTable[tableId]) byTable[tableId] = [];
           byTable[tableId].push(b);
         });
+
         setBookingsTodayCount(todayCount);
         setBookingsByTable(byTable);
+      } catch (e) {
+        console.error("[admin/dashboard] bookings snapshot error:", e);
       }
-    );
+    });
     return () => unsub();
   }, [venueType, venueId]);
 
@@ -417,21 +445,26 @@ function AdminDashboardContent() {
       limit(50)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          type: data.type ?? "",
-          message: data.message ?? "",
-          tableId: data.tableId,
-          read: data.read === true,
-          createdAt: data.createdAt,
-        };
-      });
-      setFeedEvents(list);
-      const sos = list.find((e) => e.type === "sos" && e.read === false);
-      setActiveSos(sos ?? null);
-      setFeedLoading(false);
+      try {
+        const list = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            type: data.type ?? "",
+            message: data.message ?? "",
+            tableId: data.tableId,
+            read: data.read === true,
+            createdAt: data.createdAt,
+          };
+        });
+        setFeedEvents(list);
+        const sos = list.find((e) => e.type === "sos" && e.read === false);
+        setActiveSos(sos ?? null);
+        setFeedLoading(false);
+      } catch (e) {
+        console.error("[admin/dashboard] staffNotifications snapshot error:", e);
+        setFeedLoading(false);
+      }
     });
     return () => unsub();
   }, [venueId]);
@@ -442,21 +475,27 @@ function AdminDashboardContent() {
     const q = query(
       collection(db, "venues", venueId, "events"),
       orderBy("createdAt", "desc"),
-      limit(100)
+      limit(10)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const list: FeedEvent[] = snap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          type: (data.type as string) ?? "shift",
-          message: (data.message as string) ?? "",
-          tableId: undefined,
-          read: false,
-          createdAt: data.createdAt,
-        };
-      });
-      setShiftEvents(list);
+      try {
+        const list: FeedEvent[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            type: (data.type as string) ?? "shift",
+            message: (data.message as string) ?? "",
+            tableId: undefined,
+            read: false,
+            createdAt: data.createdAt,
+          };
+        });
+        setShiftEvents(list);
+        setFeedLoading(false);
+      } catch (e) {
+        console.error("[admin/dashboard] events snapshot error:", e);
+        setFeedLoading(false);
+      }
     });
     return () => unsub();
   }, [venueId]);
