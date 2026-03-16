@@ -65,7 +65,7 @@ function factHoursFromCheckInOut(checkIn?: string, checkOut?: string): number | 
 function normalizeEntry(d: { id: string; data: () => Record<string, unknown> }): ScheduleEntry {
   const data = d.data() ?? {};
   const id = d.id;
-  const venueId = (data?.venueId as string) ?? "";
+  const venueId = (data?.venueId as string) || "current";
   const staffId = (data?.staffId as string) ?? "";
   const date = (data?.date as string) ?? todayISO();
   const planHours = (data?.planHours as number) ?? 0;

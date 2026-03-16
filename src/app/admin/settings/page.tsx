@@ -17,8 +17,8 @@ function SettingsContent() {
     }
   }, []);
   const currentVenueId =
-    (fromUrl && fromUrl !== "current" ? fromUrl : null) || fromStorage || "";
-  const hasVenue = Boolean(currentVenueId && currentVenueId !== "current");
+    (fromUrl && fromUrl !== "current" ? fromUrl : null) || fromStorage || "current";
+  const hasVenue = Boolean(currentVenueId);
   const venueIdFromStorage = Boolean(fromStorage && currentVenueId === fromStorage);
 
   return (
