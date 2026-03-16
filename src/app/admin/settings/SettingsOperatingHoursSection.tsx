@@ -114,10 +114,12 @@ export function SettingsOperatingHoursSection({
   hasVenue: propHasVenue,
   venueIdSource: propVenueIdSource,
 }: SettingsOperatingHoursSectionProps = {}) {
+  const searchParams = useSearchParams();
   const resolved = useFinalVenueId();
   const finalVenueId = propFinalVenueId ?? resolved.finalVenueId;
   const hasVenue = propHasVenue ?? Boolean(finalVenueId && finalVenueId !== "current");
   const venueIdSource = propVenueIdSource ?? resolved.venueIdSource;
+  const currentVenueId = finalVenueId || searchParams.get("venueId") || searchParams.get("v") || "current";
 
   const [hours, setHours] = useState<OperatingHours>(defaultHours);
   const [loading, setLoading] = useState(false);
@@ -164,13 +166,9 @@ export function SettingsOperatingHoursSection({
   };
 
   const handleSaveOperatingHours = async () => {
-    if (!finalVenueId || finalVenueId === "current") {
-      toast.error("Ошибка: не удалось определить ID заведения");
-      return;
-    }
     setSaving(true);
     try {
-      const ref = doc(db, "venues", finalVenueId);
+      const ref = doc(db, "venues", currentVenueId);
       await setDoc(
         ref,
         {
@@ -180,9 +178,9 @@ export function SettingsOperatingHoursSection({
         { merge: true }
       );
       if (typeof window !== "undefined") {
-        localStorage.setItem(LAST_VENUE_KEY, finalVenueId);
+        localStorage.setItem(LAST_VENUE_KEY, currentVenueId);
       }
-      toast.success("Режим работы сохранён");
+      toast.success(`График работы для заведения '${currentVenueId}' обновлен`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось сохранить режим работы");
     } finally {
@@ -200,7 +198,7 @@ export function SettingsOperatingHoursSection({
         <button
           type="button"
           onClick={handleSaveOperatingHours}
-          disabled={saving || !hasVenue}
+          disabled={saving}
           className="inline-flex items-center rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-gray-800 disabled:opacity-60"
         >
           {saving ? "Сохранение..." : "Сохранить"}
