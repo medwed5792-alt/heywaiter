@@ -638,19 +638,18 @@ function AdminDashboardContent() {
     );
     const unsub = onSnapshot(q, (snap) => {
       try {
-        const list: FeedEvent[] = snap.docs
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              type: (data.type as string) ?? "shift",
-              message: (data.message as string) ?? "",
-              tableId: data.tableId as string | undefined,
-              read: Boolean(data.read),
-              createdAt: data.createdAt,
-            };
-          })
-          .filter((ev) => !isInvalidEventMessage(ev.message));
+        const list: FeedEvent[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            ...data,
+            id: d.id,
+            type: (data.type as string) ?? "shift",
+            message: (data.message as string) ?? "",
+            tableId: data.tableId as string | undefined,
+            read: Boolean(data.read),
+            createdAt: data.createdAt,
+          } as FeedEvent;
+        });
         setShiftEvents(list);
         setFeedLoading(false);
       } catch (e) {
@@ -663,7 +662,11 @@ function AdminDashboardContent() {
 
   const archiveEvent = useCallback(
     async (event: FeedEvent) => {
-      const eventId = event.id;
+      const eventId = event?.id ?? "";
+      if (!eventId) {
+        toast.error("Ошибка: ID события не найден");
+        return;
+      }
       const vid = venueId || "current";
       try {
         await deleteDoc(doc(db, "venues", vid, "events", eventId));
