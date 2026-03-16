@@ -166,8 +166,12 @@ function AdminDashboardContent() {
         if (!cancelled && data?.closed > 0) toast.success(`Сброшено зависших столов: ${data.closed}`);
       })
       .catch(() => {})
-      .finally(() => { if (!cancelled) setResetDone(true); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setResetDone(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [venueType, venueId, resetDone]);
 
   useEffect(() => {
@@ -189,7 +193,9 @@ function AdminDashboardContent() {
         if (!cancelled) setVenueLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [venueId]);
 
   useEffect(() => {
@@ -203,26 +209,34 @@ function AdminDashboardContent() {
       if (cancelled) return;
       const fromVenue = venueTablesSnap.docs.map((d) => {
         const data = d.data();
-        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined, name: data.name as string | undefined };
+        return {
+          id: d.id,
+          number: (data.number as number) ?? 0,
+          hallId: data.hallId as string | undefined,
+          name: data.name as string | undefined,
+        };
       });
       const fromRoot = rootTablesSnap.docs.map((d) => {
         const data = d.data();
-        return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined, name: data.name as string | undefined };
+        return {
+          id: d.id,
+          number: (data.number as number) ?? 0,
+          hallId: data.hallId as string | undefined,
+          name: data.name as string | undefined,
+        };
       });
       const list = fromVenue.length ? fromVenue : fromRoot;
       setTables(list);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [venueType, venueId]);
 
   useEffect(() => {
     if (!venueId || venueType !== "full_service") return;
     const unsub = onSnapshot(
-      query(
-        collection(db, "activeSessions"),
-        where("venueId", "==", venueId),
-        where("status", "==", "check_in_success")
-      ),
+      query(collection(db, "activeSessions"), where("venueId", "==", venueId), where("status", "==", "check_in_success")),
       (snap) => {
         const nextIds = new Set(snap.docs.map((d) => d.id));
         activeSessionIdsRef.current = new Set([...activeSessionIdsRef.current, ...nextIds]);
@@ -284,8 +298,7 @@ function AdminDashboardContent() {
           if (startMs < now || startMs > windowEnd) return;
 
           const tableNumber = (data.tableNumber as number | string | undefined) ?? undefined;
-          const tableId =
-            String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
+          const tableId = String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
           if (!tableId) return;
 
           const b: BookingOnTable = {
@@ -293,9 +306,7 @@ function AdminDashboardContent() {
             date: dateStr,
             startTime:
               (data.startTime as string) ??
-              `${String(startAt.getHours()).padStart(2, "0")}:${String(
-                startAt.getMinutes()
-              ).padStart(2, "0")}`,
+              `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`,
             startAt,
             guestName: data.guestName as string | undefined,
             isUrgent: data.isUrgent === true,
@@ -318,23 +329,19 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueId) return;
     const unsub = onSnapshot(
-      query(
-        collection(db, "staff"),
-        where("venueId", "==", venueId),
-        where("active", "==", true),
-        where("onShift", "==", true)
-      ),
+      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true), where("onShift", "==", true)),
       (snap) => {
         setOnShiftCount(snap.size);
         const list: ShiftStaff[] = [];
         snap.docs.forEach((d) => {
           const data = d.data();
           const position = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string) ?? "";
-          const isWaiter = position === "waiter" || (data.role as string) === "waiter" || (data.serviceRole as string) === "waiter";
-          const isLpr = position && LPR_ROLES.includes(position);
+          const isWaiter =
+            position === "waiter" || (data.role as string) === "waiter" || (data.serviceRole as string) === "waiter";
+          const isLpr = position && LPR_ROLES.includes(position as any);
           if (!isWaiter && !isLpr) return;
-          const firstName = data.firstName as string ?? "";
-          const lastName = data.lastName as string ?? "";
+          const firstName = (data.firstName as string) ?? "";
+          const lastName = (data.lastName as string) ?? "";
           const name = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
           list.push({ id: d.id, displayName: name, position });
         });
@@ -370,19 +377,16 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     if (!venueId || tables.length === 0) return;
-    const unsub = onSnapshot(
-      collection(db, "venues", venueId, "tables"),
-      (snap) => {
-        const next: Record<string, string> = {};
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const a = data.assignments as Record<string, string> | undefined;
-          const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
-          if (staffId) next[d.id] = staffId;
-        });
-        setAssignmentsByTable((prev) => ({ ...prev, ...next }));
-      }
-    );
+    const unsub = onSnapshot(collection(db, "venues", venueId, "tables"), (snap) => {
+      const next: Record<string, string> = {};
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const a = data.assignments as Record<string, string> | undefined;
+        const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
+        if (staffId) next[d.id] = staffId;
+      });
+      setAssignmentsByTable((prev) => ({ ...prev, ...next }));
+    });
     return () => unsub();
   }, [tables.length, venueId]);
 
@@ -404,7 +408,9 @@ function AdminDashboardContent() {
       }
       if (!cancelled) setAssignmentsByTable((prev) => ({ ...prev, ...next }));
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [tableIds, tables, venueId]);
 
   const guestIds = Object.values(sessionsByTable)
@@ -437,7 +443,9 @@ function AdminDashboardContent() {
         setGuestRatings(ratings);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [guestIds.join(",")]);
 
   useEffect(() => {
@@ -505,14 +513,8 @@ function AdminDashboardContent() {
   const archiveEvent = useCallback(
     async (event: FeedEvent) => {
       try {
-        if (event.type === "shift") {
-          await deleteDoc(doc(db, "venues", venueId, "events", event.id));
-          return;
-        }
-        await updateDoc(doc(db, "staffNotifications", event.id), {
-          read: true,
-          updatedAt: serverTimestamp(),
-        });
+        // Все события ленты храним в venues/{venueId}/events
+        await deleteDoc(doc(db, "venues", venueId, "events", event.id));
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Ошибка");
       }
@@ -520,19 +522,26 @@ function AdminDashboardContent() {
     [venueId]
   );
 
-  const saveTableWaiter = useCallback(async (tableId: string, staffId: string) => {
-    try {
-      const ref = doc(db, "venues", venueId, "tables", tableId);
-      const snap = await getDoc(ref);
-      const existing = snap.exists() ? (snap.data()?.assignments as Record<string, string> | undefined) ?? {} : {};
-      await setDoc(ref, {
-        assignments: { ...existing, waiter: staffId },
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
-    }
-  }, [venueId]);
+  const saveTableWaiter = useCallback(
+    async (tableId: string, staffId: string) => {
+      try {
+        const ref = doc(db, "venues", venueId, "tables", tableId);
+        const snap = await getDoc(ref);
+        const existing = snap.exists() ? ((snap.data()?.assignments as Record<string, string> | undefined) ?? {}) : {};
+        await setDoc(
+          ref,
+          {
+            assignments: { ...existing, waiter: staffId },
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+      }
+    },
+    [venueId]
+  );
 
   useEffect(() => {
     if (!venueId) return;
@@ -586,11 +595,13 @@ function AdminDashboardContent() {
     const now = Date.now();
     let nearest: number | null = null;
     try {
-      Object.values(bookings).flat().forEach((b) => {
-        if (!b?.startAt) return;
-        const ms = b.startAt.getTime?.() - now;
-        if (Number.isFinite(ms) && ms > 0 && (nearest == null || ms < nearest * 60000)) nearest = ms / 60000;
-      });
+      Object.values(bookings)
+        .flat()
+        .forEach((b) => {
+          if (!b?.startAt) return;
+          const ms = b.startAt.getTime?.() - now;
+          if (Number.isFinite(ms) && ms > 0 && (nearest == null || ms < nearest * 60000)) nearest = ms / 60000;
+        });
     } catch {
       // ignore
     }
@@ -629,11 +640,7 @@ function AdminDashboardContent() {
   const feedWithReminders = useMemo(() => {
     const feed = feedEvents ?? [];
     const shifts = shiftEvents ?? [];
-    return [
-      ...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })),
-      ...shifts,
-      ...feed,
-    ];
+    return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...shifts, ...feed];
   }, [bookingReminderEvents, feedEvents, shiftEvents]);
 
   const safeStaffList = staffList ?? [];
@@ -677,9 +684,7 @@ function AdminDashboardContent() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
-      <p className="mt-2 text-sm text-gray-600">
-        Живой зал, брони, смена и события в реальном времени.
-      </p>
+      <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
@@ -697,15 +702,23 @@ function AdminDashboardContent() {
               </p>
               <p className="mt-0.5 text-xs text-gray-500">занято / всего столов</p>
             </div>
-            <Link href="/admin/bookings" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block">
+            <Link
+              href="/admin/bookings"
+              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block"
+            >
               <h3 className="text-sm font-medium text-gray-600">Брони сегодня</h3>
               <p className="mt-1 text-2xl font-bold text-blue-700">{bookingsTodayCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">{todayStr}</p>
               {nextBookingInMinutes != null && nextBookingInMinutes > 0 && (
-                <p className="mt-1 text-xs font-medium text-blue-600">Следующая бронь через {Math.round(nextBookingInMinutes)} мин.</p>
+                <p className="mt-1 text-xs font-medium text-blue-600">
+                  Следующая бронь через {Math.round(nextBookingInMinutes)} мин.
+                </p>
               )}
             </Link>
-            <Link href="/admin/team" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block">
+            <Link
+              href="/admin/team"
+              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block"
+            >
               <h3 className="text-sm font-medium text-gray-600">На смене</h3>
               <p className="mt-1 text-2xl font-bold text-emerald-700">{onShiftCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">сотрудников</p>
@@ -737,17 +750,13 @@ function AdminDashboardContent() {
                 const isBookingReminder = ev.type === "booking_reminder";
                 let createdAtLabel = "";
                 try {
-                  const raw = ev.createdAt as
-                    | { toDate?: () => Date }
-                    | Date
-                    | null
-                    | undefined;
+                  const raw = ev.createdAt as { toDate?: () => Date } | Date | null | undefined;
                   const d =
                     raw && typeof (raw as any).toDate === "function"
                       ? (raw as { toDate: () => Date }).toDate()
                       : raw instanceof Date
-                        ? raw
-                        : null;
+                      ? raw
+                      : null;
                   if (d) {
                     createdAtLabel = formatTimeSafe(d);
                   }
@@ -759,40 +768,51 @@ function AdminDashboardContent() {
                 const isStoppedShift = isShift && ev.message.includes("ушел");
 
                 return (
-                <li
-                  key={ev.id}
-                  className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
-                    ev.read
-                      ? "border-gray-100 bg-gray-50/50 text-gray-500"
-                      : isBookingReminder
+                  <li
+                    key={ev.id}
+                    className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
+                      ev.read
+                        ? "border-gray-100 bg-gray-50/50 text-gray-500"
+                        : isBookingReminder
                         ? "border-amber-300 bg-amber-50/80 text-amber-900"
                         : isStartedShift
-                          ? "border-green-200 bg-[#e6fffa] text-emerald-900"
-                          : isOrphan
-                            ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
-                            : "border-amber-200 bg-amber-50/80 text-amber-900"
-                  }`}
-                >
-                  <span>
-                    {isBookingReminder ? "⚠️ " : ev.type === "sos" ? "🚨 SOS" : isOrphan ? "⚠️ Стол без ответственного" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
-                    {createdAtLabel && (
-                      <span className="ml-1 text-xs text-gray-500">
-                        · {createdAtLabel}
-                      </span>
+                        ? "border-green-200 bg-[#e6fffa] text-emerald-900"
+                        : isOrphan
+                        ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                        : "border-amber-200 bg-amber-50/80 text-amber-900"
+                    }`}
+                  >
+                    <span>
+                      {isBookingReminder
+                        ? "⚠️ "
+                        : ev.type === "sos"
+                        ? "🚨 SOS"
+                        : isOrphan
+                        ? "⚠️ Стол без ответственного"
+                        : ev.type === "role_call" || ev.type === "call_waiter"
+                        ? "📞 Вызов"
+                        : ev.type === "request_bill"
+                        ? "🧾 Счёт"
+                        : ""}{" "}
+                      {ev.message}
+                      {createdAtLabel && (
+                        <span className="ml-1 text-xs text-gray-500">· {createdAtLabel}</span>
+                      )}
+                      {ev.tableId != null && !isBookingReminder && (
+                        <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>
+                      )}
+                    </span>
+                    {!isBookingReminder && (
+                      <button
+                        type="button"
+                        onClick={() => archiveEvent(ev)}
+                        className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        ОК
+                      </button>
                     )}
-                    {ev.tableId != null && !isBookingReminder && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
-                  </span>
-                  {!isBookingReminder && (
-                    <button
-                      type="button"
-                      onClick={() => archiveEvent(ev)}
-                      className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      ОК
-                    </button>
-                  )}
-                </li>
-              );
+                  </li>
+                );
               })}
             </ul>
           )}
@@ -800,14 +820,17 @@ function AdminDashboardContent() {
       )}
 
       {activeSos && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h3 className="text-base font-semibold text-red-700 flex items-center gap-2">
               <span>🚨 SOS сигнал</span>
             </h3>
             <p className="mt-2 text-sm text-gray-800">
-              {activeSos.tableId ? `Стол №${activeSos.tableId}` : "Стол не указан"}.{" "}
-              {activeSos.message}
+              {activeSos.tableId ? `Стол №${activeSos.tableId}` : "Стол не указан"}. {activeSos.message}
             </p>
             <div className="mt-4 flex gap-2">
               <button
@@ -837,119 +860,153 @@ function AdminDashboardContent() {
       {venueType === "full_service" && (
         <section className="mt-8">
           <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
-          <p className="mt-1 text-sm text-gray-500">Назначьте официанта — уведомления с стола пойдут ему в Telegram.</p>
+          <p className="mt-1 text-sm text-gray-500">
+            Назначьте официанта — уведомления с стола пойдут ему в Telegram.
+          </p>
           {!safeTables || safeTables.length === 0 ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
               Загрузка столов...
             </div>
           ) : (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {safeTables.map((table) => {
-              if (!table?.id) return null;
-              try {
-              const session = safeSessionsByTable[table.id];
-              const isOccupied = Boolean(session);
-              const activeBooking = allBookings.find(
-                (b) =>
-                  String(b.tableNumber ?? "") ===
-                    String(table.number ?? table.id) &&
-                  (b.status ?? "pending") === "pending"
-              );
-              const now = new Date();
-              const startTimeDate = activeBooking?.startAt ?? null;
-              const diffInMinutes =
-                startTimeDate != null
-                  ? (startTimeDate.getTime() - now.getTime()) / 60000
-                  : null;
-              const isUrgent =
-                diffInMinutes != null &&
-                Number.isFinite(diffInMinutes) &&
-                diffInMinutes <= 30 &&
-                diffInMinutes > -15;
-              const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
-              const defaultFromTeam = safeStaffList.find((s) => s?.assignedTableIds?.includes(table.id));
-              const assignedStaff = assignedStaffId ? safeStaffList.find((s) => s?.id === assignedStaffId) : null;
-              const isGreenSelect = assignedStaffId !== "" && (assignedStaff?.onShift === true);
-              const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
-              const effectiveStaff = effectiveWaiterId ? safeStaffList.find((s) => s?.id === effectiveWaiterId) : null;
-              const isWaiterOffShift = effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
-              const uniqueStaff = Array.from(new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values());
-              const selectValue =
-                assignedStaffId ||
-                (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
-              const isPlanSelection = Boolean(selectValue && !assignedStaffId);
-              const hasEmergency = emergencyTableIds.has(table.id);
-              const cardBorder = hasEmergency
-                ? "border-red-600 border-8 animate-bounce"
-                : isUrgent
-                  ? "border-orange-500 border-4 animate-pulse"
-                  : isOccupied
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              {safeTables.map((table) => {
+                if (!table?.id) return null;
+                try {
+                  const session = safeSessionsByTable[table.id];
+                  const isOccupied = Boolean(session);
+                  const activeBooking = allBookings.find(
+                    (b) =>
+                      String(b.tableNumber ?? "") === String(table.id) &&
+                      (b.status ?? "pending") === "pending"
+                  );
+                  const now = new Date();
+                  const startTimeDate = activeBooking?.startAt ?? null;
+                  const diffInMinutes =
+                    startTimeDate != null
+                      ? (startTimeDate.getTime() - now.getTime()) / 60000
+                      : null;
+                  const isUrgent =
+                    diffInMinutes != null &&
+                    Number.isFinite(diffInMinutes) &&
+                    diffInMinutes <= 30 &&
+                    diffInMinutes > -15;
+                  const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
+                  const defaultFromTeam = safeStaffList.find((s) =>
+                    s?.assignedTableIds?.includes(table.id)
+                  );
+                  const assignedStaff = assignedStaffId
+                    ? safeStaffList.find((s) => s?.id === assignedStaffId)
+                    : null;
+                  const isGreenSelect =
+                    assignedStaffId !== "" && (assignedStaff?.onShift === true);
+                  const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
+                  const effectiveStaff = effectiveWaiterId
+                    ? safeStaffList.find((s) => s?.id === effectiveWaiterId)
+                    : null;
+                  const isWaiterOffShift =
+                    effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
+                  const uniqueStaff = Array.from(
+                    new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
+                  );
+                  const selectValue =
+                    assignedStaffId ||
+                    (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id)
+                      ? defaultFromTeam.id
+                      : "");
+                  const isPlanSelection = Boolean(selectValue && !assignedStaffId);
+                  const hasEmergency = emergencyTableIds.has(table.id);
+                  const cardBorder = hasEmergency
+                    ? "border-red-600 border-8 animate-bounce"
+                    : isUrgent
+                    ? "border-orange-500 border-4 animate-pulse"
+                    : isOccupied
                     ? "border-sky-300"
                     : "border-emerald-400";
-              const cardBg = isOccupied ? "bg-sky-50/90" : "bg-white";
-              return (
-                <div
-                  key={table.id}
-                  className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg}`}
-                >
-                  <div className="text-2xl font-bold text-gray-900">{table?.number ?? table.id ?? "—"}</div>
-                  {isWaiterOffShift && (
-                    <p className="mt-1 text-xs font-medium text-amber-700">Официант не на смене</p>
-                  )}
-                  <div className="mt-2">
-                    <label className="block text-xs text-gray-500">Официант</label>
-                    <select
-                      value={selectValue ?? ""}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const tid = table?.id;
-                        if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
-                        if (v && tid) saveTableWaiter(tid, v);
-                      }}
-                      className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
-                        isGreenSelect ? "border-emerald-400 bg-emerald-50" : "border-gray-300 bg-white"
-                      }`}
+                  const cardBg = isOccupied ? "bg-sky-50/90" : "bg-white";
+
+                  return (
+                    <div
+                      key={table.id}
+                      className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg}`}
                     >
-                      <option value="">—</option>
-                      {uniqueStaff.map((w) => (
-                        <option key={w.id} value={w.id}>{w.displayName}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {isPlanSelection && (
-                    <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
-                  )}
-                  {activeBooking && startTimeDate && (
-                    <div className="mt-2 text-xs">
-                      <span className={isUrgent ? "font-extrabold text-orange-600 animate-pulse" : "text-blue-700"}>
-                        🕒 {formatTimeSafe(startTimeDate)}
-                      </span>
-                      {activeBooking.guestName ? (
-                        <span className="text-blue-700">{` · ${activeBooking.guestName}`}</span>
-                      ) : null}
-                    </div>
-                  )}
-                  {session?.guestId ? (
-                    <button
-                      type="button"
-                      onClick={() => openGuestModal(session.guestId!)}
-                      className="mt-2 w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm hover:bg-gray-100"
-                    >
-                      {guestNames[session.guestId] ?? "Гость"}
-                      {guestRatings[session.guestId] != null && (
-                        <span className="ml-1 text-amber-600">★ {guestRatings[session.guestId]}</span>
+                      <div className="text-2xl font-bold text-gray-900">
+                        {table?.number ?? table.id ?? "—"}
+                      </div>
+                      {isWaiterOffShift && (
+                        <p className="mt-1 text-xs font-medium text-amber-700">
+                          Официант не на смене
+                        </p>
                       )}
-                    </button>
-                  ) : (
-                    <div className="mt-2 text-xs text-gray-400">Свободен</div>
-                  )}
-                </div>
-              );
-              } catch {
-                return null;
-              }
-            })}
-          </div>
+                      <div className="mt-2">
+                        <label className="block text-xs text-gray-500">Официант</label>
+                        <select
+                          value={selectValue ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const tid = table?.id;
+                            if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
+                            if (v && tid) saveTableWaiter(tid, v);
+                          }}
+                          className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
+                            isGreenSelect
+                              ? "border-emerald-400 bg-emerald-50"
+                              : "border-gray-300 bg-white"
+                          }`}
+                        >
+                          <option value="">—</option>
+                          {uniqueStaff.map((w) => (
+                            <option key={w.id} value={w.id}>
+                              {w.displayName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {isPlanSelection && (
+                        <p className="mt-1 text-xs italic text-gray-500">
+                          По плану из Команды
+                        </p>
+                      )}
+                      {activeBooking && startTimeDate && (
+                        <div className="mt-2 text-xs">
+                          <span
+                            className={
+                              isUrgent
+                                ? "font-extrabold text-orange-600 animate-pulse"
+                                : "text-blue-700"
+                            }
+                          >
+                            🕒 {formatTimeSafe(startTimeDate)}
+                          </span>
+                          {activeBooking.guestName ? (
+                            <span className="text-blue-700">
+                              {` · ${activeBooking.guestName}`}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                      {session?.guestId ? (
+                        <button
+                          type="button"
+                          onClick={() => openGuestModal(session.guestId!)}
+                          className="mt-2 w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm hover:bg-gray-100"
+                        >
+                          {guestNames[session.guestId] ?? "Гость"}
+                          {guestRatings[session.guestId] != null && (
+                            <span className="ml-1 text-amber-600">
+                              ★ {guestRatings[session.guestId]}
+                            </span>
+                          )}
+                        </button>
+                      ) : (
+                        <div className="mt-2 text-xs text-gray-400">Свободен</div>
+                      )}
+                    </div>
+                  );
+                } catch {
+                  return null;
+                }
+              })}
+            </div>
           )}
         </section>
       )}
@@ -974,14 +1031,30 @@ function AdminDashboardContent() {
       )}
 
       {guestModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h3 className="font-semibold text-gray-900">Карточка гостя</h3>
             <div className="mt-3 space-y-1 text-sm">
-              <p><span className="text-gray-500">Имя:</span> {guestModal.name ?? guestModal.nickname ?? "—"}</p>
-              <p><span className="text-gray-500">Телефон:</span> {guestModal.phone ?? "—"}</p>
-              <p><span className="text-gray-500">TG:</span> {guestModal.tgId ?? "—"}</p>
-              <p><span className="text-gray-500">Тип:</span> {guestModal.type ?? "—"}</p>
+              <p>
+                <span className="text-gray-500">Имя:</span>{" "}
+                {guestModal.name ?? guestModal.nickname ?? "—"}
+              </p>
+              <p>
+                <span className="text-gray-500">Телефон:</span>{" "}
+                {guestModal.phone ?? "—"}
+              </p>
+              <p>
+                <span className="text-gray-500">TG:</span>{" "}
+                {guestModal.tgId ?? "—"}
+              </p>
+              <p>
+                <span className="text-gray-500">Тип:</span>{" "}
+                {guestModal.type ?? "—"}
+              </p>
             </div>
             <button
               type="button"
@@ -1033,7 +1106,9 @@ function RateGuestVisitModal({
         const data = snap.exists() ? snap.data() : {};
         const ratings: number[] = Array.isArray(data?.ratings) ? data.ratings : [];
         const newRatings = [...ratings, stars];
-        const avg = Math.round((newRatings.reduce((a, b) => a + b, 0) / newRatings.length) * 10) / 10;
+        const avg =
+          Math.round((newRatings.reduce((a, b) => a + b, 0) / newRatings.length) * 10) /
+          10;
         await setDoc(ref, { ratings: newRatings, globalGuestScore: avg }, { merge: true });
       }
       await updateDoc(doc(db, "activeSessions", session.id), {
@@ -1053,7 +1128,11 @@ function RateGuestVisitModal({
         await fetch("/api/admin/notify-waiter-rated", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ notificationId: notifRef.id, waiterId: session.waiterId, stars }),
+          body: JSON.stringify({
+            notificationId: notifRef.id,
+            waiterId: session.waiterId,
+            stars,
+          }),
         });
       }
       onRated();
@@ -1071,17 +1150,25 @@ function RateGuestVisitModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
         <h3 className="font-semibold text-gray-900">Оцените визит гостя</h3>
-        <p className="mt-2 text-sm text-gray-600">{session.guestName} (1–5 звёзд)</p>
+        <p className="mt-2 text-sm text-gray-600">
+          {session.guestName} (1–5 звёзд)
+        </p>
         <div className="mt-4 flex gap-2">
           {([1, 2, 3, 4, 5] as const).map((n) => (
             <button
               key={n}
               type="button"
               className={`rounded border px-3 py-2 text-sm font-medium ${
-                stars === n ? "border-amber-500 bg-amber-50 text-amber-700" : "border-gray-300 hover:bg-gray-50"
+                stars === n
+                  ? "border-amber-500 bg-amber-50 text-amber-700"
+                  : "border-gray-300 hover:bg-gray-50"
               }`}
               onClick={() => setStars(n)}
             >
@@ -1090,7 +1177,11 @@ function RateGuestVisitModal({
           ))}
         </div>
         <div className="mt-4 flex gap-2">
-          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={handleDismiss}>
+          <button
+            type="button"
+            className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={handleDismiss}
+          >
             Позже
           </button>
           <button
