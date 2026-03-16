@@ -655,11 +655,12 @@ function AdminDashboardContent() {
         (listForTable ?? []).forEach((b) => {
           if (!b?.startAt) return;
           const mins = (b.startAt.getTime?.() - now) / 60000;
-          if (Number.isFinite(mins) && mins >= 12 && mins <= 18) {
+          if (Number.isFinite(mins) && mins > 0 && mins < 30) {
+            const rounded = Math.round(mins);
             list.push({
-              id: `booking_reminder_${b.id}`,
+              id: b.id,
               type: "booking_reminder",
-              message: `Гость для Стола ${num} придет через 15 минут`,
+              message: `Гость для Стола ${num} придет через ${rounded} минут`,
               tableId,
               read: false,
             });
@@ -805,17 +806,19 @@ function AdminDashboardContent() {
                 return (
                   <li
                     key={ev.id}
-                    className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
-                      ev.read
-                        ? "border-gray-100 bg-gray-50/50 text-gray-500"
-                        : isBookingReminder
-                        ? "border-amber-300 bg-amber-50/80 text-amber-900"
-                        : isStartedShift
-                        ? "border-green-200 bg-[#e6fffa] text-emerald-900"
-                        : isOrphan
-                        ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
-                        : "border-amber-200 bg-amber-50/80 text-amber-900"
-                    }`}
+                    className={
+                      isBookingReminder
+                        ? "text-sm bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 shadow-md flex justify-between items-center rounded-md"
+                        : `flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
+                            ev.read
+                              ? "border-gray-100 bg-gray-50/50 text-gray-500"
+                              : isStartedShift
+                              ? "border-green-200 bg-[#e6fffa] text-emerald-900"
+                              : isOrphan
+                              ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                              : "border-amber-200 bg-amber-50/80 text-amber-900"
+                          }`
+                    }
                   >
                     <span>
                       {isBookingReminder
@@ -841,18 +844,16 @@ function AdminDashboardContent() {
                       type="button"
                       onClick={() => {
                         if (isBookingReminder) {
-                          setDismissedBookings((prev) =>
-                            prev.includes(ev.id) ? prev : [...prev, ev.id]
-                          );
+                          setDismissedBookings((prev) => [...prev, ev.id]);
                         } else {
                           archiveEvent(ev);
                         }
                       }}
-                      className={`shrink-0 rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${
+                      className={
                         isBookingReminder
-                          ? "bg-amber-600 text-white hover:bg-amber-700"
-                          : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                      }`}
+                          ? "ml-4 shrink-0 px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors text-xs font-semibold"
+                          : "shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      }
                     >
                       ОК
                     </button>
