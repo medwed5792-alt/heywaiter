@@ -199,6 +199,7 @@ function AdminDashboardContent() {
   const [resetDone, setResetDone] = useState(false);
   const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
+  const [confirmEndOfDayOpen, setConfirmEndOfDayOpen] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
 
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -233,6 +234,11 @@ function AdminDashboardContent() {
         });
 
         await batch.commit();
+        await addDoc(collection(db, "venues", venueId, "events"), {
+          type: "system",
+          message: "Система: Смена завершена автоматически по графику",
+          createdAt: serverTimestamp(),
+        });
         toast.success(reason === "manual" ? "День завершён. Смена сброшена." : "Авто-сброс смены выполнен.");
       } catch (e) {
         console.error(e);
@@ -787,8 +793,8 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
-  const shouldShowForceEndOfDay = useMemo(() => {
-    if (!operatingHours || onShiftCount === 0) return false;
+  const isVenueClosedBySchedule = useMemo(() => {
+    if (!operatingHours) return false;
     const now = new Date();
     const dayKey = getTodayKey(now);
     const today = operatingHours[dayKey];
@@ -796,7 +802,12 @@ function AdminDashboardContent() {
     const close = parseTimeToToday(now, today.closeTime);
     if (!close) return false;
     return now.getTime() > close.getTime();
-  }, [operatingHours, onShiftCount]);
+  }, [operatingHours]);
+
+  const shouldShowForceEndOfDay = useMemo(
+    () => isVenueClosedBySchedule && onShiftCount > 0,
+    [isVenueClosedBySchedule, onShiftCount]
+  );
 
   if (!venueId) {
     return (
@@ -818,6 +829,21 @@ function AdminDashboardContent() {
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
       <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
+
+      {shouldShowForceEndOfDay && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-red-400 bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-800">
+            📢 Время работы истекло. Завершить смену для всех и очистить столы?
+          </p>
+          <button
+            type="button"
+            onClick={() => setConfirmEndOfDayOpen(true)}
+            className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-red-700 transition-colors"
+          >
+            ЗАВЕРШИТЬ ДЕНЬ
+          </button>
+        </div>
+      )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
@@ -856,22 +882,6 @@ function AdminDashboardContent() {
               <p className="mt-1 text-2xl font-bold text-emerald-700">{onShiftCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">сотрудников</p>
             </Link>
-            {shouldShowForceEndOfDay && (
-              <button
-                type="button"
-                disabled={endOfDayLoading}
-                onClick={() => performEndOfDayReset("manual")}
-                className="rounded-xl border border-red-300 bg-red-50 p-4 text-left shadow-sm hover:bg-red-100 transition-colors"
-              >
-                <h3 className="text-sm font-medium text-red-800">Завершить день принудительно</h3>
-                <p className="mt-1 text-xs text-red-700">
-                  Сбросит смену: снимет всех со смены и отвяжет официантов от столов.
-                </p>
-                <p className="mt-1 text-[11px] text-red-600">
-                  {endOfDayLoading ? "Выполняется сброс..." : "Нажмите, если день уже завершён, но система видит активных сотрудников."}
-                </p>
-              </button>
-            )}
           </>
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:col-span-3">
@@ -1010,6 +1020,44 @@ function AdminDashboardContent() {
                 }}
               >
                 Принято
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmEndOfDayOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-end-of-day-title"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 id="confirm-end-of-day-title" className="text-base font-semibold text-gray-900">
+              Завершить день?
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Вы уверены? Это снимет всех со смены и отвяжет официантов от столов.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                disabled={endOfDayLoading}
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => setConfirmEndOfDayOpen(false)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={endOfDayLoading}
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={() => {
+                  performEndOfDayReset("manual").then(() => setConfirmEndOfDayOpen(false));
+                }}
+              >
+                {endOfDayLoading ? "Выполняется…" : "ЗАВЕРШИТЬ ДЕНЬ"}
               </button>
             </div>
           </div>
