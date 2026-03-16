@@ -152,6 +152,7 @@ function AdminDashboardContent() {
   const [feedLoading, setFeedLoading] = useState(true);
   const [activeSos, setActiveSos] = useState<FeedEvent | null>(null);
   const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
+  const [dismissedBookings, setDismissedBookings] = useState<string[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
   const [resetDone, setResetDone] = useState(false);
@@ -668,8 +669,8 @@ function AdminDashboardContent() {
     } catch {
       // ignore
     }
-    return list;
-  }, [bookingsByTable, tables]);
+    return list.filter((ev) => !dismissedBookings.includes(ev.id));
+  }, [bookingsByTable, tables, dismissedBookings]);
 
   const feedWithReminders = useMemo(() => {
     const feed = feedEvents ?? [];
@@ -836,15 +837,25 @@ function AdminDashboardContent() {
                         <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>
                       )}
                     </span>
-                    {!isBookingReminder && (
-                      <button
-                        type="button"
-                        onClick={() => archiveEvent(ev)}
-                        className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                      >
-                        ОК
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isBookingReminder) {
+                          setDismissedBookings((prev) =>
+                            prev.includes(ev.id) ? prev : [...prev, ev.id]
+                          );
+                        } else {
+                          archiveEvent(ev);
+                        }
+                      }}
+                      className={`shrink-0 rounded-lg px-3 py-1 text-xs font-semibold transition-colors ${
+                        isBookingReminder
+                          ? "bg-amber-600 text-white hover:bg-amber-700"
+                          : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      ОК
+                    </button>
                   </li>
                 );
               })}
