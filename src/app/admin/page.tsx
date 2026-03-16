@@ -192,10 +192,10 @@ function EventSkeleton() {
 
 function AdminDashboardContent() {
   const searchParams = useSearchParams();
-  const venueId = (searchParams.get("v") || searchParams.get("venueId") || "current").trim() || "current";
+  const venueId = (searchParams.get("v") || searchParams.get("venueId") || "venue_andrey_alt").trim() || "venue_andrey_alt";
 
   useEffect(() => {
-    if (venueId && venueId !== "current" && typeof window !== "undefined") {
+    if (venueId && venueId !== "venue_andrey_alt" && typeof window !== "undefined") {
       localStorage.setItem("lastVenueId", venueId);
     }
   }, [venueId]);
@@ -635,10 +635,12 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
+  const EVENTS_VENUE_ID = "venue_andrey_alt";
+
   useEffect(() => {
-    const vid = venueId || "current";
     const q = query(
-      collection(db, "venues", vid, "events"),
+      collection(db, "venues", EVENTS_VENUE_ID, "events"),
+      where("venueId", "==", EVENTS_VENUE_ID),
       orderBy("createdAt", "desc"),
       limit(10)
     );
@@ -654,7 +656,7 @@ function AdminDashboardContent() {
             tableId: data.tableId as string | undefined,
             read: Boolean(data.read),
             createdAt: data.createdAt,
-            venueId: (data.venueId as string) || vid,
+            venueId: (data.venueId as string) || EVENTS_VENUE_ID,
           } as FeedEvent;
         });
         setShiftEvents(eventList);
@@ -665,43 +667,27 @@ function AdminDashboardContent() {
       }
     });
     return () => unsub();
-  }, [venueId]);
+  }, []);
 
-  const archiveEvent = useCallback(
-    async (event: FeedEvent) => {
-      const eventId = event?.id ?? "";
-      if (!eventId) {
-        toast.error("Ошибка: ID события не найден");
-        return;
-      }
-      const vid = event.venueId || venueId || "current";
-      const venuePath = doc(db, "venues", vid, "events", eventId);
-      const rootEventsPath = doc(db, "events", eventId);
-      console.log("Удаляю документ:", eventId, "из папки:", vid);
-
-      const forceRemoveFromUI = () => {
-        setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
-        setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
-      };
-
-      try {
-        await deleteDoc(venuePath);
-        toast.success("Событие удалено", { id: "archive-event" });
-        forceRemoveFromUI();
-      } catch (e1) {
-        try {
-          await deleteDoc(rootEventsPath);
-          toast.success("Событие удалено", { id: "archive-event" });
-          forceRemoveFromUI();
-        } catch (e2) {
-          const msg = e1 instanceof Error ? e1.message : "Ошибка";
-          console.error("[archiveEvent] удаление не прошло:", `venues/${vid}/events/${eventId}`, e1);
-          toast.error(msg);
-        }
-      }
-    },
-    [venueId]
-  );
+  const archiveEvent = useCallback(async (event: FeedEvent) => {
+    const eventId = event?.id ?? "";
+    if (!eventId) {
+      toast.error("Ошибка: ID события не найден");
+      return;
+    }
+    const venuePath = doc(db, "venues", EVENTS_VENUE_ID, "events", eventId);
+    console.log("Удаляю документ:", eventId, "из папки:", EVENTS_VENUE_ID);
+    try {
+      await deleteDoc(venuePath);
+      setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
+      setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
+      toast.success("Событие удалено", { id: "archive-event" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Ошибка";
+      console.error("[archiveEvent] удаление не прошло:", venuePath, e);
+      toast.error(msg);
+    }
+  }, []);
 
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
