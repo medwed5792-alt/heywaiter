@@ -89,6 +89,19 @@ function toStartAt(date: string, startTime: string): Date {
   return d;
 }
 
+function formatTimeSafe(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  } catch {
+    const h = String(date.getHours()).padStart(2, "0");
+    const m = String(date.getMinutes()).padStart(2, "0");
+    return `${h}:${m}`;
+  }
+}
+
 function TableSkeleton() {
   return (
     <div className="animate-pulse rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -667,6 +680,25 @@ function AdminDashboardContent() {
               {feedWithReminders.map((ev) => {
                 const isOrphan = ev.type === "orphan_call";
                 const isBookingReminder = ev.type === "booking_reminder";
+                let createdAtLabel = "";
+                try {
+                  const raw = ev.createdAt as
+                    | { toDate?: () => Date }
+                    | Date
+                    | null
+                    | undefined;
+                  const d =
+                    raw && typeof (raw as any).toDate === "function"
+                      ? (raw as { toDate: () => Date }).toDate()
+                      : raw instanceof Date
+                        ? raw
+                        : null;
+                  if (d) {
+                    createdAtLabel = formatTimeSafe(d);
+                  }
+                } catch {
+                  createdAtLabel = "";
+                }
                 return (
                 <li
                   key={ev.id}
@@ -682,6 +714,11 @@ function AdminDashboardContent() {
                 >
                   <span>
                     {isBookingReminder ? "⚠️ " : ev.type === "sos" ? "🚨 SOS" : isOrphan ? "⚠️ Стол без ответственного" : ev.type === "role_call" || ev.type === "call_waiter" ? "📞 Вызов" : ev.type === "request_bill" ? "🧾 Счёт" : ""} {ev.message}
+                    {createdAtLabel && (
+                      <span className="ml-1 text-xs text-gray-500">
+                        · {createdAtLabel}
+                      </span>
+                    )}
                     {ev.tableId != null && !isBookingReminder && <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>}
                   </span>
                   {!isBookingReminder && (
@@ -754,13 +791,17 @@ function AdminDashboardContent() {
               const bookingsList = safeBookingsByTable[table.id] ?? [];
               const sortedBookings = [...bookingsList].sort((a, b) => (a?.startAt?.getTime?.() ?? 0) - (b?.startAt?.getTime?.() ?? 0));
               const nextBooking = sortedBookings[0];
-              const nowMs = Date.now();
-              const hasActiveBooking = Boolean(nextBooking);
-              const minsDiff = nextBooking?.startAt
-                ? (nextBooking.startAt.getTime() - nowMs) / 60000
-                : null;
+              const now = new Date();
+              const startTimeDate = nextBooking?.startAt ?? null;
+              const diffInMinutes =
+                startTimeDate != null
+                  ? (startTimeDate.getTime() - now.getTime()) / 60000
+                  : null;
               const isUrgent =
-                minsDiff != null && Number.isFinite(minsDiff) && minsDiff <= 15;
+                diffInMinutes != null &&
+                Number.isFinite(diffInMinutes) &&
+                diffInMinutes <= 30 &&
+                diffInMinutes > -15;
               const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
               const defaultFromTeam = safeStaffList.find((s) => s?.assignedTableIds?.includes(table.id));
               const assignedStaff = assignedStaffId ? safeStaffList.find((s) => s?.id === assignedStaffId) : null;
@@ -814,10 +855,10 @@ function AdminDashboardContent() {
                   {isPlanSelection && (
                     <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
                   )}
-                  {nextBooking && (
+                  {nextBooking && startTimeDate && (
                     <div className="mt-2 text-xs">
                       <span className={isUrgent ? "font-semibold text-amber-700 animate-pulse" : "text-blue-700"}>
-                        🕒 {nextBooking.startTime}
+                        🕒 {formatTimeSafe(startTimeDate)}
                       </span>
                       {nextBooking.guestName ? (
                         <span className="text-blue-700">{` · ${nextBooking.guestName}`}</span>
