@@ -41,42 +41,37 @@ const defaultHours: OperatingHours = {
   sun: { ...defaultDay, working: false },
 };
 
-export function SettingsOperatingHoursSection() {
+export const LAST_VENUE_KEY = "lastVenueId";
+
+/** Хук: finalVenueId = URL (v | venueId) || currentUser?.venueId (global_users) || localStorage lastVenueId */
+export function useFinalVenueId() {
   const searchParams = useSearchParams();
   const urlVenueId = (searchParams.get("v") || searchParams.get("venueId") || "").trim();
+  const [currentUserVenueId, setCurrentUserVenueId] = useState<string | null>(null);
+  const [localVenueId, setLocalVenueId] = useState<string | null>(null);
 
-  const [effectiveVenueId, setEffectiveVenueId] = useState<string | null>(null);
-  const [hours, setHours] = useState<OperatingHours>(defaultHours);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  // Resolve venueId: from URL first, else from current user's global_users (affiliations)
   useEffect(() => {
-    if (urlVenueId && urlVenueId !== "current") {
-      setEffectiveVenueId(urlVenueId);
-      return;
-    }
+    if (urlVenueId && urlVenueId !== "current") return;
     let cancelled = false;
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user?.uid) {
-        setEffectiveVenueId(null);
+        setCurrentUserVenueId(null);
         return;
       }
       getDoc(doc(db, "global_users", user.uid))
         .then((snap) => {
           if (cancelled) return;
           if (!snap.exists()) {
-            setEffectiveVenueId(null);
+            setCurrentUserVenueId(null);
             return;
           }
           const data = snap.data() as { affiliations?: { venueId: string; status?: string }[] };
           const affiliations = data?.affiliations ?? [];
           const active = affiliations.filter((a) => a.status !== "former");
-          const first = active[0];
-          setEffectiveVenueId(first?.venueId ?? null);
+          setCurrentUserVenueId(active[0]?.venueId ?? null);
         })
         .catch(() => {
-          if (!cancelled) setEffectiveVenueId(null);
+          if (!cancelled) setCurrentUserVenueId(null);
         });
     });
     return () => {
@@ -85,15 +80,45 @@ export function SettingsOperatingHoursSection() {
     };
   }, [urlVenueId]);
 
-  const venueId = effectiveVenueId ?? (urlVenueId || "current");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setLocalVenueId(localStorage.getItem(LAST_VENUE_KEY));
+  }, []);
+
+  const finalVenueId =
+    (urlVenueId && urlVenueId !== "current" ? urlVenueId : null) ||
+    currentUserVenueId ||
+    localVenueId ||
+    "";
+  const hasVenue = Boolean(finalVenueId && finalVenueId !== "current");
+  return { finalVenueId, hasVenue };
+}
+
+interface SettingsOperatingHoursSectionProps {
+  /** Если переданы с страницы — используются; иначе вычисляются внутри через useFinalVenueId */
+  finalVenueId?: string;
+  hasVenue?: boolean;
+}
+
+export function SettingsOperatingHoursSection({
+  finalVenueId: propFinalVenueId,
+  hasVenue: propHasVenue,
+}: SettingsOperatingHoursSectionProps = {}) {
+  const resolved = useFinalVenueId();
+  const finalVenueId = propFinalVenueId ?? resolved.finalVenueId;
+  const hasVenue = propHasVenue ?? Boolean(finalVenueId && finalVenueId !== "current");
+
+  const [hours, setHours] = useState<OperatingHours>(defaultHours);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!venueId || venueId === "current") return;
+    if (!hasVenue) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "venues", venueId));
+        const snap = await getDoc(doc(db, "venues", finalVenueId));
         if (!snap.exists() || cancelled) return;
         const data = snap.data() as any;
         const stored = (data?.operatingHours ?? {}) as Partial<OperatingHours>;
@@ -118,7 +143,7 @@ export function SettingsOperatingHoursSection() {
     return () => {
       cancelled = true;
     };
-  }, [venueId]);
+  }, [finalVenueId, hasVenue]);
 
   const handleChangeDay = (day: DayKey, patch: Partial<OperatingDay>) => {
     setHours((prev) => ({
@@ -127,14 +152,14 @@ export function SettingsOperatingHoursSection() {
     }));
   };
 
-  const handleSave = async () => {
-    if (!venueId || venueId === "current") {
-      toast.error("Укажите заведение в URL (?v=...) или войдите под учётной записью с привязкой к заведению.");
+  const handleSaveOperatingHours = async () => {
+    if (!finalVenueId || finalVenueId === "current") {
+      toast.error("Ошибка: не удалось определить ID заведения");
       return;
     }
     setSaving(true);
     try {
-      const ref = doc(db, "venues", venueId);
+      const ref = doc(db, "venues", finalVenueId);
       await setDoc(
         ref,
         {
@@ -143,6 +168,9 @@ export function SettingsOperatingHoursSection() {
         },
         { merge: true }
       );
+      if (typeof window !== "undefined") {
+        localStorage.setItem(LAST_VENUE_KEY, finalVenueId);
+      }
       toast.success("Режим работы сохранён");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось сохранить режим работы");
@@ -157,8 +185,8 @@ export function SettingsOperatingHoursSection() {
         <h4 className="text-sm font-medium text-gray-900">Режим работы</h4>
         <button
           type="button"
-          onClick={handleSave}
-          disabled={saving || !venueId || venueId === "current"}
+          onClick={handleSaveOperatingHours}
+          disabled={saving || !hasVenue}
           className="inline-flex items-center rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-gray-800 disabled:opacity-60"
         >
           {saving ? "Сохранение..." : "Сохранить"}
@@ -167,9 +195,9 @@ export function SettingsOperatingHoursSection() {
       <p className="mt-1 text-xs text-gray-500">
         Укажите рабочие дни и часы открытия / закрытия. Используется для авто-сброса смен и подсказок на дашборде.
       </p>
-      {(!venueId || venueId === "current") && (
+      {!hasVenue && (
         <p className="mt-2 text-xs text-amber-700">
-          Заведение не выбрано: добавьте ?v=venueId в адрес или войдите под учётной записью с привязкой к заведению в global_users.
+          Заведение не выбрано: добавьте ?v=venueId в адрес, войдите с привязкой к заведению или выберите заведение ранее (оно сохраняется в браузере).
         </p>
       )}
 
