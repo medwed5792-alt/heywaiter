@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import toast from "react-hot-toast";
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -42,11 +43,49 @@ const defaultHours: OperatingHours = {
 
 export function SettingsOperatingHoursSection() {
   const searchParams = useSearchParams();
-  const venueId = (searchParams.get("v") || searchParams.get("venueId") || "current").trim() || "current";
+  const urlVenueId = (searchParams.get("v") || searchParams.get("venueId") || "").trim();
 
+  const [effectiveVenueId, setEffectiveVenueId] = useState<string | null>(null);
   const [hours, setHours] = useState<OperatingHours>(defaultHours);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Resolve venueId: from URL first, else from current user's global_users (affiliations)
+  useEffect(() => {
+    if (urlVenueId && urlVenueId !== "current") {
+      setEffectiveVenueId(urlVenueId);
+      return;
+    }
+    let cancelled = false;
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user?.uid) {
+        setEffectiveVenueId(null);
+        return;
+      }
+      getDoc(doc(db, "global_users", user.uid))
+        .then((snap) => {
+          if (cancelled) return;
+          if (!snap.exists()) {
+            setEffectiveVenueId(null);
+            return;
+          }
+          const data = snap.data() as { affiliations?: { venueId: string; status?: string }[] };
+          const affiliations = data?.affiliations ?? [];
+          const active = affiliations.filter((a) => a.status !== "former");
+          const first = active[0];
+          setEffectiveVenueId(first?.venueId ?? null);
+        })
+        .catch(() => {
+          if (!cancelled) setEffectiveVenueId(null);
+        });
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [urlVenueId]);
+
+  const venueId = effectiveVenueId ?? (urlVenueId || "current");
 
   useEffect(() => {
     if (!venueId || venueId === "current") return;
@@ -90,7 +129,7 @@ export function SettingsOperatingHoursSection() {
 
   const handleSave = async () => {
     if (!venueId || venueId === "current") {
-      toast.error("Не указан venueId в URL (?v=...)");
+      toast.error("Укажите заведение в URL (?v=...) или войдите под учётной записью с привязкой к заведению.");
       return;
     }
     setSaving(true);
@@ -119,7 +158,7 @@ export function SettingsOperatingHoursSection() {
         <button
           type="button"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || !venueId || venueId === "current"}
           className="inline-flex items-center rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-gray-800 disabled:opacity-60"
         >
           {saving ? "Сохранение..." : "Сохранить"}
@@ -128,6 +167,11 @@ export function SettingsOperatingHoursSection() {
       <p className="mt-1 text-xs text-gray-500">
         Укажите рабочие дни и часы открытия / закрытия. Используется для авто-сброса смен и подсказок на дашборде.
       </p>
+      {(!venueId || venueId === "current") && (
+        <p className="mt-2 text-xs text-amber-700">
+          Заведение не выбрано: добавьте ?v=venueId в адрес или войдите под учётной записью с привязкой к заведению в global_users.
+        </p>
+      )}
 
       {loading ? (
         <p className="mt-4 text-sm text-gray-500">Загрузка текущих настроек...</p>
