@@ -638,19 +638,16 @@ function AdminDashboardContent() {
     );
     const unsub = onSnapshot(q, (snap) => {
       try {
-        const list: FeedEvent[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            ...data,
-            id: d.id,
-            type: (data.type as string) ?? "shift",
-            message: (data.message as string) ?? "",
-            tableId: data.tableId as string | undefined,
-            read: Boolean(data.read),
-            createdAt: data.createdAt,
-          } as FeedEvent;
-        });
-        setShiftEvents(list);
+        const eventList: FeedEvent[] = snap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+          type: (doc.data().type as string) ?? "shift",
+          message: (doc.data().message as string) ?? "",
+          tableId: doc.data().tableId as string | undefined,
+          read: Boolean(doc.data().read),
+          createdAt: doc.data().createdAt,
+        } as FeedEvent));
+        setShiftEvents(eventList);
         setFeedLoading(false);
       } catch (e) {
         console.error("[admin/dashboard] events snapshot error:", e);
@@ -668,6 +665,7 @@ function AdminDashboardContent() {
         return;
       }
       const vid = venueId || "current";
+      console.log("Удаляю документ:", eventId, "из папки:", vid);
       try {
         await deleteDoc(doc(db, "venues", vid, "events", eventId));
         toast.success("Событие удалено", { id: "archive-event" });
