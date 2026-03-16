@@ -19,6 +19,7 @@ import {
   setDoc,
   serverTimestamp,
   deleteDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
@@ -85,6 +86,16 @@ interface FeedEvent {
   createdAt: unknown;
 }
 
+type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+interface OperatingDay {
+  working: boolean;
+  openTime: string;
+  closeTime: string;
+}
+
+type OperatingHours = Record<DayKey, OperatingDay>;
+
 function toStartAt(date: string, startTime: string): Date {
   const [h, m] = startTime.split(":").map(Number);
   const d = new Date(date);
@@ -108,6 +119,36 @@ function formatTimeSafe(date: Date): string {
 function startOfDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function getTodayKey(date: Date): DayKey {
+  const day = date.getDay(); // 0-6, 0=Sunday
+  switch (day) {
+    case 0:
+      return "sun";
+    case 1:
+      return "mon";
+    case 2:
+      return "tue";
+    case 3:
+      return "wed";
+    case 4:
+      return "thu";
+    case 5:
+      return "fri";
+    case 6:
+    default:
+      return "sat";
+  }
+}
+
+function parseTimeToToday(date: Date, time: string): Date | null {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [h, m] = time.split(":").map((v) => Number(v));
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  const d = new Date(date);
+  d.setHours(h, m, 0, 0);
   return d;
 }
 
@@ -156,9 +197,52 @@ function AdminDashboardContent() {
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
   const [resetDone, setResetDone] = useState(false);
+  const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
+  const [endOfDayLoading, setEndOfDayLoading] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
 
   const todayStr = new Date().toISOString().slice(0, 10);
+
+  const performEndOfDayReset = useCallback(
+    async (reason: "auto" | "manual") => {
+      if (!venueId) return;
+      setEndOfDayLoading(true);
+      try {
+        const batch = writeBatch(db);
+
+        // staff: onShift = false
+        const staffSnap = await getDocs(query(collection(db, "staff"), where("venueId", "==", venueId)));
+        staffSnap.forEach((docSnap) => {
+          const ref = doc(db, "staff", docSnap.id);
+          batch.update(ref, { onShift: false });
+        });
+
+        // tables: remove assignments.waiter
+        const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
+        tablesSnap.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          const assignments = (data.assignments as Record<string, unknown> | undefined) ?? {};
+          if (assignments && Object.prototype.hasOwnProperty.call(assignments, "waiter")) {
+            const updated = { ...assignments };
+            delete (updated as any).waiter;
+            const ref = doc(db, "venues", venueId, "tables", docSnap.id);
+            batch.update(ref, {
+              assignments: updated,
+            });
+          }
+        });
+
+        await batch.commit();
+        toast.success(reason === "manual" ? "День завершён. Смена сброшена." : "Авто-сброс смены выполнен.");
+      } catch (e) {
+        console.error(e);
+        toast.error(e instanceof Error ? e.message : "Не удалось выполнить сброс смены");
+      } finally {
+        setEndOfDayLoading(false);
+      }
+    },
+    [venueId]
+  );
 
   // Reset stuck tables once on load
   useEffect(() => {
@@ -192,6 +276,8 @@ function AdminDashboardContent() {
         if (snap.exists()) {
           const data = snap.data();
           setVenueType((data?.venueType as VenueType) || "full_service");
+          const oh = (data?.operatingHours ?? null) as OperatingHours | null;
+          if (oh) setOperatingHours(oh);
         } else {
           setVenueType("full_service");
         }
@@ -701,6 +787,17 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
+  const shouldShowForceEndOfDay = useMemo(() => {
+    if (!operatingHours || onShiftCount === 0) return false;
+    const now = new Date();
+    const dayKey = getTodayKey(now);
+    const today = operatingHours[dayKey];
+    if (!today || !today.working) return false;
+    const close = parseTimeToToday(now, today.closeTime);
+    if (!close) return false;
+    return now.getTime() > close.getTime();
+  }, [operatingHours, onShiftCount]);
+
   if (!venueId) {
     return (
       <div className="p-20 text-center text-gray-600">
@@ -759,6 +856,22 @@ function AdminDashboardContent() {
               <p className="mt-1 text-2xl font-bold text-emerald-700">{onShiftCount}</p>
               <p className="mt-0.5 text-xs text-gray-500">сотрудников</p>
             </Link>
+            {shouldShowForceEndOfDay && (
+              <button
+                type="button"
+                disabled={endOfDayLoading}
+                onClick={() => performEndOfDayReset("manual")}
+                className="rounded-xl border border-red-300 bg-red-50 p-4 text-left shadow-sm hover:bg-red-100 transition-colors"
+              >
+                <h3 className="text-sm font-medium text-red-800">Завершить день принудительно</h3>
+                <p className="mt-1 text-xs text-red-700">
+                  Сбросит смену: снимет всех со смены и отвяжет официантов от столов.
+                </p>
+                <p className="mt-1 text-[11px] text-red-600">
+                  {endOfDayLoading ? "Выполняется сброс..." : "Нажмите, если день уже завершён, но система видит активных сотрудников."}
+                </p>
+              </button>
+            )}
           </>
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:col-span-3">

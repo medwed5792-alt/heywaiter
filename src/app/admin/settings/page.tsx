@@ -3,6 +3,7 @@
 import { SettingsHallsSection } from "./SettingsHallsSection";
 import { SettingsMenuSection } from "./SettingsMenuSection";
 import { SettingsGeoSection } from "./SettingsGeoSection";
+import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
 
 export default function AdminSettingsPage() {
   return (
@@ -11,6 +12,11 @@ export default function AdminSettingsPage() {
       <p className="mt-2 text-sm text-gray-600">
         Залы и столы, меню заведения, гео-периметр. Все данные сохраняются в Firestore под venueId.
       </p>
+
+      <section className="mt-6">
+        <h3 className="text-base font-medium text-gray-900">0. Режим работы</h3>
+        <SettingsOperatingHoursSection />
+      </section>
 
       <section className="mt-6">
         <h3 className="text-base font-medium text-gray-900">1. Залы и столы</h3>
