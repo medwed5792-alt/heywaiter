@@ -224,7 +224,6 @@ function AdminDashboardContent() {
         where("status", "==", "check_in_success")
       ),
       (snap) => {
-        // Копим id активных сессий, чтобы показывать рейтинг только при закрытии стола (не из-за bookings)
         const nextIds = new Set(snap.docs.map((d) => d.id));
         activeSessionIdsRef.current = new Set([...activeSessionIdsRef.current, ...nextIds]);
         setOccupiedCount(snap.size);
@@ -282,7 +281,6 @@ function AdminDashboardContent() {
           const todayStr = today.toISOString().slice(0, 10);
           if (dateStr === todayStr) todayCount++;
 
-          // Ограничиваем окнами «ближайшие 2 часа»
           if (startMs < now || startMs > windowEnd) return;
 
           const tableNumber = (data.tableNumber as number | string | undefined) ?? undefined;
@@ -346,7 +344,6 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
-  // Список всех активных сотрудников с закреплёнными столами (из Команды) — для отображения «по умолчанию» и проверки onShift
   useEffect(() => {
     if (!venueId) return;
     const unsub = onSnapshot(
@@ -475,7 +472,6 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
-  // Подписка на события смен (venues/{venueId}/events)
   useEffect(() => {
     if (!venueId) return;
     const q = query(
@@ -509,12 +505,10 @@ function AdminDashboardContent() {
   const archiveEvent = useCallback(
     async (event: FeedEvent) => {
       try {
-        // События смен (venues/{venueId}/events) удаляем полностью
         if (event.type === "shift") {
           await deleteDoc(doc(db, "venues", venueId, "events", event.id));
           return;
         }
-        // Остальные события из staffNotifications помечаем как прочитанные
         await updateDoc(doc(db, "staffNotifications", event.id), {
           read: true,
           updatedAt: serverTimestamp(),
@@ -557,7 +551,6 @@ function AdminDashboardContent() {
           return { id: d.id, ...data };
         })
         .filter(Boolean) as { id: string; guestId?: string; waiterId?: string; closedAt: unknown }[];
-      // Показываем рейтинг только если сессия была активной (стол был занят) — не из-за изменений в bookings
       const wasOccupied = new Set(activeSessionIdsRef.current);
       const closedThatWereOccupied = closed.filter((c) => wasOccupied.has(c.id));
       const gids = [...new Set(closedThatWereOccupied.map((c) => c.guestId).filter(Boolean))] as string[];
