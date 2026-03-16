@@ -614,9 +614,9 @@ function AdminDashboardContent() {
   }, [venueId]);
 
   useEffect(() => {
-    if (!venueId) return;
+    const vid = venueId || "current";
     const q = query(
-      collection(db, "venues", venueId, "events"),
+      collection(db, "venues", vid, "events"),
       orderBy("createdAt", "desc"),
       limit(10)
     );
@@ -647,7 +647,8 @@ function AdminDashboardContent() {
     async (event: FeedEvent) => {
       const eventId = event.id;
       const vid = venueId || "current";
-      console.log("Удаляю событие:", eventId, "из заведения:", vid);
+      const docPath = `venues/${vid}/events/${eventId}`;
+      console.log("Удаляю событие:", eventId, "полный путь:", docPath);
       try {
         await deleteDoc(doc(db, "venues", vid, "events", eventId));
         setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -655,7 +656,7 @@ function AdminDashboardContent() {
         toast.success("Событие удалено", { id: "archive-event" });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Ошибка";
-        console.error("[archiveEvent]", e);
+        console.error("[archiveEvent] удаление не прошло:", docPath, e);
         toast.error(msg);
       }
     },
