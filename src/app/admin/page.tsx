@@ -650,7 +650,9 @@ function AdminDashboardContent() {
       console.log("Удаляю событие:", eventId, "из заведения:", vid);
       try {
         await deleteDoc(doc(db, "venues", vid, "events", eventId));
-        toast.success("Событие удалено");
+        setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
+        setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
+        toast.success("Событие удалено", { id: "archive-event" });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Ошибка";
         console.error("[archiveEvent]", e);
