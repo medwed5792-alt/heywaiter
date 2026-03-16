@@ -18,6 +18,7 @@ import {
   addDoc,
   setDoc,
   serverTimestamp,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
@@ -57,6 +58,8 @@ interface BookingOnTable {
   startAt: Date;
   guestName?: string;
   isUrgent?: boolean;
+  status?: string;
+  tableNumber?: string | number;
 }
 
 interface ShiftStaff {
@@ -251,10 +254,11 @@ function AdminDashboardContent() {
     endOfDay.setHours(23, 59, 59, 999);
 
     const q = query(
-      collection(db, "venues", venueId, "bookings"),
-      orderBy("startAt", "asc"),
+      collection(db, "bookings"),
+      where("venueId", "==", venueId),
       where("startAt", ">=", startOfDay),
-      where("startAt", "<=", endOfDay)
+      where("startAt", "<=", endOfDay),
+      orderBy("startAt", "asc")
     );
 
     const unsub = onSnapshot(q, (snap) => {
@@ -281,7 +285,7 @@ function AdminDashboardContent() {
           // Ограничиваем окнами «ближайшие 2 часа»
           if (startMs < now || startMs > windowEnd) return;
 
-          const tableNumber = data.tableNumber as number | undefined;
+          const tableNumber = (data.tableNumber as number | string | undefined) ?? undefined;
           const tableId =
             String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
           if (!tableId) return;
@@ -297,6 +301,8 @@ function AdminDashboardContent() {
             startAt,
             guestName: data.guestName as string | undefined,
             isUrgent: data.isUrgent === true,
+            status,
+            tableNumber: tableNumber ?? tableId,
           };
           if (!byTable[tableId]) byTable[tableId] = [];
           byTable[tableId].push(b);
@@ -500,13 +506,25 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
-  const archiveEvent = useCallback(async (eventId: string) => {
-    try {
-      await updateDoc(doc(db, "staffNotifications", eventId), { read: true, updatedAt: serverTimestamp() });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка");
-    }
-  }, []);
+  const archiveEvent = useCallback(
+    async (event: FeedEvent) => {
+      try {
+        // События смен (venues/{venueId}/events) удаляем полностью
+        if (event.type === "shift") {
+          await deleteDoc(doc(db, "venues", venueId, "events", event.id));
+          return;
+        }
+        // Остальные события из staffNotifications помечаем как прочитанные
+        await updateDoc(doc(db, "staffNotifications", event.id), {
+          read: true,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Ошибка");
+      }
+    },
+    [venueId]
+  );
 
   const saveTableWaiter = useCallback(async (tableId: string, staffId: string) => {
     try {
@@ -738,6 +756,10 @@ function AdminDashboardContent() {
                 } catch {
                   createdAtLabel = "";
                 }
+                const isShift = ev.type === "shift";
+                const isStartedShift = isShift && ev.message.includes("заступил");
+                const isStoppedShift = isShift && ev.message.includes("ушел");
+
                 return (
                 <li
                   key={ev.id}
@@ -746,9 +768,11 @@ function AdminDashboardContent() {
                       ? "border-gray-100 bg-gray-50/50 text-gray-500"
                       : isBookingReminder
                         ? "border-amber-300 bg-amber-50/80 text-amber-900"
-                        : isOrphan
-                          ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
-                          : "border-amber-200 bg-amber-50/80 text-amber-900"
+                        : isStartedShift
+                          ? "border-green-200 bg-[#e6fffa] text-emerald-900"
+                          : isOrphan
+                            ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                            : "border-amber-200 bg-amber-50/80 text-amber-900"
                   }`}
                 >
                   <span>
@@ -763,7 +787,7 @@ function AdminDashboardContent() {
                   {!isBookingReminder && (
                     <button
                       type="button"
-                      onClick={() => archiveEvent(ev.id)}
+                      onClick={() => archiveEvent(ev)}
                       className="shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                     >
                       ОК
@@ -800,7 +824,7 @@ function AdminDashboardContent() {
                 className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700"
                 onClick={() => {
                   if (activeSos) {
-                    archiveEvent(activeSos.id);
+                    archiveEvent(activeSos);
                     setActiveSos(null);
                   }
                 }}
