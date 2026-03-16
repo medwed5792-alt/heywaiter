@@ -152,6 +152,22 @@ function parseTimeToToday(date: Date, time: string): Date | null {
   return d;
 }
 
+/** Событие с техническим мусором в message (NUID, длинные ID) не показываем в ленте */
+function isInvalidEventMessage(message: string | undefined): boolean {
+  if (!message || typeof message !== "string") return false;
+  if (/NUID/i.test(message)) return true;
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(message.trim())) return true;
+  if (/[a-zA-Z0-9_-]{25,}/.test(message)) return true;
+  return false;
+}
+
+/** tableId/tableNumber в виде длинного ID — показываем «Ошибка данных стола» */
+function looksLikeTableIdError(tableId: string | number | undefined): boolean {
+  if (tableId == null) return false;
+  const s = String(tableId).trim();
+  return s.length > 15 || /NUID/i.test(s) || /^[a-zA-Z0-9_-]{20,}$/.test(s);
+}
+
 function TableSkeleton() {
   return (
     <div className="animate-pulse rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -622,17 +638,19 @@ function AdminDashboardContent() {
     );
     const unsub = onSnapshot(q, (snap) => {
       try {
-        const list: FeedEvent[] = snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            type: (data.type as string) ?? "shift",
-            message: (data.message as string) ?? "",
-            tableId: undefined,
-            read: false,
-            createdAt: data.createdAt,
-          };
-        });
+        const list: FeedEvent[] = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              type: (data.type as string) ?? "shift",
+              message: (data.message as string) ?? "",
+              tableId: data.tableId as string | undefined,
+              read: Boolean(data.read),
+              createdAt: data.createdAt,
+            };
+          })
+          .filter((ev) => !isInvalidEventMessage(ev.message));
         setShiftEvents(list);
         setFeedLoading(false);
       } catch (e) {
@@ -647,16 +665,12 @@ function AdminDashboardContent() {
     async (event: FeedEvent) => {
       const eventId = event.id;
       const vid = venueId || "current";
-      const docPath = `venues/${vid}/events/${eventId}`;
-      console.log("Удаляю событие:", eventId, "полный путь:", docPath);
       try {
         await deleteDoc(doc(db, "venues", vid, "events", eventId));
-        setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
-        setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
         toast.success("Событие удалено", { id: "archive-event" });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Ошибка";
-        console.error("[archiveEvent] удаление не прошло:", docPath, e);
+        console.error("[archiveEvent] удаление не прошло:", `venues/${vid}/events/${eventId}`, e);
         toast.error(msg);
       }
     },
@@ -974,7 +988,9 @@ function AdminDashboardContent() {
                         <span className="ml-1 text-xs text-gray-500">· {createdAtLabel}</span>
                       )}
                       {ev.tableId != null && !isBookingReminder && (
-                        <span className="ml-1 text-gray-500">Стол №{ev.tableId}</span>
+                        <span className="ml-1 text-gray-500">
+                          {looksLikeTableIdError(ev.tableId) ? "Ошибка данных стола" : `Стол №${ev.tableId}`}
+                        </span>
                       )}
                     </span>
                     <button
@@ -1013,7 +1029,11 @@ function AdminDashboardContent() {
               <span>🚨 SOS сигнал</span>
             </h3>
             <p className="mt-2 text-sm text-gray-800">
-              {activeSos.tableId ? `Стол №${activeSos.tableId}` : "Стол не указан"}. {activeSos.message}
+              {activeSos.tableId
+                ? looksLikeTableIdError(activeSos.tableId)
+                  ? "Ошибка данных стола"
+                  : `Стол №${activeSos.tableId}`
+                : "Стол не указан"}. {activeSos.message}
             </p>
             <div className="mt-4 flex gap-2">
               <button
