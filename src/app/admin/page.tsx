@@ -61,6 +61,8 @@ interface BookingOnTable {
   isUrgent?: boolean;
   status?: string;
   tableNumber?: string | number;
+  /** true = напоминание уже показали, по «ОК» пишем в Firestore */
+  isAlerted?: boolean;
 }
 
 interface ShiftStaff {
@@ -441,6 +443,7 @@ function AdminDashboardContent() {
               isUrgent: data.isUrgent === true,
               status,
               tableNumber: tableNumberToday ?? tableIdToday,
+              isAlerted: data.isAlerted === true,
             };
             activeForToday.push(bookingToday);
           }
@@ -462,6 +465,7 @@ function AdminDashboardContent() {
             isUrgent: data.isUrgent === true,
             status,
             tableNumber: tableNumber ?? tableId,
+            isAlerted: data.isAlerted === true,
           };
           if (!byTable[tableId]) byTable[tableId] = [];
           byTable[tableId].push(b);
@@ -794,20 +798,22 @@ function AdminDashboardContent() {
       Object.entries(bookings).forEach(([tableId, listForTable]) => {
         const table = tbls.find((t) => t?.id === tableId);
         const num = table?.number ?? tableId;
-        (listForTable ?? []).forEach((b) => {
-          if (!b?.startAt) return;
-          const mins = (b.startAt.getTime?.() - now) / 60000;
-          if (Number.isFinite(mins) && mins > 0 && mins < 30) {
-            const rounded = Math.round(mins);
-            list.push({
-              id: b.id,
-              type: "booking_reminder",
-              message: `Гость для Стола ${num} придет через ${rounded} минут`,
-              tableId,
-              read: false,
-            });
-          }
-        });
+        (listForTable ?? [])
+          .filter((b) => !b.isAlerted)
+          .forEach((b) => {
+            if (!b?.startAt) return;
+            const mins = (b.startAt.getTime?.() - now) / 60000;
+            if (Number.isFinite(mins) && mins > 0 && mins < 30) {
+              const rounded = Math.round(mins);
+              list.push({
+                id: b.id,
+                type: "booking_reminder",
+                message: `Гость для Стола ${num} придет через ${rounded} минут`,
+                tableId,
+                read: false,
+              });
+            }
+          });
       });
     } catch {
       // ignore
@@ -1017,9 +1023,16 @@ function AdminDashboardContent() {
                     </span>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (isBookingReminder) {
-                          setDismissedBookings((prev) => [...prev, ev.id]);
+                          try {
+                            await updateDoc(doc(db, "bookings", ev.id), {
+                              isAlerted: true,
+                              updatedAt: serverTimestamp(),
+                            });
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : "Ошибка");
+                          }
                         } else {
                           archiveEvent(ev);
                         }
