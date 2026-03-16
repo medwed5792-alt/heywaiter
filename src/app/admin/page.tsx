@@ -105,6 +105,12 @@ function formatTimeSafe(date: Date): string {
   }
 }
 
+function startOfDay(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
 function TableSkeleton() {
   return (
     <div className="animate-pulse rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -132,6 +138,7 @@ function AdminDashboardContent() {
   const [tables, setTables] = useState<TableRow[]>([]);
   const [occupiedCount, setOccupiedCount] = useState(0);
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
+  const [activeBookings, setActiveBookings] = useState<BookingOnTable[]>([]);
   const [onShiftCount, setOnShiftCount] = useState(0);
   const [onShiftWaiters, setOnShiftWaiters] = useState<ShiftStaff[]>([]);
   const [staffList, setStaffList] = useState<StaffWithTables[]>([]);
@@ -261,39 +268,65 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueId || venueType !== "full_service") return;
     const today = new Date();
-    const startOfDay = new Date(today);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(today);
-    endOfDay.setHours(23, 59, 59, 999);
+    const dayStart = startOfDay(today);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
 
     const q = query(
       collection(db, "bookings"),
       where("venueId", "==", venueId),
-      where("startAt", ">=", startOfDay),
-      where("startAt", "<=", endOfDay),
+      where("status", "==", "pending"),
       orderBy("startAt", "asc")
     );
 
     const unsub = onSnapshot(q, (snap) => {
       try {
-        let todayCount = 0;
         const now = Date.now();
         const windowEnd = now + BOOKING_WINDOW_MS;
         const byTable: Record<string, BookingOnTable[]> = {};
+        const activeForToday: BookingOnTable[] = [];
 
         snap.docs.forEach((d) => {
           const data = d.data();
           const status = (data.status as string) ?? "pending";
           if (status === "cancelled") return;
 
-          const startAtRaw = data.startAt as { toDate?: () => Date } | undefined;
-          const startAt = startAtRaw?.toDate?.() ?? new Date();
+          const startAtSource =
+            (data.toStartAt as { toDate?: () => Date } | Date | undefined) ??
+            (data.startAt as { toDate?: () => Date } | Date | undefined);
+          const startAt =
+            startAtSource && typeof (startAtSource as any).toDate === "function"
+              ? (startAtSource as { toDate: () => Date }).toDate()
+              : startAtSource instanceof Date
+              ? startAtSource
+              : null;
+          if (!startAt) return;
           const startMs = startAt.getTime();
           if (Number.isNaN(startMs)) return;
 
           const dateStr = startAt.toISOString().slice(0, 10);
-          const todayStr = today.toISOString().slice(0, 10);
-          if (dateStr === todayStr) todayCount++;
+
+          if (startAt >= dayStart && startAt < dayEnd) {
+            const tableNumberToday = (data.tableNumber as number | string | undefined) ?? undefined;
+            const tableIdToday = String(
+              data.tableId ?? (tableNumberToday != null ? tableNumberToday : "")
+            ).trim();
+            const bookingToday: BookingOnTable = {
+              id: d.id,
+              date: dateStr,
+              startTime:
+                (data.startTime as string) ??
+                `${String(startAt.getHours()).padStart(2, "0")}:${String(
+                  startAt.getMinutes()
+                ).padStart(2, "0")}`,
+              startAt,
+              guestName: data.guestName as string | undefined,
+              isUrgent: data.isUrgent === true,
+              status,
+              tableNumber: tableNumberToday ?? tableIdToday,
+            };
+            activeForToday.push(bookingToday);
+          }
 
           if (startMs < now || startMs > windowEnd) return;
 
@@ -317,7 +350,8 @@ function AdminDashboardContent() {
           byTable[tableId].push(b);
         });
 
-        setBookingsTodayCount(todayCount);
+        setActiveBookings(activeForToday);
+        setBookingsTodayCount(activeForToday.length);
         setBookingsByTable(byTable);
       } catch (e) {
         console.error("[admin/dashboard] bookings snapshot error:", e);
@@ -874,10 +908,19 @@ function AdminDashboardContent() {
                 try {
                   const session = safeSessionsByTable[table.id];
                   const isOccupied = Boolean(session);
-                  const activeBooking = allBookings.find(
+                  const tableBooking = allBookings.find(
                     (b) =>
-                      String(b.tableNumber ?? "") === String(table.id) &&
-                      (b.status ?? "pending") === "pending"
+                      String(b.tableNumber ?? "") === String(table.id) ||
+                      String(b.tableNumber ?? "") === String(table.number)
+                  );
+                  const activeBooking =
+                    tableBooking && (tableBooking.status ?? "pending") === "pending"
+                      ? tableBooking
+                      : undefined;
+                  const hasTodayBookingForTable = activeBookings.some(
+                    (b) =>
+                      String(b.tableNumber ?? "") === String(table.id) ||
+                      String(b.tableNumber ?? "") === String(table.number)
                   );
                   const now = new Date();
                   const startTimeDate = activeBooking?.startAt ?? null;
@@ -917,6 +960,8 @@ function AdminDashboardContent() {
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const cardBorder = hasEmergency
                     ? "border-red-600 border-8 animate-bounce"
+                    : hasTodayBookingForTable
+                    ? "border-orange-500 border-4 animate-pulse"
                     : isUrgent
                     ? "border-orange-500 border-4 animate-pulse"
                     : isOccupied
