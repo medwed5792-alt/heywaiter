@@ -1,18 +1,31 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { SettingsHallsSection } from "./SettingsHallsSection";
 import { SettingsMenuSection } from "./SettingsMenuSection";
 import { SettingsGeoSection } from "./SettingsGeoSection";
-import { SettingsOperatingHoursSection, useFinalVenueId } from "./SettingsOperatingHoursSection";
+import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
 
 function SettingsContent() {
-  const { finalVenueId, hasVenue, venueIdSource } = useFinalVenueId();
+  const searchParams = useSearchParams();
+  const fromUrl = (searchParams.get("v") || searchParams.get("venueId") || "").trim();
+  const [fromStorage, setFromStorage] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setFromStorage(localStorage.getItem("lastVenueId"));
+    }
+  }, []);
+  const currentVenueId =
+    (fromUrl && fromUrl !== "current" ? fromUrl : null) || fromStorage || "";
+  const hasVenue = Boolean(currentVenueId && currentVenueId !== "current");
+  const venueIdFromStorage = Boolean(fromStorage && currentVenueId === fromStorage);
+
   return (
     <div className="max-w-4xl">
       <h2 className="text-lg font-semibold text-gray-900">Настройки</h2>
-      {venueIdSource === "localStorage" && finalVenueId ? (
-        <p className="mt-1 text-xs text-gray-500">Настройки для заведения: {finalVenueId}</p>
+      {venueIdFromStorage && currentVenueId ? (
+        <p className="mt-1 text-xs text-gray-500">Настройки для заведения: {currentVenueId}</p>
       ) : null}
       <p className="mt-2 text-sm text-gray-600">
         Залы и столы, меню заведения, гео-периметр. Все данные сохраняются в Firestore под venueId.
@@ -21,9 +34,9 @@ function SettingsContent() {
       <section className="mt-6">
         <h3 className="text-base font-medium text-gray-900">0. Режим работы</h3>
         <SettingsOperatingHoursSection
-          finalVenueId={finalVenueId}
+          finalVenueId={currentVenueId}
           hasVenue={hasVenue}
-          venueIdSource={venueIdSource}
+          venueIdSource={venueIdFromStorage ? "localStorage" : fromUrl ? "url" : null}
         />
       </section>
 
