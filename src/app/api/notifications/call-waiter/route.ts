@@ -37,11 +37,22 @@ async function getTelegramIdsForStaff(
   return tgIds;
 }
 
-async function sendTelegramMessage(token: string, chatId: string, text: string): Promise<void> {
+async function sendTelegramMessage(
+  token: string,
+  chatId: string,
+  text: string,
+  withQuickOk: boolean
+): Promise<void> {
+  const body: Record<string, unknown> = { chat_id: chatId, text };
+  if (withQuickOk) {
+    body.reply_markup = {
+      inline_keyboard: [[{ text: "✅ ОК", callback_data: "read_notify" }]],
+    };
+  }
   const res = await fetch(`${TELEGRAM_API}${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.text();
@@ -76,8 +87,8 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore();
 
     const baseMessage = isRequestBill
-      ? `Запрос счёта, стол №${tableId}`
-      : `Вызов официанта, стол №${tableId}`;
+      ? `🔔 Стол №${tableId}: Счёт.`
+      : `🔔 Стол №${tableId}: Вызов.`;
 
     const waiterId = await getOperationalWaiterForTable(firestore, venueId, tableId);
     const waiterOnShift = waiterId ? await isStaffOnShift(firestore, waiterId, venueId) : false;
@@ -86,6 +97,8 @@ export async function POST(request: NextRequest) {
     let message: string;
     let notificationType: string;
     let isOrphan: boolean;
+
+    const isRegularCall = !isRequestBill;
 
     if (waiterId && waiterOnShift) {
       targetUids = [waiterId];
@@ -107,7 +120,13 @@ export async function POST(request: NextRequest) {
     if (token && tgIds.size > 0) {
       for (const chatId of tgIds) {
         try {
-          await sendTelegramMessage(token, chatId, message);
+          await sendTelegramMessage(
+            token,
+            chatId,
+            message,
+            // Короткое уведомление с кнопкой ОК для обычных вызовов/счёта
+            isRegularCall
+          );
         } catch (err) {
           console.error("[call-waiter] Telegram send to", chatId, err);
         }

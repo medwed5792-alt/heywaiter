@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
 import { StaffVenuePicker } from "@/components/staff/StaffVenuePicker";
@@ -173,6 +175,10 @@ function StaffContentInner() {
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [freeAgentProfileChecked, setFreeAgentProfileChecked] = useState(false);
+  const [sosTableNumber, setSosTableNumber] = useState<string>("");
+  const [availableTableNumbers, setAvailableTableNumbers] = useState<number[]>([]);
+  const [sosLoading, setSosLoading] = useState(false);
+  const [sosError, setSosError] = useState<string | null>(null);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -302,6 +308,71 @@ function StaffContentInner() {
     },
     [setCurrentVenue, router]
   );
+
+  // Загрузка номеров столов для текущего заведения (валидация SOS)
+  useEffect(() => {
+    if (!currentVenueId) {
+      setAvailableTableNumbers([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const q = query(
+          collection(db, "venues", currentVenueId, "tables")
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const nums: number[] = [];
+        snap.docs.forEach((d) => {
+          const n = d.data()?.number as number | undefined;
+          if (typeof n === "number" && Number.isFinite(n)) {
+            nums.push(n);
+          }
+        });
+        setAvailableTableNumbers(nums);
+      } catch (_e) {
+        if (!cancelled) {
+          setAvailableTableNumbers([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentVenueId]);
+
+  const handleSendSos = async () => {
+    if (!staffId || !currentVenueId) return;
+    const num = Number(sosTableNumber);
+    if (!Number.isFinite(num) || num < 1) return;
+    if (!availableTableNumbers.includes(num)) return;
+    setSosLoading(true);
+    setSosError(null);
+    try {
+      const res = await fetch("/api/notify/emergency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          venueId: currentVenueId,
+          tableNumber: num,
+          staffId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || "Ошибка отправки SOS");
+      }
+      // Telegram-тонкая интеграция: уведомление на часы/браслет обрабатывается на сервере.
+      // Здесь только локальный сброс поля.
+      alert("Сигнал отправлен охране");
+      setSosTableNumber("");
+    } catch (e) {
+      setSosError(e instanceof Error ? e.message : "Ошибка отправки SOS");
+    } finally {
+      setSosLoading(false);
+    }
+  };
 
   const handleShiftAction = async () => {
     if (actionLoading) return;
@@ -460,6 +531,48 @@ function StaffContentInner() {
                       ? "Завершить смену"
                       : "Начать смену"}
               </button>
+            </section>
+
+            <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm">
+              <h2 className="text-sm font-medium text-red-600">Экстренная помощь</h2>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Введите номер стола и нажмите SOS. Кнопка активируется только для существующих столов.
+              </p>
+              <div className="mt-3 flex items-center gap-3">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={sosTableNumber}
+                  onChange={(e) => {
+                    setSosTableNumber(e.target.value);
+                    setSosError(null);
+                  }}
+                  className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="№ стола"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendSos}
+                  disabled={
+                    sosLoading ||
+                    !sosTableNumber.trim() ||
+                    !availableTableNumbers.includes(Number(sosTableNumber))
+                  }
+                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-50 ${
+                    sosLoading
+                      ? "bg-red-500"
+                      : availableTableNumbers.includes(Number(sosTableNumber || ""))
+                        ? "bg-red-600 animate-pulse"
+                        : "bg-red-300"
+                  }`}
+                >
+                  {sosLoading ? "Отправка…" : "SOS"}
+                </button>
+              </div>
+              {sosError && (
+                <p className="mt-2 text-xs text-red-600">{sosError}</p>
+              )}
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">

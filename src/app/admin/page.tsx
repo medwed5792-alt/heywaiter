@@ -56,6 +56,7 @@ interface BookingOnTable {
   startTime: string;
   startAt: Date;
   guestName?: string;
+  isUrgent?: boolean;
 }
 
 interface ShiftStaff {
@@ -125,6 +126,7 @@ function AdminDashboardContent() {
   const [guestRatings, setGuestRatings] = useState<Record<string, number>>({});
   const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
+  const [activeSos, setActiveSos] = useState<FeedEvent | null>(null);
   const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
@@ -255,6 +257,7 @@ function AdminDashboardContent() {
             startTime,
             startAt,
             guestName: data.guestName as string | undefined,
+            isUrgent: data.isUrgent === true,
           };
           if (!byTable[tableId]) byTable[tableId] = [];
           byTable[tableId].push(b);
@@ -412,6 +415,8 @@ function AdminDashboardContent() {
         };
       });
       setFeedEvents(list);
+      const sos = list.find((e) => e.type === "sos" && e.read === false);
+      setActiveSos(sos ?? null);
       setFeedLoading(false);
     });
     return () => unsub();
@@ -656,6 +661,41 @@ function AdminDashboardContent() {
         </section>
       )}
 
+      {activeSos && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="text-base font-semibold text-red-700 flex items-center gap-2">
+              <span>🚨 SOS сигнал</span>
+            </h3>
+            <p className="mt-2 text-sm text-gray-800">
+              {activeSos.tableId ? `Стол №${activeSos.tableId}` : "Стол не указан"}.{" "}
+              {activeSos.message}
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setActiveSos(null)}
+              >
+                Позже
+              </button>
+              <button
+                type="button"
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700"
+                onClick={() => {
+                  if (activeSos) {
+                    archiveEvent(activeSos.id);
+                    setActiveSos(null);
+                  }
+                }}
+              >
+                Принято
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {venueType === "full_service" && (
         <section className="mt-8">
           <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
@@ -674,6 +714,7 @@ function AdminDashboardContent() {
               const bookingsList = safeBookingsByTable[table.id] ?? [];
               const sortedBookings = [...bookingsList].sort((a, b) => (a?.startAt?.getTime?.() ?? 0) - (b?.startAt?.getTime?.() ?? 0));
               const nextBooking = sortedBookings[0];
+              const hasUrgentBooking = sortedBookings.some((b) => b?.isUrgent);
               const minsToBooking = nextBooking?.startAt ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
               const shouldBlink = Number.isFinite(minsToBooking) && minsToBooking != null && minsToBooking <= 30 && minsToBooking > 0;
               const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
@@ -688,11 +729,13 @@ function AdminDashboardContent() {
                 assignedStaffId ||
                 (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
               const isPlanSelection = Boolean(selectValue && !assignedStaffId);
-              const cardBorder = shouldBlink
-                ? "border-emerald-400 animate-pulse"
-                : isOccupied
-                  ? "border-sky-300"
-                  : "border-emerald-400";
+              const cardBorder = hasUrgentBooking
+                ? "border-amber-500 animate-pulse"
+                : shouldBlink
+                  ? "border-emerald-400 animate-pulse"
+                  : isOccupied
+                    ? "border-sky-300"
+                    : "border-emerald-400";
               const cardBg = isOccupied ? "bg-sky-50/90" : "bg-white";
               return (
                 <div
@@ -727,8 +770,13 @@ function AdminDashboardContent() {
                     <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
                   )}
                   {nextBooking && (
-                    <div className="mt-2 text-xs text-blue-700">
-                      Бронь: {nextBooking.startTime} {nextBooking.guestName ? ` · ${nextBooking.guestName}` : ""}
+                    <div className="mt-2 text-xs">
+                      <span className={hasUrgentBooking ? "font-semibold text-amber-700 animate-pulse" : "text-blue-700"}>
+                        Бронь: {nextBooking.startTime}
+                      </span>
+                      {nextBooking.guestName ? (
+                        <span className="text-blue-700">{` · ${nextBooking.guestName}`}</span>
+                      ) : null}
                     </div>
                   )}
                   {session?.guestId ? (

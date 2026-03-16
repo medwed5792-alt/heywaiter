@@ -54,7 +54,7 @@ const DISABLE_OPTIONS = [
 ];
 
 export default function AdminBookingsPage() {
-  const [bookings, setBookings] = useState<(Booking & { startAt?: unknown })[]>([]);
+  const [bookings, setBookings] = useState<(Booking & { startAt?: unknown; endAt?: unknown; notifyWaiter?: boolean; flashDashboard?: boolean; isUrgent?: boolean })[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<Booking> & { id?: string } | null>(null);
@@ -85,9 +85,13 @@ export default function AdminBookingsPage() {
             status: (data.status as Booking["status"]) ?? "pending",
             arrived: data.arrived ?? false,
             startAt: data.startAt,
+            endAt: data.endAt,
+            notifyWaiter: data.notifyWaiter ?? false,
+            flashDashboard: data.flashDashboard ?? false,
+            isUrgent: data.isUrgent ?? false,
             createdAt: data.createdAt,
             updatedAt: data.updatedAt,
-          } as Booking & { startAt?: unknown };
+          } as Booking & { startAt?: unknown; endAt?: unknown; notifyWaiter?: boolean; flashDashboard?: boolean; isUrgent?: boolean };
         })
       );
       setLoading(false);
@@ -153,6 +157,8 @@ export default function AdminBookingsPage() {
 
         const guestContactStr = String(payload.guestContact ?? editing?.guestContact ?? "");
         const seatsNum = Number(payload.seats ?? editing?.seats ?? 2) || 2;
+        const nowMs = Date.now();
+        const isUrgent = startAtDate.getTime() < nowMs;
 
         // Если гостя нет в базе — создаём запись в коллекции guests с type "regular" (Новый), чтобы не слать undefined в Firestore
         let guestIdResolved: string | null = payload.guestId != null && payload.guestId !== "" ? String(payload.guestId) : null;
@@ -181,6 +187,9 @@ export default function AdminBookingsPage() {
           status: payload.status ?? "pending",
           startAt,
           endAt,
+          notifyWaiter: payload.notifyWaiter ?? editing?.notifyWaiter ?? false,
+          flashDashboard: payload.flashDashboard ?? editing?.flashDashboard ?? false,
+          isUrgent,
           updatedAt: serverTimestamp(),
         };
         if (payload.guestExternalId != null && payload.guestExternalId !== "") body.guestExternalId = payload.guestExternalId;
@@ -290,6 +299,34 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
+  // Auto-cleanup: удаление просроченных броней (конец + 15 минут, статус не 'seated')
+  useEffect(() => {
+    if (!bookings.length) return;
+    const cleanup = async () => {
+      const now = Date.now();
+      const toDelete: string[] = [];
+      for (const b of bookings) {
+        if (!b.id) continue;
+        if ((b as Booking).status === "seated") continue;
+        const endDate =
+          b.endAt && typeof (b.endAt as any)?.toDate === "function"
+            ? (b.endAt as { toDate: () => Date }).toDate()
+            : toEndAt(b.date, b.startTime, b.endTime);
+        if (endDate.getTime() + 15 * 60 * 1000 < now) {
+          toDelete.push(b.id as string);
+        }
+      }
+      for (const id of toDelete) {
+        try {
+          await deleteDoc(doc(db, "bookings", id));
+        } catch {
+          // silent
+        }
+      }
+    };
+    void cleanup();
+  }, [bookings]);
+
   return (
     <div style={{ zoom: 0.75 }}>
       <h2 className="text-lg font-semibold text-gray-900">Брони</h2>
@@ -373,6 +410,24 @@ export default function AdminBookingsPage() {
             <label className="block">
               <span className="block text-xs text-gray-600">Время по</span>
               <input type="time" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.endTime ?? "14:00"} onChange={(e) => setEditing((p) => ({ ...p, endTime: e.target.value }))} />
+            </label>
+            <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-gray-300"
+                checked={Boolean((editing as any).notifyWaiter)}
+                onChange={(e) => setEditing((p) => ({ ...p, notifyWaiter: e.target.checked }))}
+              />
+              <span>Уведомить официанта о брони</span>
+            </label>
+            <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-gray-300"
+                checked={Boolean((editing as any).flashDashboard)}
+                onChange={(e) => setEditing((p) => ({ ...p, flashDashboard: e.target.checked }))}
+              />
+              <span>Подсветить стол на дашборде (flashDashboard)</span>
             </label>
             <div className="flex gap-2 sm:col-span-2">
               <button type="submit" disabled={saving} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
