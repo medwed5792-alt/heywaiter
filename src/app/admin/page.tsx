@@ -84,6 +84,8 @@ interface FeedEvent {
   tableId?: string;
   read: boolean;
   createdAt: unknown;
+  /** venueId из документа, если есть — для точного пути удаления */
+  venueId?: string;
 }
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -166,6 +168,12 @@ function looksLikeTableIdError(tableId: string | number | undefined): boolean {
   if (tableId == null) return false;
   const s = String(tableId).trim();
   return s.length > 15 || /NUID/i.test(s) || /^[a-zA-Z0-9_-]{20,}$/.test(s);
+}
+
+/** Событие-«призрак»: мусор по тексту (NUID, «Ошибка данных стола») */
+function isGhostEvent(ev: FeedEvent): boolean {
+  const msg = ev.message ?? "";
+  return isInvalidEventMessage(msg) || msg.includes("Ошибка данных стола");
 }
 
 function TableSkeleton() {
@@ -638,15 +646,19 @@ function AdminDashboardContent() {
     );
     const unsub = onSnapshot(q, (snap) => {
       try {
-        const eventList: FeedEvent[] = snap.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          type: (doc.data().type as string) ?? "shift",
-          message: (doc.data().message as string) ?? "",
-          tableId: doc.data().tableId as string | undefined,
-          read: Boolean(doc.data().read),
-          createdAt: doc.data().createdAt,
-        } as FeedEvent));
+        const eventList: FeedEvent[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            type: (data.type as string) ?? "shift",
+            message: (data.message as string) ?? "",
+            tableId: data.tableId as string | undefined,
+            read: Boolean(data.read),
+            createdAt: data.createdAt,
+            venueId: (data.venueId as string) || vid,
+          } as FeedEvent;
+        });
         setShiftEvents(eventList);
         setFeedLoading(false);
       } catch (e) {
@@ -664,19 +676,58 @@ function AdminDashboardContent() {
         toast.error("Ошибка: ID события не найден");
         return;
       }
-      const vid = venueId || "current";
+      const vid = event.venueId || venueId || "current";
+      const venuePath = doc(db, "venues", vid, "events", eventId);
+      const rootEventsPath = doc(db, "events", eventId);
       console.log("Удаляю документ:", eventId, "из папки:", vid);
+
+      const forceRemoveFromUI = () => {
+        setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
+        setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
+      };
+
       try {
-        await deleteDoc(doc(db, "venues", vid, "events", eventId));
+        await deleteDoc(venuePath);
         toast.success("Событие удалено", { id: "archive-event" });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Ошибка";
-        console.error("[archiveEvent] удаление не прошло:", `venues/${vid}/events/${eventId}`, e);
-        toast.error(msg);
+        forceRemoveFromUI();
+      } catch (e1) {
+        try {
+          await deleteDoc(rootEventsPath);
+          toast.success("Событие удалено", { id: "archive-event" });
+          forceRemoveFromUI();
+        } catch (e2) {
+          const msg = e1 instanceof Error ? e1.message : "Ошибка";
+          console.error("[archiveEvent] удаление не прошло:", `venues/${vid}/events/${eventId}`, e1);
+          toast.error(msg);
+        }
       }
     },
     [venueId]
   );
+
+  const clearAllGhostEvents = useCallback(async () => {
+    const ghosts = [...(shiftEvents ?? []), ...(feedEvents ?? [])].filter(isGhostEvent);
+    if (ghosts.length === 0) {
+      toast("Нет событий-призраков для очистки", { id: "clear-ghosts" });
+      return;
+    }
+    const vid = venueId || "current";
+    const ids = new Set(ghosts.map((e) => e.id));
+    for (const ev of ghosts) {
+      try {
+        await deleteDoc(doc(db, "venues", vid, "events", ev.id));
+      } catch {
+        try {
+          await deleteDoc(doc(db, "events", ev.id));
+        } catch {
+          // пропускаем
+        }
+      }
+    }
+    setShiftEvents((prev) => prev.filter((e) => !ids.has(e.id)));
+    setFeedEvents((prev) => prev.filter((e) => !ids.has(e.id)));
+    toast.success(`Удалено призраков: ${ghosts.length}`, { id: "clear-ghosts" });
+  }, [venueId, shiftEvents, feedEvents]);
 
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
@@ -922,8 +973,19 @@ function AdminDashboardContent() {
 
       {venueType === "full_service" && (
         <section className="mt-8 w-full">
-          <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
-          <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — архивировать.</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
+              <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — архивировать.</p>
+            </div>
+            <button
+              type="button"
+              onClick={clearAllGhostEvents}
+              className="shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+            >
+              Очистить всё (призраки)
+            </button>
+          </div>
           {feedLoading ? (
             <div className="mt-3 space-y-2">
               <EventSkeleton />
