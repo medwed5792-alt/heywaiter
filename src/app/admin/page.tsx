@@ -660,6 +660,11 @@ function AdminDashboardContent() {
     return ids;
   }, [feedEvents]);
 
+  const allBookings = useMemo(() => {
+    const byTable = bookingsByTable ?? {};
+    return Object.values(byTable).flat();
+  }, [bookingsByTable]);
+
   if (!venueId) {
     return (
       <div className="p-20 text-center text-gray-600">
@@ -851,11 +856,14 @@ function AdminDashboardContent() {
               try {
               const session = safeSessionsByTable[table.id];
               const isOccupied = Boolean(session);
-              const bookingsList = safeBookingsByTable[table.id] ?? [];
-              const sortedBookings = [...bookingsList].sort((a, b) => (a?.startAt?.getTime?.() ?? 0) - (b?.startAt?.getTime?.() ?? 0));
-              const nextBooking = sortedBookings[0];
+              const activeBooking = allBookings.find(
+                (b) =>
+                  String(b.tableNumber ?? "") ===
+                    String(table.number ?? table.id) &&
+                  (b.status ?? "pending") === "pending"
+              );
               const now = new Date();
-              const startTimeDate = nextBooking?.startAt ?? null;
+              const startTimeDate = activeBooking?.startAt ?? null;
               const diffInMinutes =
                 startTimeDate != null
                   ? (startTimeDate.getTime() - now.getTime()) / 60000
@@ -918,13 +926,13 @@ function AdminDashboardContent() {
                   {isPlanSelection && (
                     <p className="mt-1 text-xs italic text-gray-500">По плану из Команды</p>
                   )}
-                  {nextBooking && startTimeDate && (
+                  {activeBooking && startTimeDate && (
                     <div className="mt-2 text-xs">
-                      <span className={isUrgent ? "font-semibold text-amber-700 animate-pulse" : "text-blue-700"}>
+                      <span className={isUrgent ? "font-extrabold text-orange-600 animate-pulse" : "text-blue-700"}>
                         🕒 {formatTimeSafe(startTimeDate)}
                       </span>
-                      {nextBooking.guestName ? (
-                        <span className="text-blue-700">{` · ${nextBooking.guestName}`}</span>
+                      {activeBooking.guestName ? (
+                        <span className="text-blue-700">{` · ${activeBooking.guestName}`}</span>
                       ) : null}
                     </div>
                   )}
