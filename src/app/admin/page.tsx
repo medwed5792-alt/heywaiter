@@ -170,12 +170,6 @@ function looksLikeTableIdError(tableId: string | number | undefined): boolean {
   return s.length > 15 || /NUID/i.test(s) || /^[a-zA-Z0-9_-]{20,}$/.test(s);
 }
 
-/** Событие-«призрак»: мусор по тексту (NUID, «Ошибка данных стола») */
-function isGhostEvent(ev: FeedEvent): boolean {
-  const msg = ev.message ?? "";
-  return isInvalidEventMessage(msg) || msg.includes("Ошибка данных стола");
-}
-
 function TableSkeleton() {
   return (
     <div className="animate-pulse rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -705,30 +699,6 @@ function AdminDashboardContent() {
     [venueId]
   );
 
-  const clearAllGhostEvents = useCallback(async () => {
-    const ghosts = [...(shiftEvents ?? []), ...(feedEvents ?? [])].filter(isGhostEvent);
-    if (ghosts.length === 0) {
-      toast("Нет событий-призраков для очистки", { id: "clear-ghosts" });
-      return;
-    }
-    const vid = venueId || "current";
-    const ids = new Set(ghosts.map((e) => e.id));
-    for (const ev of ghosts) {
-      try {
-        await deleteDoc(doc(db, "venues", vid, "events", ev.id));
-      } catch {
-        try {
-          await deleteDoc(doc(db, "events", ev.id));
-        } catch {
-          // пропускаем
-        }
-      }
-    }
-    setShiftEvents((prev) => prev.filter((e) => !ids.has(e.id)));
-    setFeedEvents((prev) => prev.filter((e) => !ids.has(e.id)));
-    toast.success(`Удалено призраков: ${ghosts.length}`, { id: "clear-ghosts" });
-  }, [venueId, shiftEvents, feedEvents]);
-
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
       try {
@@ -973,19 +943,8 @@ function AdminDashboardContent() {
 
       {venueType === "full_service" && (
         <section className="mt-8 w-full">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
-              <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — архивировать.</p>
-            </div>
-            <button
-              type="button"
-              onClick={clearAllGhostEvents}
-              className="shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-            >
-              Очистить всё (призраки)
-            </button>
-          </div>
+          <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
+          <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — архивировать.</p>
           {feedLoading ? (
             <div className="mt-3 space-y-2">
               <EventSkeleton />

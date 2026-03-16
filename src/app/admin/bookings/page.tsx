@@ -278,8 +278,31 @@ export default function AdminBookingsPage() {
     }
   }, [bookingSwitch.enabled]);
 
+  const BOOKING_MAX_AGE_FOR_ALERT_MS = 12 * 60 * 60 * 1000; // 12 часов — старые брони не спамят в ленту
+
   const sendLateReminder = useCallback(async (bookingId: string) => {
     try {
+      const bookingSnap = await getDoc(doc(db, "bookings", bookingId));
+      if (!bookingSnap.exists()) {
+        toast.error("Бронь не найдена");
+        return;
+      }
+      const data = bookingSnap.data();
+      if (data?.isAlerted === true) {
+        toast("Уведомление по этой брони уже отправлялось", { id: "late-already" });
+        return;
+      }
+      const startAtSource = data?.startAt as { toDate?: () => Date } | Date | undefined;
+      const startAt =
+        startAtSource && typeof (startAtSource as any).toDate === "function"
+          ? (startAtSource as { toDate: () => Date }).toDate()
+          : startAtSource instanceof Date
+          ? startAtSource
+          : null;
+      if (startAt && Date.now() - startAt.getTime() > BOOKING_MAX_AGE_FOR_ALERT_MS) {
+        toast.error("Бронь старше 12 часов. Уведомление не создаём.");
+        return;
+      }
       await addDoc(collection(db, "staffNotifications"), {
         venueId: VENUE_ID,
         tableId: "",
@@ -290,10 +313,14 @@ export default function AdminBookingsPage() {
         payload: { bookingId },
         createdAt: serverTimestamp(),
       });
+      await updateDoc(doc(db, "bookings", bookingId), {
+        isAlerted: true,
+        updatedAt: serverTimestamp(),
+      });
       setNotifyCooldown((prev) => ({ ...prev, [bookingId]: Date.now() }));
       toast.success("Напоминание ЛПР отправлено");
-    } catch {
-      toast.error("Ошибка отправки");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка отправки");
     }
   }, []);
 
