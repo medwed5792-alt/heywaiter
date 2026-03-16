@@ -125,6 +125,7 @@ function AdminDashboardContent() {
   const [guestNames, setGuestNames] = useState<Record<string, string>>({});
   const [guestRatings, setGuestRatings] = useState<Record<string, number>>({});
   const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([]);
+  const [shiftEvents, setShiftEvents] = useState<FeedEvent[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [activeSos, setActiveSos] = useState<FeedEvent | null>(null);
   const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
@@ -422,6 +423,31 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
+  // Подписка на события смен (venues/{venueId}/events)
+  useEffect(() => {
+    if (!venueId) return;
+    const q = query(
+      collection(db, "venues", venueId, "events"),
+      orderBy("createdAt", "desc"),
+      limit(100)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list: FeedEvent[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          type: (data.type as string) ?? "shift",
+          message: (data.message as string) ?? "",
+          tableId: undefined,
+          read: false,
+          createdAt: data.createdAt,
+        };
+      });
+      setShiftEvents(list);
+    });
+    return () => unsub();
+  }, [venueId]);
+
   const archiveEvent = useCallback(async (eventId: string) => {
     try {
       await updateDoc(doc(db, "staffNotifications", eventId), { read: true, updatedAt: serverTimestamp() });
@@ -539,8 +565,13 @@ function AdminDashboardContent() {
 
   const feedWithReminders = useMemo(() => {
     const feed = feedEvents ?? [];
-    return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...feed];
-  }, [bookingReminderEvents, feedEvents]);
+    const shifts = shiftEvents ?? [];
+    return [
+      ...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })),
+      ...shifts,
+      ...feed,
+    ];
+  }, [bookingReminderEvents, feedEvents, shiftEvents]);
 
   const safeStaffList = staffList ?? [];
   const safeBookingsByTable = bookingsByTable ?? {};
@@ -549,6 +580,15 @@ function AdminDashboardContent() {
   const safeAssignmentsByTable = assignmentsByTable ?? {};
   const safeOnShiftWaiters = onShiftWaiters ?? [];
   const totalTables = safeTables.length || 0;
+  const emergencyTableIds = useMemo(() => {
+    const ids = new Set<string>();
+    (feedEvents ?? []).forEach((e) => {
+      if (e.type === "sos" && !e.read && e.tableId) {
+        ids.add(String(e.tableId));
+      }
+    });
+    return ids;
+  }, [feedEvents]);
 
   if (!venueId) {
     return (
@@ -714,9 +754,13 @@ function AdminDashboardContent() {
               const bookingsList = safeBookingsByTable[table.id] ?? [];
               const sortedBookings = [...bookingsList].sort((a, b) => (a?.startAt?.getTime?.() ?? 0) - (b?.startAt?.getTime?.() ?? 0));
               const nextBooking = sortedBookings[0];
-              const hasUrgentBooking = sortedBookings.some((b) => b?.isUrgent);
-              const minsToBooking = nextBooking?.startAt ? (nextBooking.startAt.getTime() - Date.now()) / 60000 : null;
-              const shouldBlink = Number.isFinite(minsToBooking) && minsToBooking != null && minsToBooking <= 30 && minsToBooking > 0;
+              const nowMs = Date.now();
+              const hasActiveBooking = Boolean(nextBooking);
+              const minsDiff = nextBooking?.startAt
+                ? (nextBooking.startAt.getTime() - nowMs) / 60000
+                : null;
+              const isUrgent =
+                minsDiff != null && Number.isFinite(minsDiff) && minsDiff <= 15;
               const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
               const defaultFromTeam = safeStaffList.find((s) => s?.assignedTableIds?.includes(table.id));
               const assignedStaff = assignedStaffId ? safeStaffList.find((s) => s?.id === assignedStaffId) : null;
@@ -729,10 +773,11 @@ function AdminDashboardContent() {
                 assignedStaffId ||
                 (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "");
               const isPlanSelection = Boolean(selectValue && !assignedStaffId);
-              const cardBorder = hasUrgentBooking
-                ? "border-amber-500 animate-pulse"
-                : shouldBlink
-                  ? "border-emerald-400 animate-pulse"
+              const hasEmergency = emergencyTableIds.has(table.id);
+              const cardBorder = hasEmergency
+                ? "border-red-600 border-8 animate-bounce"
+                : isUrgent
+                  ? "border-orange-500 border-4 animate-pulse"
                   : isOccupied
                     ? "border-sky-300"
                     : "border-emerald-400";
@@ -771,8 +816,8 @@ function AdminDashboardContent() {
                   )}
                   {nextBooking && (
                     <div className="mt-2 text-xs">
-                      <span className={hasUrgentBooking ? "font-semibold text-amber-700 animate-pulse" : "text-blue-700"}>
-                        Бронь: {nextBooking.startTime}
+                      <span className={isUrgent ? "font-semibold text-amber-700 animate-pulse" : "text-blue-700"}>
+                        🕒 {nextBooking.startTime}
                       </span>
                       {nextBooking.guestName ? (
                         <span className="text-blue-700">{` · ${nextBooking.guestName}`}</span>

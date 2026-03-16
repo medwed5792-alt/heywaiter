@@ -112,6 +112,12 @@ export async function POST(request: NextRequest) {
       }
       const docRef = alt.docs[0].ref;
       const legacyId = alt.docs[0].id;
+      const staffData = alt.docs[0].data() ?? {};
+      const firstName = (staffData.firstName as string) ?? "";
+      const lastName = (staffData.lastName as string) ?? "";
+      const displayName =
+        [firstName, lastName].filter(Boolean).join(" ") || legacyId.slice(-8);
+
       if (action === "start") {
         await docRef.update({
           onShift: true,
@@ -129,6 +135,16 @@ export async function POST(request: NextRequest) {
           const toSet = entriesSnap.docs.find((d) => !d.data().checkIn);
           if (toSet) await toSet.ref.update({ checkIn: nowHHmm(), updatedAt: FieldValue.serverTimestamp() });
         }
+        await firestore
+          .collection("venues")
+          .doc(venueId)
+          .collection("events")
+          .add({
+            type: "shift",
+            message: `${displayName} заступил на смену`,
+            staffId: legacyId,
+            createdAt: FieldValue.serverTimestamp(),
+          });
       } else {
         if (venueId) {
           const today = new Date().toISOString().slice(0, 10);
@@ -156,6 +172,16 @@ export async function POST(request: NextRequest) {
         });
         if (venueId) {
           await clearWaiterFromTables(firestore, venueId, legacyId);
+          await firestore
+            .collection("venues")
+            .doc(venueId)
+            .collection("events")
+            .add({
+              type: "shift",
+              message: `${displayName} ушел со смены`,
+              staffId: legacyId,
+              createdAt: FieldValue.serverTimestamp(),
+            });
         }
       }
       return NextResponse.json({
@@ -188,6 +214,21 @@ export async function POST(request: NextRequest) {
             updatedAt: FieldValue.serverTimestamp(),
           });
         }
+        const staffData = snap.data() ?? {};
+        const firstName = (staffData.firstName as string) ?? "";
+        const lastName = (staffData.lastName as string) ?? "";
+        const displayName =
+          [firstName, lastName].filter(Boolean).join(" ") || staffDocId.slice(-8);
+        await firestore
+          .collection("venues")
+          .doc(staffVenueId)
+          .collection("events")
+          .add({
+            type: "shift",
+            message: `${displayName} заступил на смену`,
+            staffId: staffDocId,
+            createdAt: FieldValue.serverTimestamp(),
+          });
       }
       return NextResponse.json({
         ok: true,
@@ -225,6 +266,21 @@ export async function POST(request: NextRequest) {
     });
     if (staffVenueId) {
       await clearWaiterFromTables(firestore, staffVenueId, staffDocId);
+      const staffData = snap.data() ?? {};
+      const firstName = (staffData.firstName as string) ?? "";
+      const lastName = (staffData.lastName as string) ?? "";
+      const displayName =
+        [firstName, lastName].filter(Boolean).join(" ") || staffDocId.slice(-8);
+      await firestore
+        .collection("venues")
+        .doc(staffVenueId)
+        .collection("events")
+        .add({
+          type: "shift",
+          message: `${displayName} ушел со смены`,
+          staffId: staffDocId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
     }
     return NextResponse.json({
       ok: true,
