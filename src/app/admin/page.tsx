@@ -643,18 +643,21 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueId]);
 
-  const activeVenueId = venueId || "current";
-
   const archiveEvent = useCallback(
     async (event: FeedEvent) => {
+      const eventId = event.id;
+      const vid = venueId || "current";
+      console.log("Удаляю событие:", eventId, "из заведения:", vid);
       try {
-        // Все события ленты храним в venues/{venueId}/events
-        await deleteDoc(doc(db, "venues", activeVenueId, "events", event.id));
+        await deleteDoc(doc(db, "venues", vid, "events", eventId));
+        toast.success("Событие удалено");
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Ошибка");
+        const msg = e instanceof Error ? e.message : "Ошибка";
+        console.error("[archiveEvent]", e);
+        toast.error(msg);
       }
     },
-    [activeVenueId]
+    [venueId]
   );
 
   const saveTableWaiter = useCallback(
