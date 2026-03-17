@@ -86,10 +86,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const VENUE_ID = "venue_andrey_alt";
     let snap = await staffRef.get();
     const staffVenueId =
-      (venueId && venueId.trim()) ||
-      (snap.exists ? (snap.data()?.venueId as string) : null);
+      (venueId && venueId.trim()) || (snap.exists ? (snap.data()?.venueId as string) : null) || VENUE_ID;
 
     if (!snap.exists) {
       if (staffIdBody) {
@@ -119,11 +119,15 @@ export async function POST(request: NextRequest) {
         [firstName, lastName].filter(Boolean).join(" ") || legacyId.slice(-8);
 
       if (action === "start") {
-        await docRef.update({
-          onShift: true,
-          shiftStartTime: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(legacyId);
+        await venueStaffRef.set(
+          {
+            onShift: true,
+            shiftStartTime: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
         if (venueId) {
           const today = new Date().toISOString().slice(0, 10);
           const entriesSnap = await firestore
@@ -165,11 +169,15 @@ export async function POST(request: NextRequest) {
             });
           }
         }
-        await docRef.update({
-          onShift: false,
-          shiftEndTime: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+        const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(legacyId);
+        await venueStaffRef.set(
+          {
+            onShift: false,
+            shiftEndTime: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
         if (venueId) {
           await clearWaiterFromTables(firestore, venueId, legacyId);
           await firestore
@@ -194,11 +202,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "start") {
-      await staffRef.update({
-        onShift: true,
-        shiftStartTime: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      const venueStaffRef = firestore.collection("venues").doc(staffVenueId).collection("staff").doc(staffDocId);
+      await venueStaffRef.set(
+        {
+          onShift: true,
+          shiftStartTime: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
       if (staffVenueId) {
         const today = new Date().toISOString().slice(0, 10);
         const entriesSnap = await firestore
@@ -259,11 +271,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await staffRef.update({
-      onShift: false,
-      shiftEndTime: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const venueStaffRef = firestore.collection("venues").doc(staffVenueId).collection("staff").doc(staffDocId);
+    await venueStaffRef.set(
+      {
+        onShift: false,
+        shiftEndTime: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
     if (staffVenueId) {
       await clearWaiterFromTables(firestore, staffVenueId, staffDocId);
       const staffData = snap.data() ?? {};

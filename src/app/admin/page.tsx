@@ -95,8 +95,6 @@ interface OperatingDay {
   working: boolean;
   openTime: string;
   closeTime: string;
-  /** Принудительно открыто (кнопка «ОТКРЫТЬ ПРИНУДИТЕЛЬНО») */
-  isOpen?: boolean;
 }
 
 type OperatingHours = Record<DayKey, OperatingDay>;
@@ -197,14 +195,12 @@ function AdminDashboardContent() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [tables, setTables] = useState<TableRow[]>([]);
-  const [tablesLoading, setTablesLoading] = useState(false);
-  const [tablesLoadedOnce, setTablesLoadedOnce] = useState(false);
   const [occupiedCount, setOccupiedCount] = useState(0);
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
   const [activeBookings, setActiveBookings] = useState<BookingOnTable[]>([]);
   const [onShiftCount, setOnShiftCount] = useState(0);
-  const [onShiftWaiters, setOnShiftWaiters] = useState<ShiftStaff[]>([]);
   const [staffList, setStaffList] = useState<StaffWithTables[]>([]);
+  const [venueStaffOnShift, setVenueStaffOnShift] = useState<Record<string, boolean>>({});
   const [sessionsByTable, setSessionsByTable] = useState<Record<string, SessionOnTable>>({});
   const [bookingsByTable, setBookingsByTable] = useState<Record<string, BookingOnTable[]>>({});
   const [assignmentsByTable, setAssignmentsByTable] = useState<Record<string, string>>({});
@@ -218,16 +214,9 @@ function AdminDashboardContent() {
   const [dismissedBookings, setDismissedBookings] = useState<string[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
-  const [resetDone, setResetDone] = useState(false);
   const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
-  const [confirmEndOfDayOpen, setConfirmEndOfDayOpen] = useState(false);
-  const [forceOpen, setForceOpen] = useState(false);
-  const [forceOpenSaving, setForceOpenSaving] = useState(false);
-  const [migrationLoading, setMigrationLoading] = useState(false);
-  const [firestoreIndexError, setFirestoreIndexError] = useState<string | null>(null);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
-  const migrationTablesDoneRef = useRef(false);
   const autoResetDoneRef = useRef(false);
 
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -239,11 +228,10 @@ function AdminDashboardContent() {
       try {
         const batch = writeBatch(db);
 
-        // staff: onShift = false
-        const staffSnap = await getDocs(query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID)));
-        staffSnap.forEach((docSnap) => {
-          const ref = doc(db, "staff", docSnap.id);
-          batch.update(ref, { onShift: false });
+        // onShift = false в venues/venue_andrey_alt/staff (единая точка с Mini App)
+        const venueStaffSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"));
+        venueStaffSnap.docs.forEach((d) => {
+          batch.update(d.ref, { onShift: false });
         });
 
         // tables: remove assignments.waiter
@@ -278,28 +266,6 @@ function AdminDashboardContent() {
     []
   );
 
-  // Reset stuck tables once on load
-  useEffect(() => {
-    if (resetDone || venueType === null) return;
-    let cancelled = false;
-    fetch("/api/admin/reset-stuck-tables", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ venueId: DASHBOARD_VENUE_ID }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled && data?.closed > 0) toast.success(`Сброшено зависших столов: ${data.closed}`);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setResetDone(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [venueType, resetDone]);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -328,15 +294,10 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
     let cancelled = false;
-    (async () => {
-      setTablesLoading(true);
-      try {
-        const [venueTablesSnap, rootTablesSnap] = await Promise.all([
-          getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables")),
-          getDocs(query(collection(db, "tables"), where("venueId", "==", DASHBOARD_VENUE_ID))),
-        ]);
+    getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"))
+      .then((snap) => {
         if (cancelled) return;
-        const fromVenue = venueTablesSnap.docs.map((d) => {
+        const list = snap.docs.map((d) => {
           const data = d.data();
           return {
             id: d.id,
@@ -345,25 +306,9 @@ function AdminDashboardContent() {
             name: data.name as string | undefined,
           };
         });
-        const fromRoot = rootTablesSnap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            number: (data.number as number) ?? 0,
-            hallId: data.hallId as string | undefined,
-            name: data.name as string | undefined,
-          };
-        });
-        const list = fromVenue.length ? fromVenue : fromRoot;
         setTables(list);
-        setTablesLoadedOnce(true);
-      } catch (e) {
-        console.error("[admin/dashboard] tables load error:", e);
-        setTablesLoadedOnce(true);
-      } finally {
-        if (!cancelled) setTablesLoading(false);
-      }
-    })();
+      })
+      .catch((e) => console.error("[admin/dashboard] tables load error:", e));
     return () => {
       cancelled = true;
     };
@@ -394,80 +339,7 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueType]);
 
-  // Миграция (одноразовая кнопка): перенести tables из venues/current/tables в venues/venue_andrey_alt/tables
-  useEffect(() => {
-    function chunk<T>(arr: T[], size: number): T[][] {
-      const res: T[][] = [];
-      for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
-      return res;
-    }
-
-    async function migrateTablesOnce(): Promise<{ migrated: number }> {
-      const snap = await getDocs(collection(db, "venues", "current", "tables"));
-      if (snap.empty) return { migrated: 0 };
-      const docs = snap.docs;
-      // Firestore batch limit = 500 ops. Оставляем запас (set + update может быть 2), но делаем только set в новую папку.
-      const chunks = chunk(docs, 450);
-      let migrated = 0;
-      for (const part of chunks) {
-        const batch = writeBatch(db);
-        part.forEach((d) => {
-          const data = d.data() as Record<string, unknown>;
-          const targetRef = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", d.id);
-          batch.set(
-            targetRef,
-            {
-              ...data,
-              venueId: DASHBOARD_VENUE_ID,
-              updatedAt: serverTimestamp(),
-              migratedFromVenueId: "current",
-            },
-            { merge: true }
-          );
-        });
-        await batch.commit();
-        migrated += part.length;
-      }
-      return { migrated };
-    }
-
-    // attach to component scope via ref: we store on useRef for stable access
-    (migrationTablesDoneRef as any).migrateTablesOnce = migrateTablesOnce;
-  }, []);
-
-  const handleMigrateTables = useCallback(async () => {
-    if (migrationLoading) return;
-    setMigrationLoading(true);
-    try {
-      const fn = (migrationTablesDoneRef as any).migrateTablesOnce as
-        | (() => Promise<{ migrated: number }>)
-        | undefined;
-      if (!fn) throw new Error("Миграция не инициализирована");
-      const res = await fn();
-      toast.success(res.migrated > 0 ? `Перенесено столов: ${res.migrated}` : "Столы в старой папке не найдены");
-      // re-fetch tables after migration
-      setTablesLoading(true);
-      const venueTablesSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"));
-      const fromVenue = venueTablesSnap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          number: (data.number as number) ?? 0,
-          hallId: data.hallId as string | undefined,
-          name: data.name as string | undefined,
-        };
-      });
-      setTables(fromVenue);
-      setTablesLoadedOnce(true);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка миграции");
-    } finally {
-      setTablesLoading(false);
-      setMigrationLoading(false);
-    }
-  }, [migrationLoading]);
-
-  // Авто-сброс «забытых» смен: если сейчас рабочее время по графику, но есть сотрудники с onShift с вчера — сбросить
+  // Авто-сброс «забытых» смен: сотрудники с onShift из venues/.../staff, смена с вчера — сбросить
   useEffect(() => {
     if (autoResetDoneRef.current || !operatingHours || venueType !== "full_service") return;
     const now = new Date();
@@ -477,12 +349,13 @@ function AdminDashboardContent() {
     const open = parseTimeToToday(now, today.openTime);
     if (!open || now.getTime() < open.getTime()) return;
     let cancelled = false;
-    getDocs(query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("onShift", "==", true)))
-      .then((staffSnap) => {
+    getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"))
+      .then((snap) => {
         if (cancelled) return;
         const todayStart = startOfDay(now).getTime();
-        for (const d of staffSnap.docs) {
+        for (const d of snap.docs) {
           const data = d.data();
+          if (data.onShift !== true) continue;
           const start = data.shiftStartTime as { toDate?: () => Date } | undefined;
           const startDate = start && typeof (start as any).toDate === "function" ? (start as { toDate: () => Date }).toDate() : null;
           if (startDate && startDate.getTime() < todayStart) {
@@ -586,44 +459,38 @@ function AdminDashboardContent() {
           setActiveBookings(activeForToday);
           setBookingsTodayCount(activeForToday.length);
           setBookingsByTable(byTable);
-          setFirestoreIndexError(null);
         } catch (e) {
           console.error("[admin/dashboard] bookings snapshot error:", e);
         }
-      },
-      (err) => {
-        const msg = err?.message ? String(err.message) : "Firestore error";
-        // чаще всего сюда попадают ошибки индекса (FAILED_PRECONDITION)
-        setFirestoreIndexError(msg);
       }
     );
     return () => unsub();
   }, [venueType]);
 
+  // onShift только из venues/venue_andrey_alt/staff (единая точка с Mini App)
   useEffect(() => {
     if (!venueType) return;
-    const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("active", "==", true), where("onShift", "==", true)),
-      (snap) => {
-        setOnShiftCount(snap.size);
-        const list: ShiftStaff[] = [];
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const position = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string) ?? "";
-          const isWaiter =
-            position === "waiter" || (data.role as string) === "waiter" || (data.serviceRole as string) === "waiter";
-          const isLpr = position && LPR_ROLES.includes(position as any);
-          if (!isWaiter && !isLpr) return;
-          const firstName = (data.firstName as string) ?? "";
-          const lastName = (data.lastName as string) ?? "";
-          const name = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
-          list.push({ id: d.id, displayName: name, position });
-        });
-        setOnShiftWaiters(list);
-      }
-    );
+    const unsub = onSnapshot(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"), (snap) => {
+      const next: Record<string, boolean> = {};
+      let count = 0;
+      snap.docs.forEach((d) => {
+        const onShift = d.data().onShift === true;
+        next[d.id] = onShift;
+        if (onShift) count++;
+      });
+      setVenueStaffOnShift(next);
+      setOnShiftCount(count);
+    });
     return () => unsub();
-  }, [venueId]);
+  }, [venueType]);
+
+  // Список официантов на смене для селекта (имена из root staff, onShift из venue staff)
+  const onShiftWaitersFromVenue = useMemo(() => {
+    const byId = venueStaffOnShift ?? {};
+    return staffList
+      .filter((s) => byId[s.id] === true)
+      .map((s) => ({ id: s.id, displayName: s.displayName, position: "" }));
+  }, [staffList, venueStaffOnShift]);
 
   useEffect(() => {
     if (!venueType) return;
@@ -936,7 +803,7 @@ function AdminDashboardContent() {
   const safeTables = tables ?? [];
   const safeSessionsByTable = sessionsByTable ?? {};
   const safeAssignmentsByTable = assignmentsByTable ?? {};
-  const safeOnShiftWaiters = onShiftWaiters ?? [];
+  const safeOnShiftWaiters = onShiftWaitersFromVenue;
   const totalTables = safeTables.length || 0;
   const emergencyTableIds = useMemo(() => {
     const ids = new Set<string>();
@@ -953,15 +820,13 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
-  /** Заведение закрыто только если есть график, день настроен, и время вне диапазона; при isOpen — всегда открыто */
+  /** Заведение закрыто, если по графику сейчас вне [openTime, closeTime) */
   const isVenueClosedBySchedule = useMemo(() => {
     const now = new Date();
     const dayKey = getTodayKey(now);
-    if (!operatingHours) return false; // нет настроек — считаем открытым, баннер не показываем
+    if (!operatingHours) return false;
     const today = operatingHours[dayKey];
-    if (!today) return false;
-    if (today.isOpen === true) return false; // принудительно открыто
-    if (!today.working) return true;
+    if (!today || !today.working) return true;
     const open = parseTimeToToday(now, today.openTime);
     const close = parseTimeToToday(now, today.closeTime);
     if (!open || !close) return false;
@@ -976,48 +841,6 @@ function AdminDashboardContent() {
     return t < openMs || t >= closeMs;
   }, [operatingHours]);
 
-  const handleForceOpenNow = useCallback(async () => {
-    setForceOpenSaving(true);
-    try {
-      const now = new Date();
-      const dayKey = getTodayKey(now);
-      const ref = doc(db, "venues", DASHBOARD_VENUE_ID);
-      const snap = await getDoc(ref);
-      const current = (snap.exists() ? snap.data()?.operatingHours : null) as OperatingHours | null | undefined;
-      const next: OperatingHours = current
-        ? { ...current, [dayKey]: { ...(current[dayKey] ?? { working: true, openTime: "00:01", closeTime: "23:00" }), isOpen: true } }
-        : ({ [dayKey]: { working: true, openTime: "00:01", closeTime: "23:00", isOpen: true } } as OperatingHours);
-      if (!current) {
-        const defaultDay: OperatingDay = { working: true, openTime: "09:00", closeTime: "23:00" };
-        (["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const).forEach((k) => {
-          if (!next[k]) (next as any)[k] = { ...defaultDay };
-        });
-      }
-      await setDoc(ref, { operatingHours: next, updatedAt: serverTimestamp() }, { merge: true });
-      setOperatingHours(next);
-      setForceOpen(true);
-      toast.success("Заведение открыто принудительно");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка");
-    } finally {
-      setForceOpenSaving(false);
-    }
-  }, []);
-
-  const isEffectivelyClosed = isVenueClosedBySchedule && !forceOpen;
-  const shouldShowForceEndOfDay = useMemo(
-    () => isEffectivelyClosed && onShiftCount > 0,
-    [isEffectivelyClosed, onShiftCount]
-  );
-
-  if (!venueId) {
-    return (
-      <div className="p-20 text-center text-gray-600">
-        Не указано заведение. Добавьте ?v=venueId в адрес.
-      </div>
-    );
-  }
-
   if (venueLoading) {
     return (
       <div className="p-20 text-center text-gray-600">
@@ -1027,45 +850,14 @@ function AdminDashboardContent() {
   }
 
   return (
-    <div>
+    <div className="relative">
+      {isVenueClosedBySchedule && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/60 rounded-xl">
+          <p className="text-lg font-medium text-white">Заведение закрыто</p>
+        </div>
+      )}
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
       <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
-
-      {firestoreIndexError && (
-        <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4 text-sm text-red-800">
-          <div className="font-semibold">Firestore ошибка (возможен индекс)</div>
-          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-red-900">{firestoreIndexError}</pre>
-        </div>
-      )}
-
-      {isVenueClosedBySchedule && !forceOpen && (
-        <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-8">
-          <p className="text-sm font-medium text-amber-900">Заведение по графику закрыто.</p>
-          <button
-            type="button"
-            disabled={forceOpenSaving}
-            onClick={handleForceOpenNow}
-            className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
-          >
-            {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ЗАВЕДЕНИЕ ПРИНУДИТЕЛЬНО"}
-          </button>
-        </div>
-      )}
-
-      {shouldShowForceEndOfDay && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-red-400 bg-red-50 p-4">
-          <p className="text-sm font-medium text-red-800">
-            📢 Время работы истекло. Завершить смену для всех и очистить столы?
-          </p>
-          <button
-            type="button"
-            onClick={() => setConfirmEndOfDayOpen(true)}
-            className="shrink-0 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-red-700 transition-colors"
-          >
-            ЗАВЕРШИТЬ ДЕНЬ
-          </button>
-        </div>
-      )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
@@ -1075,30 +867,8 @@ function AdminDashboardContent() {
             <TableSkeleton />
           </>
         ) : venueType === "full_service" && tables.length === 0 ? (
-          <div className="col-span-full flex flex-col items-center justify-center gap-4 rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
-            {tablesLoadedOnce && !tablesLoading ? (
-              <p>Столы не найдены. Нажмите [Миграция], чтобы перенести данные.</p>
-            ) : (
-              <p>Заведение пустое. Создайте столы и добавьте команду.</p>
-            )}
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <button
-                type="button"
-                disabled={forceOpenSaving}
-                onClick={handleForceOpenNow}
-                className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
-              >
-                {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ПРИНУДИТЕЛЬНО"}
-              </button>
-              <button
-                type="button"
-                disabled={migrationLoading}
-                onClick={handleMigrateTables}
-                className="rounded-xl bg-gray-900 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-gray-800 transition-colors disabled:opacity-60"
-              >
-                {migrationLoading ? "Перенос…" : "ПЕРЕНЕСТИ СТОЛЫ СО СТАРОЙ ВЕРСИИ"}
-              </button>
-            </div>
+          <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
+            Заведение пустое. Создайте столы и добавьте команду.
           </div>
         ) : venueType === "full_service" ? (
           <>
@@ -1287,44 +1057,6 @@ function AdminDashboardContent() {
         </div>
       )}
 
-      {confirmEndOfDayOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-end-of-day-title"
-        >
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <h3 id="confirm-end-of-day-title" className="text-base font-semibold text-gray-900">
-              Завершить день?
-            </h3>
-            <p className="mt-2 text-sm text-gray-600">
-              Вы уверены? Это снимет всех со смены и отвяжет официантов от столов.
-            </p>
-            <div className="mt-4 flex gap-2">
-              <button
-                type="button"
-                disabled={endOfDayLoading}
-                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                onClick={() => setConfirmEndOfDayOpen(false)}
-              >
-                Отмена
-              </button>
-              <button
-                type="button"
-                disabled={endOfDayLoading}
-                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                onClick={() => {
-                  performEndOfDayReset("manual").then(() => setConfirmEndOfDayOpen(false));
-                }}
-              >
-                {endOfDayLoading ? "Выполняется…" : "ЗАВЕРШИТЬ ДЕНЬ"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {venueType === "full_service" && (
         <section className="mt-8">
           <h3 className="text-base font-semibold text-gray-900">Планшетка столов</h3>
@@ -1333,23 +1065,7 @@ function AdminDashboardContent() {
           </p>
           {!safeTables || safeTables.length === 0 ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
-              {tablesLoading ? (
-                "Загрузка столов..."
-              ) : tablesLoadedOnce ? (
-                <div className="flex flex-col items-center gap-3">
-                  <div>Столы не найдены. Нажмите «Перенести», чтобы перенести данные.</div>
-                  <button
-                    type="button"
-                    disabled={migrationLoading}
-                    onClick={handleMigrateTables}
-                    className="rounded-xl bg-gray-900 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-gray-800 transition-colors disabled:opacity-60"
-                  >
-                    {migrationLoading ? "Перенос…" : "ПЕРЕНЕСТИ СТОЛЫ СО СТАРОЙ ВЕРСИИ"}
-                  </button>
-                </div>
-              ) : (
-                "Загрузка столов..."
-              )}
+              Столы не найдены.
             </div>
           ) : (
             <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -1391,13 +1107,10 @@ function AdminDashboardContent() {
                     ? safeStaffList.find((s) => s?.id === assignedStaffId)
                     : null;
                   const isGreenSelect =
-                    assignedStaffId !== "" && (assignedStaff?.onShift === true);
+                    assignedStaffId !== "" && venueStaffOnShift[assignedStaffId] === true;
                   const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
-                  const effectiveStaff = effectiveWaiterId
-                    ? safeStaffList.find((s) => s?.id === effectiveWaiterId)
-                    : null;
                   const isWaiterOffShift =
-                    effectiveWaiterId && (effectiveStaff ? !effectiveStaff.onShift : true);
+                    effectiveWaiterId && venueStaffOnShift[effectiveWaiterId] !== true;
                   const uniqueStaff = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
