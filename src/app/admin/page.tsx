@@ -226,33 +226,36 @@ function AdminDashboardContent() {
   const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
   const [confirmEndOfDayOpen, setConfirmEndOfDayOpen] = useState(false);
+  const [forceOpen, setForceOpen] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
+  const migrationTablesDoneRef = useRef(false);
+  const autoResetDoneRef = useRef(false);
 
   const todayStr = new Date().toISOString().slice(0, 10);
+  const DASHBOARD_VENUE_ID = "venue_andrey_alt";
 
   const performEndOfDayReset = useCallback(
     async (reason: "auto" | "manual") => {
-      if (!venueId) return;
       setEndOfDayLoading(true);
       try {
         const batch = writeBatch(db);
 
         // staff: onShift = false
-        const staffSnap = await getDocs(query(collection(db, "staff"), where("venueId", "==", venueId)));
+        const staffSnap = await getDocs(query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID)));
         staffSnap.forEach((docSnap) => {
           const ref = doc(db, "staff", docSnap.id);
           batch.update(ref, { onShift: false });
         });
 
         // tables: remove assignments.waiter
-        const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
+        const tablesSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"));
         tablesSnap.forEach((docSnap) => {
           const data = docSnap.data() || {};
           const assignments = (data.assignments as Record<string, unknown> | undefined) ?? {};
           if (assignments && Object.prototype.hasOwnProperty.call(assignments, "waiter")) {
             const updated = { ...assignments };
             delete (updated as any).waiter;
-            const ref = doc(db, "venues", venueId, "tables", docSnap.id);
+            const ref = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", docSnap.id);
             batch.update(ref, {
               assignments: updated,
             });
@@ -260,7 +263,7 @@ function AdminDashboardContent() {
         });
 
         await batch.commit();
-        await addDoc(collection(db, "venues", venueId, "events"), {
+        await addDoc(collection(db, "venues", DASHBOARD_VENUE_ID, "events"), {
           type: "system",
           message: "Система: Смена завершена автоматически по графику",
           createdAt: serverTimestamp(),
@@ -273,17 +276,17 @@ function AdminDashboardContent() {
         setEndOfDayLoading(false);
       }
     },
-    [venueId]
+    []
   );
 
   // Reset stuck tables once on load
   useEffect(() => {
-    if (!venueId || resetDone || venueType === null) return;
+    if (resetDone || venueType === null) return;
     let cancelled = false;
     fetch("/api/admin/reset-stuck-tables", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ venueId: venueId }),
+      body: JSON.stringify({ venueId: DASHBOARD_VENUE_ID }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -296,14 +299,13 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [venueType, venueId, resetDone]);
+  }, [venueType, resetDone]);
 
   useEffect(() => {
-    if (!venueId) return;
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDoc(doc(db, "venues", venueId));
+        const snap = await getDoc(doc(db, "venues", DASHBOARD_VENUE_ID));
         if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
@@ -322,15 +324,15 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [venueId]);
+  }, []);
 
   useEffect(() => {
-    if (!venueId || venueType !== "full_service") return;
+    if (!venueType || venueType !== "full_service") return;
     let cancelled = false;
     (async () => {
       const [venueTablesSnap, rootTablesSnap] = await Promise.all([
-        getDocs(collection(db, "venues", venueId, "tables")),
-        getDocs(query(collection(db, "tables"), where("venueId", "==", venueId))),
+        getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables")),
+        getDocs(query(collection(db, "tables"), where("venueId", "==", DASHBOARD_VENUE_ID))),
       ]);
       if (cancelled) return;
       const fromVenue = venueTablesSnap.docs.map((d) => {
@@ -357,12 +359,12 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [venueType, venueId]);
+  }, [venueType]);
 
   useEffect(() => {
-    if (!venueId || venueType !== "full_service") return;
+    if (!venueType || venueType !== "full_service") return;
     const unsub = onSnapshot(
-      query(collection(db, "activeSessions"), where("venueId", "==", venueId), where("status", "==", "check_in_success")),
+      query(collection(db, "activeSessions"), where("venueId", "==", DASHBOARD_VENUE_ID), where("status", "==", "check_in_success")),
       (snap) => {
         const nextIds = new Set(snap.docs.map((d) => d.id));
         activeSessionIdsRef.current = new Set([...activeSessionIdsRef.current, ...nextIds]);
@@ -382,10 +384,64 @@ function AdminDashboardContent() {
       }
     );
     return () => unsub();
-  }, [venueType, venueId]);
+  }, [venueType]);
+
+  // Миграция (один раз): прописать всем столам в корневой коллекции tables venueId: venue_andrey_alt
+  useEffect(() => {
+    if (migrationTablesDoneRef.current) return;
+    migrationTablesDoneRef.current = true;
+    let cancelled = false;
+    getDocs(collection(db, "tables"))
+      .then((snap) => {
+        if (cancelled || snap.empty) return;
+        return Promise.all(
+          snap.docs.map((d) =>
+            updateDoc(doc(db, "tables", d.id), { venueId: DASHBOARD_VENUE_ID, updatedAt: serverTimestamp() }).catch(() => {})
+          )
+        );
+      })
+      .then(() => {
+        if (!cancelled) migrationTablesDoneRef.current = true;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Авто-сброс «забытых» смен: если сейчас рабочее время по графику, но есть сотрудники с onShift с вчера — сбросить
+  useEffect(() => {
+    if (autoResetDoneRef.current || !operatingHours || venueType !== "full_service") return;
+    const now = new Date();
+    const dayKey = getTodayKey(now);
+    const today = operatingHours[dayKey];
+    if (!today || !today.working) return;
+    const open = parseTimeToToday(now, today.openTime);
+    if (!open || now.getTime() < open.getTime()) return;
+    let cancelled = false;
+    getDocs(query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("onShift", "==", true)))
+      .then((staffSnap) => {
+        if (cancelled) return;
+        const todayStart = startOfDay(now).getTime();
+        for (const d of staffSnap.docs) {
+          const data = d.data();
+          const start = data.shiftStartTime as { toDate?: () => Date } | undefined;
+          const startDate = start && typeof (start as any).toDate === "function" ? (start as { toDate: () => Date }).toDate() : null;
+          if (startDate && startDate.getTime() < todayStart) {
+            autoResetDoneRef.current = true;
+            performEndOfDayReset("auto");
+            return;
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [operatingHours, venueType, performEndOfDayReset]);
 
   useEffect(() => {
-    if (!venueId || venueType !== "full_service") return;
+    if (!venueType || venueType !== "full_service") return;
     const today = new Date();
     const dayStart = startOfDay(today);
     const dayEnd = new Date(dayStart);
@@ -393,7 +449,7 @@ function AdminDashboardContent() {
 
     const q = query(
       collection(db, "bookings"),
-      where("venueId", "==", venueId),
+      where("venueId", "==", DASHBOARD_VENUE_ID),
       where("status", "==", "pending"),
       orderBy("startAt", "asc")
     );
@@ -479,12 +535,12 @@ function AdminDashboardContent() {
       }
     });
     return () => unsub();
-  }, [venueType, venueId]);
+  }, [venueType]);
 
   useEffect(() => {
-    if (!venueId) return;
+    if (!venueType) return;
     const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true), where("onShift", "==", true)),
+      query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("active", "==", true), where("onShift", "==", true)),
       (snap) => {
         setOnShiftCount(snap.size);
         const list: ShiftStaff[] = [];
@@ -507,9 +563,9 @@ function AdminDashboardContent() {
   }, [venueId]);
 
   useEffect(() => {
-    if (!venueId) return;
+    if (!venueType) return;
     const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true)),
+      query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("active", "==", true)),
       (snap) => {
         const list: StaffWithTables[] = snap.docs.map((d) => {
           const data = d.data();
@@ -528,11 +584,11 @@ function AdminDashboardContent() {
       }
     );
     return () => unsub();
-  }, [venueId]);
+  }, [venueType]);
 
   useEffect(() => {
-    if (!venueId || tables.length === 0) return;
-    const unsub = onSnapshot(collection(db, "venues", venueId, "tables"), (snap) => {
+    if (!tables.length) return;
+    const unsub = onSnapshot(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"), (snap) => {
       const next: Record<string, string> = {};
       snap.docs.forEach((d) => {
         const data = d.data();
@@ -543,17 +599,17 @@ function AdminDashboardContent() {
       setAssignmentsByTable((prev) => ({ ...prev, ...next }));
     });
     return () => unsub();
-  }, [tables.length, venueId]);
+  }, [tables.length]);
 
   const tableIds = tables.map((t) => t?.id).filter(Boolean).join(",");
   useEffect(() => {
-    if (!venueId || tables.length === 0) return;
+    if (!tables.length) return;
     let cancelled = false;
     (async () => {
       const next: Record<string, string> = {};
       for (const t of tables) {
         if (cancelled || !t?.id) return;
-        const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
+        const snap = await getDoc(doc(db, "venues", DASHBOARD_VENUE_ID, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const a = data.assignments as Record<string, string> | undefined;
@@ -566,7 +622,7 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [tableIds, tables, venueId]);
+  }, [tableIds, tables]);
 
   const guestIds = Object.values(sessionsByTable)
     .map((s) => s.guestId)
@@ -606,7 +662,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     const q = query(
       collection(db, "staffNotifications"),
-      where("venueId", "==", venueId),
+      where("venueId", "==", DASHBOARD_VENUE_ID),
       orderBy("createdAt", "desc"),
       limit(50)
     );
@@ -633,7 +689,7 @@ function AdminDashboardContent() {
       }
     });
     return () => unsub();
-  }, [venueId]);
+  }, []);
 
   const EVENTS_VENUE_ID = "venue_andrey_alt";
 
@@ -692,7 +748,7 @@ function AdminDashboardContent() {
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
       try {
-        const ref = doc(db, "venues", venueId, "tables", tableId);
+        const ref = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", tableId);
         const snap = await getDoc(ref);
         const existing = snap.exists() ? ((snap.data()?.assignments as Record<string, string> | undefined) ?? {}) : {};
         await setDoc(
@@ -707,14 +763,13 @@ function AdminDashboardContent() {
         toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
       }
     },
-    [venueId]
+    []
   );
 
   useEffect(() => {
-    if (!venueId) return;
     const q = query(
       collection(db, "activeSessions"),
-      where("venueId", "==", venueId),
+      where("venueId", "==", DASHBOARD_VENUE_ID),
       where("status", "==", "closed"),
       orderBy("closedAt", "desc"),
       limit(30)
@@ -749,7 +804,7 @@ function AdminDashboardContent() {
       );
     });
     return () => unsubClosed();
-  }, [venueId]);
+  }, []);
 
   const openGuestModal = useCallback(async (guestId: string) => {
     const snap = await getDoc(doc(db, "guests", guestId));
@@ -835,20 +890,31 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
+  /** Заведение закрыто, если сейчас не внутри [openTime, closeTime) для сегодняшнего дня недели */
   const isVenueClosedBySchedule = useMemo(() => {
     if (!operatingHours) return false;
     const now = new Date();
     const dayKey = getTodayKey(now);
     const today = operatingHours[dayKey];
-    if (!today || !today.working) return false;
+    if (!today || !today.working) return true;
+    const open = parseTimeToToday(now, today.openTime);
     const close = parseTimeToToday(now, today.closeTime);
-    if (!close) return false;
-    return now.getTime() > close.getTime();
+    if (!open || !close) return false;
+    const t = now.getTime();
+    const openMs = open.getTime();
+    const closeMs = close.getTime();
+    if (closeMs <= openMs) {
+      const nextClose = new Date(close);
+      nextClose.setDate(nextClose.getDate() + 1);
+      return t < openMs || t >= nextClose.getTime();
+    }
+    return t < openMs || t >= closeMs;
   }, [operatingHours]);
 
+  const isEffectivelyClosed = isVenueClosedBySchedule && !forceOpen;
   const shouldShowForceEndOfDay = useMemo(
-    () => isVenueClosedBySchedule && onShiftCount > 0,
-    [isVenueClosedBySchedule, onShiftCount]
+    () => isEffectivelyClosed && onShiftCount > 0,
+    [isEffectivelyClosed, onShiftCount]
   );
 
   if (!venueId) {
@@ -872,6 +938,19 @@ function AdminDashboardContent() {
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
       <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
 
+      {isVenueClosedBySchedule && !forceOpen && (
+        <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-8">
+          <p className="text-sm font-medium text-amber-900">Заведение по графику закрыто.</p>
+          <button
+            type="button"
+            onClick={() => setForceOpen(true)}
+            className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors"
+          >
+            ОТКРЫТЬ ЗАВЕДЕНИЕ ПРИНУДИТЕЛЬНО
+          </button>
+        </div>
+      )}
+
       {shouldShowForceEndOfDay && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-red-400 bg-red-50 p-4">
           <p className="text-sm font-medium text-red-800">
@@ -894,6 +973,10 @@ function AdminDashboardContent() {
             <TableSkeleton />
             <TableSkeleton />
           </>
+        ) : venueType === "full_service" && tables.length === 0 ? (
+          <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
+            Заведение пустое. Создайте столы и добавьте команду.
+          </div>
         ) : venueType === "full_service" ? (
           <>
             <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
