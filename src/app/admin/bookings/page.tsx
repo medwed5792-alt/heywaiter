@@ -623,7 +623,7 @@ export default function AdminBookingsPage() {
 
   const hasSearchFilter = Boolean(filterPhone.trim() || filterName.trim());
 
-  /** До начала брони осталось меньше 30 минут (и время ещё не прошло). */
+  /** «Горячая» бронь: до прихода < 20 минут (и время ещё не прошло). */
   const isBookingUrgent = useCallback((b: BookingWithMeta): boolean => {
     const startAt = b.startAt && typeof (b.startAt as { toDate?: () => Date }).toDate === "function"
       ? (b.startAt as { toDate: () => Date }).toDate()
@@ -631,7 +631,7 @@ export default function AdminBookingsPage() {
     const now = Date.now();
     const startMs = startAt.getTime();
     const minsToStart = (startMs - now) / 60000;
-    return Number.isFinite(minsToStart) && minsToStart >= 0 && minsToStart < 30;
+    return Number.isFinite(minsToStart) && minsToStart >= 0 && minsToStart < 20;
   }, []);
 
   // Auto-cleanup: удаление просроченных броней (конец + 15 минут, статус не 'seated')
@@ -738,8 +738,9 @@ export default function AdminBookingsPage() {
                       type="button"
                       onClick={() => dismissVenueEvent(ev.id)}
                       className="rounded border border-red-400 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                      title="Удалить событие из Firestore навсегда"
                     >
-                      Отмена
+                      ОТМЕНИТЬ
                     </button>
                   </li>
                 ))}
@@ -940,9 +941,9 @@ export default function AdminBookingsPage() {
               const tableBookings = filteredBookingsForGrid.filter((b) => {
                 const tid = String(b.tableId ?? "").trim();
                 const tnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
-                const tableIdStr = String(table.id).trim();
-                const tableNumStr = String(table.number).trim();
-                return tid === tableIdStr || tnum === tableIdStr || tnum === tableNumStr;
+                const tableIdStr = String(table.id ?? "").trim();
+                const tableNumStr = String(table.number ?? "").trim();
+                return tid === tableIdStr || tnum === tableIdStr || tnum === tableNumStr || String(b.tableNumber ?? "").trim() === String(table.id).trim();
               });
               const tableHasSearchMatch = !hasSearchFilter || tableBookings.length > 0;
               return (
@@ -974,7 +975,7 @@ export default function AdminBookingsPage() {
                             }}
                             className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-100 px-2 py-2 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-200"
                           >
-                            Свободно ({formatDuration(seg.durationMinutes)})
+                            --:--
                           </button>
                         );
                       }
@@ -985,14 +986,13 @@ export default function AdminBookingsPage() {
                           key={b.id}
                           type="button"
                           onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
-                          className={`w-full text-left rounded-lg border px-2 py-2 text-sm hover:border-orange-400 ${
+                          className={`w-full rounded-lg border px-2 py-2 text-sm font-medium hover:border-orange-400 ${
                             urgent
-                              ? "border-orange-400 bg-orange-100 font-bold text-orange-800 animate-pulse"
+                              ? "border-orange-400 bg-orange-100 text-orange-800 animate-pulse"
                               : "border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100"
                           }`}
                         >
-                          <span className="font-medium">{b.startTime} — {b.endTime}</span>
-                          <span className="block text-xs truncate">{b.guestName || "—"}</span>
+                          {b.startTime ?? "--:--"}
                         </button>
                       );
                     })}
