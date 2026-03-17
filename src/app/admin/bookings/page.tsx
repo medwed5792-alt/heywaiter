@@ -12,6 +12,8 @@ import {
   deleteDoc,
   query,
   where,
+  orderBy,
+  limit,
   onSnapshot,
   serverTimestamp,
   Timestamp,
@@ -27,6 +29,7 @@ type BookingWithMeta = Booking & {
   flashDashboard?: boolean;
   isUrgent?: boolean;
   bookingNote?: string;
+  tableNumber?: number | string;
 };
 
 interface TableRow {
@@ -236,8 +239,18 @@ export default function AdminBookingsPage() {
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const phoneInputRef = useRef<HTMLInputElement>(null);
+  const [venueEvents, setVenueEvents] = useState<{ id: string; type?: string; message?: string; createdAt?: unknown }[]>([]);
 
   const selectedDate = gridDate;
+
+  const dismissVenueEvent = useCallback(async (eventId: string) => {
+    try {
+      await deleteDoc(doc(db, "venues", VENUE_ID, "events", eventId));
+      toast.success("Уведомление удалено");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка удаления уведомления");
+    }
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "guests"), (snap) => {
@@ -267,6 +280,7 @@ export default function AdminBookingsPage() {
             id: d.id,
             venueId: data.venueId ?? VENUE_ID,
             tableId: data.tableId ?? "",
+            tableNumber: data.tableNumber as number | string | undefined,
             guestName: data.guestName ?? "",
             guestContact: data.guestContact ?? "",
             guestId: data.guestId,
@@ -313,6 +327,23 @@ export default function AdminBookingsPage() {
         if (oh) setOperatingHours(oh);
       }
     });
+  }, []);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, "venues", VENUE_ID, "events"),
+      orderBy("createdAt", "desc"),
+      limit(30)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setVenueEvents(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, type: data.type as string, message: data.message as string, createdAt: data.createdAt };
+        })
+      );
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -559,7 +590,16 @@ export default function AdminBookingsPage() {
   /** Брони по venue_andrey_alt и выбранной дате (selectedDate/gridDate). Синхронизация: фильтр по дате вверху страницы. */
   const filteredBookingsForGrid = useMemo(() => {
     let list = bookings.filter((b) => b.venueId === VENUE_ID && b.date === selectedDate && b.status !== "cancelled");
-    if (filterTableId) list = list.filter((b) => b.tableId === filterTableId);
+    if (filterTableId) {
+      const selTable = venueTables.find((t) => t.id === filterTableId);
+      list = list.filter((b) => {
+        const tid = String(b.tableId ?? "").trim();
+        const tnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
+        const tableIdStr = String(filterTableId).trim();
+        const tableNumStr = selTable ? String(selTable.number).trim() : "";
+        return tid === tableIdStr || tnum === tableIdStr || (tableNumStr !== "" && tnum === tableNumStr);
+      });
+    }
     if (filterPhone.trim()) {
       const digits = phoneDigits(filterPhone);
       list = list.filter((b) => phoneDigits(b.guestContact ?? "").includes(digits));
@@ -575,7 +615,7 @@ export default function AdminBookingsPage() {
       list = list.filter((b) => (b.endTime ?? "") <= filterTimeTo || (b.startTime ?? "") <= filterTimeTo);
     }
     return list;
-  }, [bookings, selectedDate, filterTableId, filterPhone, filterName, filterTimeFrom, filterTimeTo]);
+  }, [bookings, selectedDate, filterTableId, filterPhone, filterName, filterTimeFrom, filterTimeTo, venueTables]);
 
   const timeSlots = useMemo(() => getTimeSlotsForDate(selectedDate, operatingHours), [selectedDate, operatingHours]);
   const dayStart = timeSlots[0] ?? DEFAULT_SLOT_START;
@@ -662,25 +702,50 @@ export default function AdminBookingsPage() {
         </button>
       </div>
 
-      {lateBookings.length > 0 && (
-        <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4 animate-pulse">
-          <h3 className="text-sm font-medium text-red-800">Опоздания (время наступило, скана нет)</h3>
-          <ul className="mt-2 space-y-2">
-            {lateBookings.map((b) => (
-              <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2">
-                <span className="text-sm text-gray-800">{b.guestName} · {b.date} {b.startTime} · Стол {b.tableId}</span>
-                <button
-                  type="button"
-                  onClick={() => b.id && sendLateReminder(b.id)}
-                  disabled={notifyCooldown[b.id!] && Date.now() - notifyCooldown[b.id!] < LATE_NOTIFY_INTERVAL_MS}
-                  className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
-                >
-                  Напомнить ЛПР
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs text-red-600">Уведомления каждые 15 мин до действия ЛПР («Ждать» или «Отменить»).</p>
+      {(lateBookings.length > 0 || venueEvents.length > 0) && (
+        <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4">
+          {lateBookings.length > 0 && (
+            <>
+              <h3 className="text-sm font-medium text-red-800">Опоздания (время наступило, скана нет)</h3>
+              <ul className="mt-2 space-y-2">
+                {lateBookings.map((b) => (
+                  <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2">
+                    <span className="text-sm text-gray-800">{b.guestName} · {b.date} {b.startTime} · Стол {b.tableId}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => b.id && sendLateReminder(b.id)}
+                        disabled={notifyCooldown[b.id!] && Date.now() - notifyCooldown[b.id!] < LATE_NOTIFY_INTERVAL_MS}
+                        className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
+                      >
+                        Напомнить ЛПР
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-xs text-red-600">Уведомления каждые 15 мин до действия ЛПР («Ждать» или «Отменить»).</p>
+            </>
+          )}
+          {venueEvents.length > 0 && (
+            <div className={lateBookings.length > 0 ? "mt-4 pt-4 border-t border-red-200" : ""}>
+              <h3 className="text-sm font-medium text-red-800">Уведомления (события)</h3>
+              <ul className="mt-2 space-y-2">
+                {venueEvents.map((ev) => (
+                  <li key={ev.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2">
+                    <span className="text-sm text-gray-800">{ev.message ?? ev.type ?? ev.id}</span>
+                    <button
+                      type="button"
+                      onClick={() => dismissVenueEvent(ev.id)}
+                      className="rounded border border-red-400 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                    >
+                      Отмена
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
@@ -872,12 +937,13 @@ export default function AdminBookingsPage() {
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {venueTables.map((table) => {
-              const tableBookings = filteredBookingsForGrid.filter(
-                (b) =>
-                  String(b.tableId) === String(table.id) ||
-                  (typeof (b as BookingWithMeta & { tableNumber?: unknown }).tableNumber !== "undefined" &&
-                    String((b as BookingWithMeta & { tableNumber?: unknown }).tableNumber) === String(table.id))
-              );
+              const tableBookings = filteredBookingsForGrid.filter((b) => {
+                const tid = String(b.tableId ?? "").trim();
+                const tnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
+                const tableIdStr = String(table.id).trim();
+                const tableNumStr = String(table.number).trim();
+                return tid === tableIdStr || tnum === tableIdStr || tnum === tableNumStr;
+              });
               const tableHasSearchMatch = !hasSearchFilter || tableBookings.length > 0;
               return (
                 <div
