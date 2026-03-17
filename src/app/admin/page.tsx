@@ -266,6 +266,7 @@ const venueId = "venue_andrey_alt";
 function AdminDashboardContent() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
+  const [venueName, setVenueName] = useState<string>("");
   const [tables, setTables] = useState<TableRow[]>([]);
   const [occupiedCount, setOccupiedCount] = useState(0);
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
@@ -348,6 +349,8 @@ function AdminDashboardContent() {
         if (snap.exists()) {
           const data = snap.data();
           setVenueType((data?.venueType as VenueType) || "full_service");
+          const name = (data?.name as string) ?? "";
+          setVenueName(name);
           const oh = (data?.operatingHours ?? null) as OperatingHours | null;
           if (oh) setOperatingHours(oh);
         } else {
@@ -968,7 +971,10 @@ function AdminDashboardContent() {
         </div>
       )}
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
-      <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
+      <p className="mt-1 text-sm text-gray-700">
+        Заведение: {venueName.trim() ? venueName : venueId}
+      </p>
+      <p className="mt-1 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
