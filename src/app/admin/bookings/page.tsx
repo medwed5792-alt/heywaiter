@@ -425,6 +425,7 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
+  /** Список броней, отфильтрованный по дате (gridDate) и опционально по столу/телефону/времени. Контроль контекста: дата вверху страницы корректно фильтрует перед распределением по столам. */
   const filteredBookingsForGrid = useMemo(() => {
     let list = bookings.filter((b) => b.date === gridDate && b.status !== "cancelled");
     if (filterTableId) list = list.filter((b) => b.tableId === filterTableId);
@@ -441,13 +442,16 @@ export default function AdminBookingsPage() {
     return list;
   }, [bookings, gridDate, filterTableId, filterPhone, filterTimeFrom, filterTimeTo]);
 
-  const bookingsByTableForGrid = useMemo(() => {
-    const byTable: Record<string, BookingWithMeta[]> = {};
-    for (const t of venueTables) {
-      byTable[t.id] = filteredBookingsForGrid.filter((b) => b.tableId === t.id);
-    }
-    return byTable;
-  }, [venueTables, filteredBookingsForGrid]);
+  /** До начала брони осталось меньше 30 минут (и время ещё не прошло). */
+  const isBookingUrgent = useCallback((b: BookingWithMeta): boolean => {
+    const startAt = b.startAt && typeof (b.startAt as { toDate?: () => Date }).toDate === "function"
+      ? (b.startAt as { toDate: () => Date }).toDate()
+      : toStartAt(b.date, b.startTime ?? "00:00");
+    const now = Date.now();
+    const startMs = startAt.getTime();
+    const minsToStart = (startMs - now) / 60000;
+    return Number.isFinite(minsToStart) && minsToStart >= 0 && minsToStart < 30;
+  }, []);
 
   // Auto-cleanup: удаление просроченных броней (конец + 15 минут, статус не 'seated')
   useEffect(() => {
@@ -723,26 +727,42 @@ export default function AdminBookingsPage() {
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {venueTables.map((table) => {
-              const slots = bookingsByTableForGrid[table.id] ?? [];
+              const tableBookings = filteredBookingsForGrid.filter(
+                (b) =>
+                  String(b.tableId) === String(table.id) ||
+                  (typeof (b as BookingWithMeta & { tableNumber?: unknown }).tableNumber !== "undefined" &&
+                    String((b as BookingWithMeta & { tableNumber?: unknown }).tableNumber) === String(table.id))
+              );
               return (
                 <div key={table.id} className="rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm">
                   <div className="text-xl font-bold text-gray-900">Стол №{table.number}</div>
                   <div className="mt-2 space-y-1.5">
-                    {slots.length === 0 ? (
+                    {tableBookings.length === 0 ? (
                       <p className="text-xs text-gray-400">Нет броней</p>
                     ) : (
-                      slots.map((b) => (
-                        <button
-                          key={b.id}
-                          type="button"
-                          onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
-                          className="w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-sm hover:bg-gray-100 hover:border-gray-300"
-                        >
-                          <span className="font-medium text-gray-800">{b.startTime} — {b.endTime}</span>
-                          <span className="block text-xs text-gray-600 truncate">{b.guestName || "—"}</span>
-                          {(b as BookingWithMeta).bookingNote?.trim() ? <span className="block text-xs text-amber-700 truncate">📝 {(b as BookingWithMeta).bookingNote}</span> : null}
-                        </button>
-                      ))
+                      tableBookings.map((b) => {
+                        const urgent = isBookingUrgent(b);
+                        return (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
+                            className={`w-full text-left rounded-lg border px-2 py-2 text-sm hover:border-gray-300 ${
+                              urgent
+                                ? "border-orange-400 bg-orange-50 font-bold text-orange-700 hover:bg-orange-100"
+                                : "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                            }`}
+                          >
+                            <span className={urgent ? "font-bold text-orange-700" : "font-medium text-gray-800"}>
+                              {b.startTime} — {b.endTime}
+                            </span>
+                            <span className="block text-xs text-gray-600 truncate">{b.guestName || "—"}</span>
+                            {(b as BookingWithMeta).bookingNote?.trim() ? (
+                              <span className="block text-xs text-amber-700 truncate">📝 {(b as BookingWithMeta).bookingNote}</span>
+                            ) : null}
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>
