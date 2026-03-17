@@ -150,6 +150,70 @@ function bookingCoversSlot(b: BookingWithMeta, slotTime: string, dateStr: string
   return slotAt >= startAt && slotAt < endAt;
 }
 
+/** Длительность в минутах между двумя временами на одну дату (end может быть на след. день). */
+function durationMinutes(dateStr: string, startTime: string, endTime: string): number {
+  const start = toStartAt(dateStr, startTime).getTime();
+  const end = toEndAt(dateStr, startTime, endTime).getTime();
+  return Math.round((end - start) / 60000);
+}
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} мин`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h} ч ${m} мин` : `${h} ч`;
+}
+
+type TimelineSegment =
+  | { type: "free"; startTime: string; endTime: string; durationMinutes: number }
+  | { type: "booking"; booking: BookingWithMeta };
+
+/** Строит таймлайн: чередование «дырок» (свободно) и броней. После последней брони — всегда сегмент «дописать». */
+function buildTimelineSegments(
+  tableBookings: BookingWithMeta[],
+  dateStr: string,
+  dayStart: string,
+  dayEnd: string
+): TimelineSegment[] {
+  const sorted = [...tableBookings].sort((a, b) => {
+    const ta = toStartAt(a.date, a.startTime ?? "00:00").getTime();
+    const tb = toStartAt(b.date, b.startTime ?? "00:00").getTime();
+    return ta - tb;
+  });
+  const segments: TimelineSegment[] = [];
+  const dayStartMs = toStartAt(dateStr, dayStart).getTime();
+  const dayEndMs = toEndAt(dateStr, dayStart, dayEnd).getTime();
+
+  if (sorted.length === 0) {
+    const dur = durationMinutes(dateStr, dayStart, dayEnd);
+    segments.push({ type: "free", startTime: dayStart, endTime: dayEnd, durationMinutes: dur });
+    return segments;
+  }
+
+  let prevEndMs = dayStartMs;
+  for (const b of sorted) {
+    const startMs = toStartAt(b.date, b.startTime ?? "00:00").getTime();
+    const endMs = toEndAt(b.date, b.startTime ?? "00:00", b.endTime ?? "00:00").getTime();
+    if (startMs > prevEndMs) {
+      const gapStart = new Date(prevEndMs);
+      const gapEnd = new Date(startMs);
+      const gapStartStr = `${String(gapStart.getHours()).padStart(2, "0")}:${String(gapStart.getMinutes()).padStart(2, "0")}`;
+      const gapEndStr = `${String(gapEnd.getHours()).padStart(2, "0")}:${String(gapEnd.getMinutes()).padStart(2, "0")}`;
+      const dur = Math.round((startMs - prevEndMs) / 60000);
+      segments.push({ type: "free", startTime: gapStartStr, endTime: gapEndStr, durationMinutes: dur });
+    }
+    segments.push({ type: "booking", booking: b });
+    prevEndMs = Math.max(prevEndMs, endMs);
+  }
+  if (prevEndMs < dayEndMs) {
+    const tailStart = new Date(prevEndMs);
+    const tailStartStr = `${String(tailStart.getHours()).padStart(2, "0")}:${String(tailStart.getMinutes()).padStart(2, "0")}`;
+    const dur = Math.round((dayEndMs - prevEndMs) / 60000);
+    segments.push({ type: "free", startTime: tailStartStr, endTime: dayEnd, durationMinutes: dur });
+  }
+  return segments;
+}
+
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<BookingWithMeta[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
@@ -514,6 +578,8 @@ export default function AdminBookingsPage() {
   }, [bookings, selectedDate, filterTableId, filterPhone, filterName, filterTimeFrom, filterTimeTo]);
 
   const timeSlots = useMemo(() => getTimeSlotsForDate(selectedDate, operatingHours), [selectedDate, operatingHours]);
+  const dayStart = timeSlots[0] ?? DEFAULT_SLOT_START;
+  const dayEnd = timeSlots.length > 0 ? addMinutesToTime(timeSlots[timeSlots.length - 1], SLOT_STEP_MINUTES) : DEFAULT_SLOT_END;
 
   const hasSearchFilter = Boolean(filterPhone.trim() || filterName.trim());
 
@@ -820,48 +886,47 @@ export default function AdminBookingsPage() {
                 >
                   <div className="text-xl font-bold text-gray-900">Стол №{table.number}</div>
                   <div className="mt-2 space-y-1.5">
-                    {timeSlots.map((slotTime) => {
-                      const bookingForSlot = tableBookings.find((b) => bookingCoversSlot(b, slotTime, selectedDate));
-                      const slotEnd = addMinutesToTime(slotTime, SLOT_STEP_MINUTES);
-                      if (bookingForSlot) {
-                        const urgent = isBookingUrgent(bookingForSlot);
+                    {buildTimelineSegments(tableBookings, selectedDate, dayStart, dayEnd).map((seg, idx) => {
+                      if (seg.type === "free") {
                         return (
                           <button
-                            key={slotTime}
+                            key={`free-${idx}-${seg.startTime}`}
                             type="button"
-                            onClick={() => setEditing({ ...bookingForSlot, bookingNote: (bookingForSlot as BookingWithMeta).bookingNote })}
-                            className={`w-full text-left rounded-lg border px-2 py-1.5 text-sm hover:border-orange-400 ${
-                              urgent
-                                ? "border-orange-400 bg-orange-100 font-bold text-orange-800"
-                                : "border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100"
-                            }`}
+                            onClick={() => {
+                              setConflictError(null);
+                              setEditing({
+                                venueId: VENUE_ID,
+                                tableId: table.id,
+                                guestName: "",
+                                guestContact: "",
+                                seats: 2,
+                                startTime: seg.startTime,
+                                endTime: seg.endTime,
+                                date: selectedDate,
+                                status: "pending",
+                              });
+                            }}
+                            className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-100 px-2 py-2 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-200"
                           >
-                            <span className="font-medium">{slotTime}</span>
-                            <span className="block text-xs truncate">{bookingForSlot.guestName || "—"}</span>
+                            Свободно ({formatDuration(seg.durationMinutes)})
                           </button>
                         );
                       }
+                      const b = seg.booking;
+                      const urgent = isBookingUrgent(b);
                       return (
                         <button
-                          key={slotTime}
+                          key={b.id}
                           type="button"
-                          onClick={() => {
-                            setConflictError(null);
-                            setEditing({
-                              venueId: VENUE_ID,
-                              tableId: table.id,
-                              guestName: "",
-                              guestContact: "",
-                              seats: 2,
-                              startTime: slotTime,
-                              endTime: slotEnd,
-                              date: selectedDate,
-                              status: "pending",
-                            });
-                          }}
-                          className="w-full rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-2 py-1.5 text-sm text-gray-400 hover:border-gray-300 hover:bg-gray-100"
+                          onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
+                          className={`w-full text-left rounded-lg border px-2 py-2 text-sm hover:border-orange-400 ${
+                            urgent
+                              ? "border-orange-400 bg-orange-100 font-bold text-orange-800 animate-pulse"
+                              : "border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100"
+                          }`}
                         >
-                          —:—
+                          <span className="font-medium">{b.startTime} — {b.endTime}</span>
+                          <span className="block text-xs truncate">{b.guestName || "—"}</span>
                         </button>
                       );
                     })}
