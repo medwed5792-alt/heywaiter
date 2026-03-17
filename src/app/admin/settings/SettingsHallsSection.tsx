@@ -185,8 +185,8 @@ export function SettingsHallsSection() {
     onConfirm: () => void | Promise<void>;
   } | null>(null);
 
-  // Жёсткая свая: работаем только с venues/venue_andrey_alt/rooms и /tables
-  const hallsRef = collection(db, "venues", VENUE_ID, "rooms");
+  // Жёсткая свая: работаем только с venues/venue_andrey_alt/halls и /tables
+  const hallsRef = collection(db, "venues", VENUE_ID, "halls");
   const tablesRef = collection(db, "venues", VENUE_ID, "tables");
 
   useEffect(() => {
