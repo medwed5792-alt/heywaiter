@@ -976,7 +976,7 @@ function AdminDashboardContent() {
                       isBookingReminder
                         ? "text-sm bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 shadow-md flex justify-between items-center rounded-md"
                         : isEmergency
-                        ? `flex items-center justify-between gap-3 rounded-lg border-2 border-red-600 bg-red-100 p-4 text-sm font-medium text-red-900 ${ev.read ? "opacity-80" : "animate-pulse"}`
+                        ? `flex items-center justify-between gap-3 rounded-lg border-4 border-red-600 bg-red-200 p-4 text-sm font-bold text-red-900 ${ev.read ? "opacity-90" : "animate-pulse shadow-lg shadow-red-400/50"}`
                         : `flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
                             ev.read
                               ? "border-gray-100 bg-gray-50/50 text-gray-500"

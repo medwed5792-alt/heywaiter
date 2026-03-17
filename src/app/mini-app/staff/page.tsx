@@ -186,6 +186,10 @@ function StaffContentInner() {
   const [sosEmergencyHoldProgress, setSosEmergencyHoldProgress] = useState(0);
   const sosHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sosHoldProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sosCpLoading, setSosCpLoading] = useState(false);
+  const [sosCpHoldProgress, setSosCpHoldProgress] = useState(0);
+  const sosCpHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sosCpHoldProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -346,6 +350,7 @@ function StaffContentInner() {
   }, [venueId]);
 
   const SOS_HOLD_MS = 1500;
+  const SOS_CP_HOLD_MS = 3000;
 
   const cancelSosHold = useCallback(() => {
     if (sosHoldTimerRef.current) {
@@ -418,10 +423,77 @@ function StaffContentInner() {
     setSosEmergencyHoldProgress(0);
   }, []);
 
+  const cancelSosCpHold = useCallback(() => {
+    if (sosCpHoldTimerRef.current) {
+      clearTimeout(sosCpHoldTimerRef.current);
+      sosCpHoldTimerRef.current = null;
+    }
+    if (sosCpHoldProgressRef.current) {
+      clearInterval(sosCpHoldProgressRef.current);
+      sosCpHoldProgressRef.current = null;
+    }
+    setSosCpHoldProgress(0);
+  }, []);
+
+  const handleSosCpStart = useCallback(() => {
+    if (sosCpLoading) return;
+    cancelSosCpHold();
+    setSosCpHoldProgress(0);
+    const start = Date.now();
+    sosCpHoldProgressRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const p = Math.min(100, (elapsed / SOS_CP_HOLD_MS) * 100);
+      setSosCpHoldProgress(p);
+    }, 50);
+    sosCpHoldTimerRef.current = setTimeout(() => {
+      sosCpHoldTimerRef.current = null;
+      if (sosCpHoldProgressRef.current) {
+        clearInterval(sosCpHoldProgressRef.current);
+        sosCpHoldProgressRef.current = null;
+      }
+      setSosCpHoldProgress(100);
+      (async () => {
+        setSosCpLoading(true);
+        setSosError(null);
+        try {
+          const res = await fetch("/api/notify/emergency-call", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ staffId: staffId ?? undefined }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data.ok === false) {
+            throw new Error(data.error || "Ошибка отправки");
+          }
+          alert("Критический вызов (ЧП) отправлен. ЛПР уведомлены.");
+        } catch (e) {
+          setSosError(e instanceof Error ? e.message : "Ошибка отправки");
+        } finally {
+          setSosCpLoading(false);
+          setSosCpHoldProgress(0);
+        }
+      })();
+    }, SOS_CP_HOLD_MS);
+  }, [sosCpLoading, staffId, cancelSosCpHold]);
+
+  const handleSosCpEnd = useCallback(() => {
+    if (sosCpHoldTimerRef.current) {
+      clearTimeout(sosCpHoldTimerRef.current);
+      sosCpHoldTimerRef.current = null;
+    }
+    if (sosCpHoldProgressRef.current) {
+      clearInterval(sosCpHoldProgressRef.current);
+      sosCpHoldProgressRef.current = null;
+    }
+    setSosCpHoldProgress(0);
+  }, []);
+
   useEffect(() => {
     return () => {
       if (sosHoldTimerRef.current) clearTimeout(sosHoldTimerRef.current);
       if (sosHoldProgressRef.current) clearInterval(sosHoldProgressRef.current);
+      if (sosCpHoldTimerRef.current) clearTimeout(sosCpHoldTimerRef.current);
+      if (sosCpHoldProgressRef.current) clearInterval(sosCpHoldProgressRef.current);
     };
   }, []);
 
@@ -612,6 +684,37 @@ function StaffContentInner() {
                       ? "Завершить смену"
                       : "Начать смену"}
               </button>
+            </section>
+
+            <section className="rounded-2xl border-2 border-red-400 bg-red-100/90 p-5 shadow-md">
+              <h2 className="text-sm font-semibold text-red-800">🚨 SOS (ТОЛЬКО ЧП)</h2>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Долгое нажатие 3 сек — защита от случайного вызова.
+              </p>
+              <div className="mt-4">
+                <button
+                  type="button"
+                  disabled={sosCpLoading}
+                  onMouseDown={handleSosCpStart}
+                  onMouseUp={handleSosCpEnd}
+                  onMouseLeave={handleSosCpEnd}
+                  onTouchStart={(e) => { e.preventDefault(); handleSosCpStart(); }}
+                  onTouchEnd={(e) => { e.preventDefault(); handleSosCpEnd(); }}
+                  onTouchCancel={handleSosCpEnd}
+                  className={`w-full rounded-2xl py-5 text-lg font-bold text-white shadow-lg transition select-none touch-none ${
+                    sosCpLoading ? "bg-red-400" : sosCpHoldProgress > 0 ? "bg-red-700" : "bg-red-600 hover:bg-red-700"
+                  }`}
+                >
+                  {sosCpLoading ? "Отправка…" : sosCpHoldProgress > 0 && sosCpHoldProgress < 100 ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="inline-block h-5 w-40 rounded-full bg-red-400 overflow-hidden">
+                        <span className="block h-full bg-white/90 transition-all duration-75" style={{ width: `${sosCpHoldProgress}%` }} />
+                      </span>
+                      Удерживайте 3 сек…
+                    </span>
+                  ) : "🚨 SOS (ТОЛЬКО ЧП)"}
+                </button>
+              </div>
             </section>
 
             <section className="rounded-2xl border-2 border-red-300 bg-red-50 p-5 shadow-sm">

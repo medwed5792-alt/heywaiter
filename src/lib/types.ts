@@ -505,6 +505,8 @@ export interface Booking {
   arrived?: boolean;
   /** Время начала (Timestamp) для запросов check-in ±30 мин */
   startAt?: unknown;
+  /** Примечание к данной брони (разовое, например «свой торт») */
+  bookingNote?: string;
   createdAt: unknown;
   updatedAt: unknown;
 }

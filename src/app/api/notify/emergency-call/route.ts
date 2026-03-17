@@ -11,8 +11,8 @@ const EMERGENCY_TEXT =
 /**
  * POST /api/notify/emergency-call
  * Тело: { staffId?: string }
- * Источник: Mini App — кнопка «SOS / ВЫЗОВ ОХРАНЫ».
- * Создаёт событие в venues/venue_andrey_alt/events для отображения на дашборде.
+ * Источник: Mini App — кнопка «SOS (ТОЛЬКО ЧП)» (удержание 3 сек) или «SOS / ВЫЗОВ ОХРАНЫ».
+ * Создаёт событие в venues/venue_andrey_alt/events и в staffNotifications (type: emergency) для дашборда.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -24,9 +24,9 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore();
     let sender = "Сотрудник";
     if (staffId) {
-      const staffSnap = await firestore.collection("staff").doc(staffId).get();
-      if (staffSnap.exists) {
-        const d = staffSnap.data() ?? {};
+      const venueStaff = await firestore.collection("venues").doc(VENUE_ID).collection("staff").doc(staffId).get();
+      if (venueStaff.exists) {
+        const d = venueStaff.data() ?? {};
         const first = (d.firstName as string) ?? "";
         const last = (d.lastName as string) ?? "";
         const role = (d.role as string) ?? (d.position as string) ?? "";

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import toast from "react-hot-toast";
 import {
   collection,
@@ -19,6 +19,20 @@ import {
 import { db } from "@/lib/firebase";
 import type { Booking } from "@/lib/types";
 import type { GuestType } from "@/lib/types";
+
+type BookingWithMeta = Booking & {
+  startAt?: unknown;
+  endAt?: unknown;
+  notifyWaiter?: boolean;
+  flashDashboard?: boolean;
+  isUrgent?: boolean;
+  bookingNote?: string;
+};
+
+interface TableRow {
+  id: string;
+  number: number;
+}
 
 const VENUE_ID = "venue_andrey_alt";
 const LATE_NOTIFY_INTERVAL_MS = 15 * 60 * 1000; // 15 мин
@@ -47,6 +61,23 @@ function isLate(b: Booking): boolean {
   return startAt ? startAt.getTime() < Date.now() : false;
 }
 
+/** Проверка пересечения двух броней по времени (одна дата, один стол). */
+function bookingsOverlap(
+  date: string,
+  startTime: string,
+  endTime: string,
+  other: BookingWithMeta,
+  excludeId?: string
+): boolean {
+  if (other.id === excludeId) return false;
+  if (other.date !== date) return false;
+  const startA = toStartAt(date, startTime).getTime();
+  const endA = toEndAt(date, startTime, endTime).getTime();
+  const startB = toStartAt(other.date, other.startTime).getTime();
+  const endB = toEndAt(other.date, other.startTime, other.endTime).getTime();
+  return startA < endB && startB < endA;
+}
+
 const DISABLE_OPTIONS = [
   { value: 1, label: "1 день" },
   { value: 2, label: "2 дня" },
@@ -62,17 +93,30 @@ const GUEST_TYPE_LABELS: Record<GuestType, string> = {
   blacklisted: "ЧС",
 };
 
+function phoneDigits(value: string): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
 export default function AdminBookingsPage() {
-  const [bookings, setBookings] = useState<(Booking & { startAt?: unknown; endAt?: unknown; notifyWaiter?: boolean; flashDashboard?: boolean; isUrgent?: boolean })[]>([]);
+  const [bookings, setBookings] = useState<BookingWithMeta[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Partial<Booking> & { id?: string } | null>(null);
+  const [editing, setEditing] = useState<Partial<Booking> & { id?: string; bookingNote?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [notifyCooldown, setNotifyCooldown] = useState<Record<string, number>>({});
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [disableBookingModalOpen, setDisableBookingModalOpen] = useState(false);
   const [disableBookingDays, setDisableBookingDays] = useState<number>(1);
   const [venueGuests, setVenueGuests] = useState<{ id: string; name?: string; phone?: string; type: GuestType; note?: string }[]>([]);
+  const [venueTables, setVenueTables] = useState<TableRow[]>([]);
+  const [gridDate, setGridDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [filterTableId, setFilterTableId] = useState<string>("");
+  const [filterPhone, setFilterPhone] = useState("");
+  const [filterTimeFrom, setFilterTimeFrom] = useState("");
+  const [filterTimeTo, setFilterTimeTo] = useState("");
+  const [conflictError, setConflictError] = useState<string | null>(null);
+  const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "guests"), (snap) => {
@@ -117,12 +161,25 @@ export default function AdminBookingsPage() {
             notifyWaiter: data.notifyWaiter ?? false,
             flashDashboard: data.flashDashboard ?? false,
             isUrgent: data.isUrgent ?? false,
+            bookingNote: data.bookingNote as string | undefined,
             createdAt: data.createdAt,
             updatedAt: data.updatedAt,
-          } as Booking & { startAt?: unknown; endAt?: unknown; notifyWaiter?: boolean; flashDashboard?: boolean; isUrgent?: boolean };
+          } as BookingWithMeta;
         })
       );
       setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "tables"), (snap) => {
+      setVenueTables(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return { id: d.id, number: (data.number as number) ?? 0 };
+        })
+      );
     });
     return () => unsub();
   }, []);
@@ -145,7 +202,8 @@ export default function AdminBookingsPage() {
   }, []);
 
   const saveBooking = useCallback(
-    async (payload: Partial<Booking> & { id?: string }) => {
+    async (payload: Partial<Booking> & { id?: string; bookingNote?: string }) => {
+      setConflictError(null);
       setSaving(true);
       try {
         const date = payload.date ?? editing?.date ?? "";
@@ -180,6 +238,16 @@ export default function AdminBookingsPage() {
         }
         if (!date || !startAt) {
           toast.error("Укажите дату и время брони");
+          return;
+        }
+
+        const excludeId = payload.id ?? undefined;
+        const conflict = bookings.find(
+          (b) => b.tableId === tableIdStr && bookingsOverlap(date, startTime, endTime, b, excludeId)
+        );
+        if (conflict) {
+          setConflictError("Ошибка: стол занят на это время!");
+          toast.error("Ошибка: стол занят на это время!");
           return;
         }
 
@@ -221,6 +289,9 @@ export default function AdminBookingsPage() {
           updatedAt: serverTimestamp(),
         };
         if (payload.guestExternalId != null && payload.guestExternalId !== "") body.guestExternalId = payload.guestExternalId;
+        if (payload.bookingNote != null || (editing as { bookingNote?: string })?.bookingNote != null) {
+          body.bookingNote = (payload.bookingNote ?? (editing as { bookingNote?: string })?.bookingNote ?? "").trim() || null;
+        }
         const newBooking = {
           venueId: body.venueId,
           tableId: body.tableId,
@@ -254,7 +325,7 @@ export default function AdminBookingsPage() {
         setSaving(false);
       }
     },
-    [editing]
+    [editing, bookings]
   );
 
   const deleteBooking = useCallback(async (id: string) => {
@@ -354,6 +425,30 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
+  const filteredBookingsForGrid = useMemo(() => {
+    let list = bookings.filter((b) => b.date === gridDate && b.status !== "cancelled");
+    if (filterTableId) list = list.filter((b) => b.tableId === filterTableId);
+    if (filterPhone.trim()) {
+      const digits = phoneDigits(filterPhone);
+      list = list.filter((b) => phoneDigits(b.guestContact ?? "").includes(digits));
+    }
+    if (filterTimeFrom) {
+      list = list.filter((b) => (b.startTime ?? "") >= filterTimeFrom);
+    }
+    if (filterTimeTo) {
+      list = list.filter((b) => (b.endTime ?? "") <= filterTimeTo || (b.startTime ?? "") <= filterTimeTo);
+    }
+    return list;
+  }, [bookings, gridDate, filterTableId, filterPhone, filterTimeFrom, filterTimeTo]);
+
+  const bookingsByTableForGrid = useMemo(() => {
+    const byTable: Record<string, BookingWithMeta[]> = {};
+    for (const t of venueTables) {
+      byTable[t.id] = filteredBookingsForGrid.filter((b) => b.tableId === t.id);
+    }
+    return byTable;
+  }, [venueTables, filteredBookingsForGrid]);
+
   // Auto-cleanup: удаление просроченных броней (конец + 15 минут, статус не 'seated')
   useEffect(() => {
     if (!bookings.length) return;
@@ -402,7 +497,20 @@ export default function AdminBookingsPage() {
         )}
         <button
           type="button"
-          onClick={() => setEditing({ venueId: VENUE_ID, tableId: "", guestName: "", guestContact: "", seats: 2, startTime: "12:00", endTime: "14:00", date: new Date().toISOString().slice(0, 10), status: "pending" })}
+          onClick={() => {
+            setConflictError(null);
+            setEditing({
+              venueId: VENUE_ID,
+              tableId: "",
+              guestName: "",
+              guestContact: "",
+              seats: 2,
+              startTime: "12:00",
+              endTime: "14:00",
+              date: gridDate || new Date().toISOString().slice(0, 10),
+              status: "pending",
+            });
+          }}
           className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
         >
           + Новая бронь
@@ -434,16 +542,64 @@ export default function AdminBookingsPage() {
       {editing && (() => {
         const selectedGuest = editing.guestId ? venueGuests.find((g) => g.id === editing.guestId) : null;
         const isBlacklisted = selectedGuest?.type === "blacklisted";
+        const phoneDigitsTyped = phoneDigits(editing.guestContact ?? "");
+        const phoneSuggestions =
+          phoneDigitsTyped.length >= 2
+            ? venueGuests
+                .filter((g) => {
+                  const p = phoneDigits(g.phone ?? "");
+                  return p && p.includes(phoneDigitsTyped);
+                })
+                .slice(0, 8)
+            : [];
+        const hasConflict = Boolean(conflictError);
         return (
-        <div className={`mt-4 rounded-xl border p-4 ${isBlacklisted ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
+        <div className={`mt-4 rounded-xl border p-4 ${isBlacklisted ? "border-red-500 bg-red-50/80" : hasConflict ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
           {isBlacklisted && (
             <p className="mb-3 text-sm font-medium text-red-800">Внимание! Гость в черном списке</p>
+          )}
+          {hasConflict && (
+            <p className="mb-3 text-sm font-medium text-red-800">{conflictError}</p>
           )}
           <h3 className="text-sm font-medium text-gray-700">{editing.id ? "Редактирование брони" : "Новая бронь"}</h3>
           <form
             className="mt-3 grid gap-3 sm:grid-cols-2"
             onSubmit={(e) => { e.preventDefault(); saveBooking(editing); }}
           >
+            <label className="block sm:col-span-2 relative">
+              <span className="block text-xs text-gray-600">Телефон (поиск гостя)</span>
+              <input
+                ref={phoneInputRef}
+                type="tel"
+                className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500" : "border-gray-300"}`}
+                value={editing.guestContact ?? ""}
+                onChange={(e) => {
+                  setEditing((p) => ({ ...p, guestContact: e.target.value }));
+                  setPhoneDropdownOpen(true);
+                }}
+                onFocus={() => phoneDigitsTyped.length >= 2 && setPhoneDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setPhoneDropdownOpen(false), 200)}
+                placeholder="Введите цифры телефона"
+              />
+              {phoneDropdownOpen && phoneSuggestions.length > 0 && (
+                <ul className="absolute z-10 mt-0.5 w-full rounded border border-gray-200 bg-white shadow-lg py-1 max-h-48 overflow-auto">
+                  {phoneSuggestions.map((g) => (
+                    <li key={g.id}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                        onClick={() => {
+                          setEditing((p) => ({ ...p, guestId: g.id, guestName: g.name ?? "", guestContact: g.phone ?? "" }));
+                          setPhoneDropdownOpen(false);
+                        }}
+                      >
+                        {g.phone ?? ""} — {g.name || "Без имени"} {g.type !== "regular" ? `(${GUEST_TYPE_LABELS[g.type]})` : ""}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </label>
             <label className="block sm:col-span-2">
               <span className="block text-xs text-gray-600">Гость из базы</span>
               <select
@@ -477,13 +633,13 @@ export default function AdminBookingsPage() {
               <span className="block text-xs text-gray-600">ФИО</span>
               <input className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.guestName ?? ""} onChange={(e) => setEditing((p) => ({ ...p, guestName: e.target.value }))} required />
             </label>
-            <label className="block">
-              <span className="block text-xs text-gray-600">Соцсеть / контакт</span>
-              <input className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.guestContact ?? ""} onChange={(e) => setEditing((p) => ({ ...p, guestContact: e.target.value }))} />
+            <label className="block sm:col-span-2">
+              <span className="block text-xs text-gray-600">Примечание к данной брони</span>
+              <textarea className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm min-h-[60px]" value={(editing as { bookingNote?: string }).bookingNote ?? ""} onChange={(e) => setEditing((p) => ({ ...p, bookingNote: e.target.value }))} placeholder="Например: свой торт" />
             </label>
             <label className="block">
               <span className="block text-xs text-gray-600">Стол (tableId)</span>
-              <input className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.tableId ?? ""} onChange={(e) => setEditing((p) => ({ ...p, tableId: e.target.value }))} />
+              <input className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.tableId ?? ""} onChange={(e) => setEditing((p) => ({ ...p, tableId: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-xs text-gray-600">Места</span>
@@ -491,15 +647,15 @@ export default function AdminBookingsPage() {
             </label>
             <label className="block">
               <span className="block text-xs text-gray-600">Дата</span>
-              <input type="date" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.date ?? ""} onChange={(e) => setEditing((p) => ({ ...p, date: e.target.value }))} required />
+              <input type="date" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.date ?? ""} onChange={(e) => setEditing((p) => ({ ...p, date: e.target.value }))} required />
             </label>
             <label className="block">
               <span className="block text-xs text-gray-600">Время с</span>
-              <input type="time" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.startTime ?? "12:00"} onChange={(e) => setEditing((p) => ({ ...p, startTime: e.target.value }))} />
+              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.startTime ?? "12:00"} onChange={(e) => setEditing((p) => ({ ...p, startTime: e.target.value }))} />
             </label>
             <label className="block">
               <span className="block text-xs text-gray-600">Время по</span>
-              <input type="time" className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.endTime ?? "14:00"} onChange={(e) => setEditing((p) => ({ ...p, endTime: e.target.value }))} />
+              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.endTime ?? "14:00"} onChange={(e) => setEditing((p) => ({ ...p, endTime: e.target.value }))} />
             </label>
             <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
               <input
@@ -520,7 +676,7 @@ export default function AdminBookingsPage() {
               <span>Подсветить стол на дашборде (flashDashboard)</span>
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button type="submit" disabled={saving} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
+              <button type="submit" disabled={saving || hasConflict} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
               {editing.id && (
                 <button type="button" onClick={() => editing.id && setDeleteConfirmId(editing.id)} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Удалить</button>
               )}
@@ -531,41 +687,68 @@ export default function AdminBookingsPage() {
         );
       })()}
 
-      <div className="mt-4 overflow-x-auto">
-        {loading ? (
-          <p className="text-sm text-gray-500">Загрузка…</p>
-        ) : (
-          <table className="w-full border border-gray-200 text-sm">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="border-b p-2 text-left">ФИО</th>
-                <th className="border-b p-2 text-left">Контакт</th>
-                <th className="border-b p-2 text-left">Стол</th>
-                <th className="border-b p-2 text-left">Дата</th>
-                <th className="border-b p-2 text-left">Время С — ПО</th>
-                <th className="border-b p-2 text-left">Статус</th>
-                <th className="border-b p-2 text-left">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bookings.map((b) => (
-                <tr
-                  key={b.id}
-                  className={isLate(b) && !b.arrived && (b.status === "pending" || b.status === "confirmed") ? "bg-red-50" : ""}
-                >
-                  <td className="border-b p-2">{b.guestName}</td>
-                  <td className="border-b p-2">{b.guestContact}</td>
-                  <td className="border-b p-2">{b.tableId}</td>
-                  <td className="border-b p-2">{b.date}</td>
-                  <td className="border-b p-2">{b.startTime} — {b.endTime}</td>
-                  <td className="border-b p-2">{b.arrived ? "Пришёл" : b.status}</td>
-                  <td className="border-b p-2">
-                    <button type="button" onClick={() => setEditing({ ...b })} className="text-blue-600 underline">Изменить</button>
-                  </td>
-                </tr>
+      <div className="mt-4">
+        <h3 className="text-base font-semibold text-gray-900">Шахматка по столам</h3>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Дата</span>
+            <input type="date" className="rounded border border-gray-300 px-2 py-1.5 text-sm" value={gridDate} onChange={(e) => setGridDate(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Время с</span>
+            <input type="time" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-28" value={filterTimeFrom} onChange={(e) => setFilterTimeFrom(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">по</span>
+            <input type="time" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-28" value={filterTimeTo} onChange={(e) => setFilterTimeTo(e.target.value)} />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Стол</span>
+            <select className="rounded border border-gray-300 px-2 py-1.5 text-sm" value={filterTableId} onChange={(e) => setFilterTableId(e.target.value)}>
+              <option value="">Все</option>
+              {venueTables.map((t) => (
+                <option key={t.id} value={t.id}>№{t.number}</option>
               ))}
-            </tbody>
-          </table>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Телефон</span>
+            <input type="text" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-36" value={filterPhone} onChange={(e) => setFilterPhone(e.target.value)} placeholder="Поиск" />
+          </label>
+        </div>
+        {loading ? (
+          <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
+        ) : venueTables.length === 0 ? (
+          <p className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">Нет столов. Добавьте столы в Зал & QR.</p>
+        ) : (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {venueTables.map((table) => {
+              const slots = bookingsByTableForGrid[table.id] ?? [];
+              return (
+                <div key={table.id} className="rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="text-xl font-bold text-gray-900">Стол №{table.number}</div>
+                  <div className="mt-2 space-y-1.5">
+                    {slots.length === 0 ? (
+                      <p className="text-xs text-gray-400">Нет броней</p>
+                    ) : (
+                      slots.map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
+                          className="w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-sm hover:bg-gray-100 hover:border-gray-300"
+                        >
+                          <span className="font-medium text-gray-800">{b.startTime} — {b.endTime}</span>
+                          <span className="block text-xs text-gray-600 truncate">{b.guestName || "—"}</span>
+                          {(b as BookingWithMeta).bookingNote?.trim() ? <span className="block text-xs text-amber-700 truncate">📝 {(b as BookingWithMeta).bookingNote}</span> : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
