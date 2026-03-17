@@ -189,9 +189,9 @@ function EventSkeleton() {
   );
 }
 
-function AdminDashboardContent() {
-  const venueId = "venue_andrey_alt";
+const venueId = "venue_andrey_alt";
 
+function AdminDashboardContent() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [tables, setTables] = useState<TableRow[]>([]);
@@ -220,7 +220,6 @@ function AdminDashboardContent() {
   const autoResetDoneRef = useRef(false);
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const DASHBOARD_VENUE_ID = "venue_andrey_alt";
 
   const performEndOfDayReset = useCallback(
     async (reason: "auto" | "manual") => {
@@ -229,20 +228,20 @@ function AdminDashboardContent() {
         const batch = writeBatch(db);
 
         // onShift = false в venues/venue_andrey_alt/staff (единая точка с Mini App)
-        const venueStaffSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"));
+        const venueStaffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
         venueStaffSnap.docs.forEach((d) => {
           batch.update(d.ref, { onShift: false });
         });
 
         // tables: remove assignments.waiter
-        const tablesSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"));
+        const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
         tablesSnap.forEach((docSnap) => {
           const data = docSnap.data() || {};
           const assignments = (data.assignments as Record<string, unknown> | undefined) ?? {};
           if (assignments && Object.prototype.hasOwnProperty.call(assignments, "waiter")) {
             const updated = { ...assignments };
             delete (updated as any).waiter;
-            const ref = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", docSnap.id);
+            const ref = doc(db, "venues", venueId, "tables", docSnap.id);
             batch.update(ref, {
               assignments: updated,
             });
@@ -250,7 +249,7 @@ function AdminDashboardContent() {
         });
 
         await batch.commit();
-        await addDoc(collection(db, "venues", DASHBOARD_VENUE_ID, "events"), {
+        await addDoc(collection(db, "venues", venueId, "events"), {
           type: "system",
           message: "Система: Смена завершена автоматически по графику",
           createdAt: serverTimestamp(),
@@ -270,7 +269,7 @@ function AdminDashboardContent() {
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDoc(doc(db, "venues", DASHBOARD_VENUE_ID));
+        const snap = await getDoc(doc(db, "venues", venueId));
         if (cancelled) return;
         if (snap.exists()) {
           const data = snap.data();
@@ -294,7 +293,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
     let cancelled = false;
-    getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"))
+    getDocs(collection(db, "venues", venueId, "tables"))
       .then((snap) => {
         if (cancelled) return;
         const list = snap.docs.map((d) => {
@@ -317,7 +316,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
     const unsub = onSnapshot(
-      query(collection(db, "activeSessions"), where("venueId", "==", DASHBOARD_VENUE_ID), where("status", "==", "check_in_success")),
+      query(collection(db, "activeSessions"), where("venueId", "==", venueId), where("status", "==", "check_in_success")),
       (snap) => {
         const nextIds = new Set(snap.docs.map((d) => d.id));
         activeSessionIdsRef.current = new Set([...activeSessionIdsRef.current, ...nextIds]);
@@ -349,7 +348,7 @@ function AdminDashboardContent() {
     const open = parseTimeToToday(now, today.openTime);
     if (!open || now.getTime() < open.getTime()) return;
     let cancelled = false;
-    getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"))
+    getDocs(collection(db, "venues", venueId, "staff"))
       .then((snap) => {
         if (cancelled) return;
         const todayStart = startOfDay(now).getTime();
@@ -380,7 +379,7 @@ function AdminDashboardContent() {
 
     const q = query(
       collection(db, "bookings"),
-      where("venueId", "==", DASHBOARD_VENUE_ID),
+      where("venueId", "==", venueId),
       where("status", "==", "pending"),
       orderBy("startAt", "asc")
     );
@@ -470,7 +469,7 @@ function AdminDashboardContent() {
   // onShift только из venues/venue_andrey_alt/staff (единая точка с Mini App)
   useEffect(() => {
     if (!venueType) return;
-    const unsub = onSnapshot(collection(db, "venues", DASHBOARD_VENUE_ID, "staff"), (snap) => {
+    const unsub = onSnapshot(collection(db, "venues", venueId, "staff"), (snap) => {
       const next: Record<string, boolean> = {};
       let count = 0;
       snap.docs.forEach((d) => {
@@ -495,7 +494,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueType) return;
     const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", DASHBOARD_VENUE_ID), where("active", "==", true)),
+      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true)),
       (snap) => {
         const list: StaffWithTables[] = snap.docs.map((d) => {
           const data = d.data();
@@ -518,7 +517,7 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     if (!tables.length) return;
-    const unsub = onSnapshot(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"), (snap) => {
+    const unsub = onSnapshot(collection(db, "venues", venueId, "tables"), (snap) => {
       const next: Record<string, string> = {};
       snap.docs.forEach((d) => {
         const data = d.data();
@@ -539,7 +538,7 @@ function AdminDashboardContent() {
       const next: Record<string, string> = {};
       for (const t of tables) {
         if (cancelled || !t?.id) return;
-        const snap = await getDoc(doc(db, "venues", DASHBOARD_VENUE_ID, "tables", t.id));
+        const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const a = data.assignments as Record<string, string> | undefined;
@@ -592,7 +591,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     const q = query(
       collection(db, "staffNotifications"),
-      where("venueId", "==", DASHBOARD_VENUE_ID),
+      where("venueId", "==", venueId),
       orderBy("createdAt", "desc"),
       limit(50)
     );
@@ -621,12 +620,10 @@ function AdminDashboardContent() {
     return () => unsub();
   }, []);
 
-  const EVENTS_VENUE_ID = "venue_andrey_alt";
-
   useEffect(() => {
     const q = query(
-      collection(db, "venues", EVENTS_VENUE_ID, "events"),
-      where("venueId", "==", EVENTS_VENUE_ID),
+      collection(db, "venues", venueId, "events"),
+      where("venueId", "==", venueId),
       orderBy("createdAt", "desc"),
       limit(10)
     );
@@ -642,7 +639,7 @@ function AdminDashboardContent() {
             tableId: data.tableId as string | undefined,
             read: Boolean(data.read),
             createdAt: data.createdAt,
-            venueId: (data.venueId as string) || EVENTS_VENUE_ID,
+            venueId: (data.venueId as string) || venueId,
           } as FeedEvent;
         });
         setShiftEvents(eventList);
@@ -661,8 +658,7 @@ function AdminDashboardContent() {
       toast.error("Ошибка: ID события не найден");
       return;
     }
-    const venuePath = doc(db, "venues", EVENTS_VENUE_ID, "events", eventId);
-    console.log("Удаляю документ:", eventId, "из папки:", EVENTS_VENUE_ID);
+    const venuePath = doc(db, "venues", venueId, "events", eventId);
     try {
       await deleteDoc(venuePath);
       setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -678,7 +674,7 @@ function AdminDashboardContent() {
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
       try {
-        const ref = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", tableId);
+        const ref = doc(db, "venues", venueId, "tables", tableId);
         const snap = await getDoc(ref);
         const existing = snap.exists() ? ((snap.data()?.assignments as Record<string, string> | undefined) ?? {}) : {};
         await setDoc(
@@ -699,7 +695,7 @@ function AdminDashboardContent() {
   useEffect(() => {
     const q = query(
       collection(db, "activeSessions"),
-      where("venueId", "==", DASHBOARD_VENUE_ID),
+      where("venueId", "==", venueId),
       where("status", "==", "closed"),
       orderBy("closedAt", "desc"),
       limit(30)

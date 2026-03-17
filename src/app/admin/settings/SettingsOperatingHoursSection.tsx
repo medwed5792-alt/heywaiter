@@ -3,7 +3,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import toast from "react-hot-toast";
 
-const VENUE_ID = "venue_andrey_alt";
+const venueId = "venue_andrey_alt";
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
@@ -41,16 +41,7 @@ const defaultHours: OperatingHours = {
   sun: { ...defaultDay, working: false },
 };
 
-interface SettingsOperatingHoursSectionProps {
-  finalVenueId?: string;
-  hasVenue?: boolean;
-  venueIdSource?: null;
-}
-
-export function SettingsOperatingHoursSection(_props: SettingsOperatingHoursSectionProps = {}) {
-  const currentVenueId = VENUE_ID;
-  const hasVenue = true;
-
+export function SettingsOperatingHoursSection() {
   const [hours, setHours] = useState<OperatingHours>(defaultHours);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -60,7 +51,7 @@ export function SettingsOperatingHoursSection(_props: SettingsOperatingHoursSect
     (async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, "venues", currentVenueId));
+        const snap = await getDoc(doc(db, "venues", venueId));
         if (!snap.exists() || cancelled) return;
         const data = snap.data() as any;
         const stored = (data?.operatingHours ?? {}) as Partial<OperatingHours>;
@@ -85,7 +76,7 @@ export function SettingsOperatingHoursSection(_props: SettingsOperatingHoursSect
     return () => {
       cancelled = true;
     };
-  }, [finalVenueId, hasVenue]);
+  }, []);
 
   const handleChangeDay = (day: DayKey, patch: Partial<OperatingDay>) => {
     setHours((prev) => ({
@@ -97,7 +88,7 @@ export function SettingsOperatingHoursSection(_props: SettingsOperatingHoursSect
   const handleSaveOperatingHours = async () => {
     setSaving(true);
     try {
-      const ref = doc(db, "venues", currentVenueId);
+      const ref = doc(db, "venues", venueId);
       await setDoc(
         ref,
         {
