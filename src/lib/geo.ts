@@ -1,4 +1,4 @@
-export const IS_GEO_DEBUG = true;
+export const IS_GEO_DEBUG = false;
 
 const R_EARTH_M = 6_371_000;
 

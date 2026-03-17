@@ -288,7 +288,7 @@ function StaffContentInner() {
             if (dist > radius) {
               setGeoBlocked(true);
               setGeoMessage(
-                `Вы вне зоны заведения (радиус: ${radius} м). Подойдите ближе, чтобы начать смену.`
+                `Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`
               );
             } else {
               setGeoBlocked(false);

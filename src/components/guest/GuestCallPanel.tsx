@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import toast from "react-hot-toast";
 import { Bell, Receipt } from "lucide-react";
 import { createTargetedNotification } from "@/lib/stealth-notifications";
 import { useRolesOnShift } from "@/hooks/useRolesOnShift";
@@ -31,7 +32,7 @@ export function GuestCallPanel({
   isPro = false,
 }: GuestCallPanelProps) {
   const { roles, loading } = useRolesOnShift(venueId);
-  const { startGeoFencing, geoPromptMessage } = useGeoFencing({
+  const { startGeoFencing, geoPromptMessage, ensureInsideVenue } = useGeoFencing({
     mode: "guest",
     venueId,
     tableId,
@@ -46,6 +47,13 @@ export function GuestCallPanel({
 
   const handleCallRole = useCallback(
     async (role: ServiceRole) => {
+      const check = await ensureInsideVenue();
+      if (!check.allowed) {
+        toast.error(
+          `Функция доступна только внутри ресторана. Подойдите ближе (радиус ${check.radius ?? 0} м).`
+        );
+        return;
+      }
       if (!geoStartedRef.current) {
         geoStartedRef.current = true;
         startGeoFencing();
@@ -80,10 +88,17 @@ export function GuestCallPanel({
         setCallingRole(null);
       }
     },
-    [venueId, tableId, sessionId, visitorId, startGeoFencing]
+    [venueId, tableId, sessionId, visitorId, startGeoFencing, ensureInsideVenue]
   );
 
   const handleRequestBill = useCallback(async () => {
+    const check = await ensureInsideVenue();
+    if (!check.allowed) {
+      toast.error(
+        `Функция доступна только внутри ресторана. Подойдите ближе (радиус ${check.radius ?? 0} м).`
+      );
+      return;
+    }
     if (!geoStartedRef.current) {
       geoStartedRef.current = true;
       startGeoFencing();
@@ -105,7 +120,7 @@ export function GuestCallPanel({
     } finally {
       setCallingRole(null);
     }
-  }, [venueId, tableId, sessionId, startGeoFencing]);
+  }, [venueId, tableId, sessionId, startGeoFencing, ensureInsideVenue]);
 
   // Таймер 120 с
   useEffect(() => {

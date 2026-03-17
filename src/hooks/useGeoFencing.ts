@@ -142,8 +142,41 @@ export function useGeoFencing(params: UseGeoFencingParams) {
     // params read via paramsRef would be stale; we only need mode and startAfterUserAction for the guard
   }, [params.mode, startAfterUserAction]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const ensureInsideVenue = useCallback(async (): Promise<{ allowed: boolean; radius?: number }> => {
+    try {
+      let geo = geoRef.current;
+      if (!geo) {
+        const snap = await getDoc(doc(db, "venues", venueId));
+        const g = snap.exists() ? (snap.data().geo as VenueGeo | undefined) : undefined;
+        if (!g?.lat || !g?.lng) {
+          return { allowed: true };
+        }
+        geo = { lat: g.lat, lng: g.lng, radius: g.radius ?? 100 };
+        geoRef.current = geo;
+      }
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        return { allowed: true, radius: geo.radius };
+      }
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, OPTIONS);
+      });
+      let lat = pos.coords.latitude;
+      let lng = pos.coords.longitude;
+      if (getSimulateOutOfZone()) {
+        const offset = offsetLatLngByMeters(lat, lng, 500, 0);
+        lat = offset.lat;
+        lng = offset.lng;
+      }
+      const outside = isOutsideVenue(lat, lng, geo.lat, geo.lng, geo.radius);
+      return { allowed: !outside, radius: geo.radius };
+    } catch {
+      return { allowed: true };
+    }
+  }, [venueId]);
+
   return {
     startGeoFencing,
     geoPromptMessage: "Для точности подачи заказа разрешите доступ к геолокации.",
+    ensureInsideVenue,
   };
 }

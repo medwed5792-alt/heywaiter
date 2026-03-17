@@ -293,6 +293,7 @@ function AdminDashboardContent() {
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
   const autoResetDoneRef = useRef(false);
+  const [staffInsideById, setStaffInsideById] = useState<Record<string, boolean>>({});
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -389,6 +390,26 @@ function AdminDashboardContent() {
       cancelled = true;
     };
   }, [venueType]);
+
+  useEffect(() => {
+    // Live-гео сотрудников: staffLiveGeos по venueId
+    const q = query(
+      collection(db, "staffLiveGeos"),
+      where("venueId", "==", venueId)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const next: Record<string, boolean> = {};
+      snap.docs.forEach((d) => {
+        const data = d.data() as { staffId?: string; isInside?: boolean };
+        const id = data.staffId;
+        if (id) {
+          next[id] = data.isInside !== false;
+        }
+      });
+      setStaffInsideById(next);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
@@ -1290,6 +1311,8 @@ function AdminDashboardContent() {
                   const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
                   const isWaiterOffShift =
                     effectiveWaiterId && venueStaffOnShift[effectiveWaiterId] !== true;
+                  const isWaiterOutsideGeo =
+                    effectiveWaiterId && staffInsideById[effectiveWaiterId] === false;
                   const uniqueStaff = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
@@ -1326,6 +1349,11 @@ function AdminDashboardContent() {
                       {isWaiterOffShift && (
                         <p className="mt-1 text-xs font-medium text-amber-700">
                           Официант не на смене
+                        </p>
+                      )}
+                      {!isWaiterOffShift && isWaiterOutsideGeo && (
+                        <p className="mt-1 text-xs font-medium text-red-600">
+                          Официант вне зоны
                         </p>
                       )}
                       <div className="mt-2">

@@ -120,7 +120,39 @@ export function SettingsGeoSection() {
           <input type="text" value={addressQuery} onChange={(e) => setAddressQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSearchAddress()} placeholder="Город, улица, дом" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
         </label>
         <button type="button" onClick={handleSearchAddress} disabled={geocodeLoading} className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50">{geocodeLoading ? "Поиск…" : "Найти"}</button>
-        <button type="button" onClick={handleMyLocation} className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Определить моё местоположение</button>
+        <button
+          type="button"
+          onClick={handleMyLocation}
+          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Определить моё местоположение
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            if (!navigator.geolocation) {
+              setGeocodeError("Геолокация недоступна.");
+              return;
+            }
+            setGeocodeError(null);
+            navigator.geolocation.getCurrentPosition(
+              async (pos) => {
+                const nextLat = pos.coords.latitude;
+                const nextLng = pos.coords.longitude;
+                setLat(nextLat);
+                setLng(nextLng);
+                await saveGeo({ lat: nextLat, lng: nextLng });
+                setGeoConfigured(true);
+              },
+              () => {
+                setGeocodeError("Не удалось определить местоположение.");
+              }
+            );
+          }}
+          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+        >
+          ОБНОВИТЬ ГЕО-ПОЗИЦИЮ
+        </button>
       </div>
       {geocodeError && <p className="mt-2 text-sm text-red-600">{geocodeError}</p>}
       {hasKey ? (
