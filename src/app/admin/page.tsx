@@ -289,6 +289,8 @@ function AdminDashboardContent() {
   const [dismissedBookings, setDismissedBookings] = useState<string[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
   const [guestModal, setGuestModal] = useState<Guest | null>(null);
+  const [closeTableModal, setCloseTableModal] = useState<{ tableId: string; sessionId: string } | null>(null);
+  const [closeTableLoading, setCloseTableLoading] = useState(false);
   const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
@@ -805,6 +807,39 @@ function AdminDashboardContent() {
     []
   );
 
+  const closeTableConfirm = useCallback(async () => {
+    const payload = closeTableModal;
+    if (!payload) return;
+    setCloseTableLoading(true);
+    try {
+      await updateDoc(doc(db, "activeSessions", payload.sessionId), {
+        status: "closed",
+        closedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      const tableRef = doc(db, "venues", venueId, "tables", payload.tableId);
+      const snap = await getDoc(tableRef);
+      const existing = snap.exists() ? (snap.data() ?? {}) : {};
+      const assignments = (existing.assignments as Record<string, string> | undefined) ?? {};
+      await setDoc(
+        tableRef,
+        {
+          status: "free",
+          currentGuest: null,
+          assignments,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setCloseTableModal(null);
+      toast.success("Стол закрыт. Официант остаётся закреплённым.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка закрытия стола");
+    } finally {
+      setCloseTableLoading(false);
+    }
+  }, [closeTableModal]);
+
   useEffect(() => {
     const q = query(
       collection(db, "activeSessions"),
@@ -1121,7 +1156,11 @@ function AdminDashboardContent() {
                         ? "👤"
                         : ""}{" "}
                       {ev.type === "guest_arrived" ? (
-                        <GuestArrivedMessage ev={ev} venueId={venueId} />
+                        (ev as FeedEvent).collectionName === "venue_events" && ev.message ? (
+                          ev.message
+                        ) : (
+                          <GuestArrivedMessage ev={ev as FeedEvent} venueId={venueId} />
+                        )
                       ) : (
                         ev.message
                       )}
@@ -1334,90 +1373,142 @@ function AdminDashboardContent() {
                     : isUrgent
                     ? "border-orange-500 border-4 animate-pulse"
                     : isOccupied
-                    ? "border-sky-300"
+                    ? "border-blue-700"
                     : "border-emerald-400";
-                  const cardBg = isOccupied ? "bg-sky-50/90" : "bg-white";
+                  const cardBg = isOccupied
+                    ? "bg-blue-600"
+                    : hasTodayBookingForTable || isUrgent
+                    ? "bg-orange-50"
+                    : "bg-white";
+                  const cardText = isOccupied ? "text-white" : "";
 
                   return (
                     <div
                       key={table.id}
-                      className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg}`}
+                      className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg} ${cardText}`}
                     >
-                      <div className="text-2xl font-bold text-gray-900">
+                      <div className={`text-2xl font-bold ${cardText || "text-gray-900"}`}>
                         {table?.number ?? table.id ?? "—"}
                       </div>
-                      {isWaiterOffShift && (
-                        <p className="mt-1 text-xs font-medium text-amber-700">
-                          Официант не на смене
-                        </p>
-                      )}
-                      {!isWaiterOffShift && isWaiterOutsideGeo && (
-                        <p className="mt-1 text-xs font-medium text-red-600">
-                          Официант вне зоны
-                        </p>
-                      )}
-                      <div className="mt-2">
-                        <label className="block text-xs text-gray-500">Официант</label>
-                        <select
-                          value={selectValue ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            const tid = table?.id;
-                            if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
-                            if (v && tid) saveTableWaiter(tid, v);
-                          }}
-                          className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
-                            isGreenSelect
-                              ? "border-emerald-400 bg-emerald-50"
-                              : "border-gray-300 bg-white"
-                          }`}
-                        >
-                          <option value="">—</option>
-                          {uniqueStaff.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              {w.displayName}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {isPlanSelection && (
-                        <p className="mt-1 text-xs italic text-gray-500">
-                          По плану из Команды
-                        </p>
-                      )}
-                      {activeBooking && startTimeDate && (
-                        <div className="mt-2 text-xs">
-                          <span
-                            className={
-                              isUrgent
-                                ? "font-extrabold text-orange-600 animate-pulse"
-                                : "text-blue-700"
-                            }
-                          >
-                            🕒 {formatTimeSafe(startTimeDate)}
-                          </span>
-                          {activeBooking.guestName ? (
-                            <span className="text-blue-700">
-                              {` · ${activeBooking.guestName}`}
-                            </span>
-                          ) : null}
-                        </div>
-                      )}
-                      {session?.guestId ? (
-                        <button
-                          type="button"
-                          onClick={() => openGuestModal(session.guestId!)}
-                          className="mt-2 w-full text-left rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm hover:bg-gray-100"
-                        >
-                          {guestNames[session.guestId] ?? "Гость"}
-                          {guestRatings[session.guestId] != null && (
-                            <span className="ml-1 text-amber-600">
-                              ★ {guestRatings[session.guestId]}
-                            </span>
+                      {isOccupied && (
+                        <>
+                          {isWaiterOffShift && (
+                            <p className="mt-1 text-xs font-medium text-blue-200">
+                              Официант не на смене
+                            </p>
                           )}
-                        </button>
-                      ) : (
-                        <div className="mt-2 text-xs text-gray-400">Свободен</div>
+                          {!isWaiterOffShift && isWaiterOutsideGeo && (
+                            <p className="mt-1 text-xs font-medium text-blue-200">
+                              Официант вне зоны
+                            </p>
+                          )}
+                          <div className="mt-2">
+                            <label className="block text-xs text-blue-200">Официант</label>
+                            <select
+                              value={selectValue ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const tid = table?.id;
+                                if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
+                                if (v && tid) saveTableWaiter(tid, v);
+                              }}
+                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm bg-white/10 border-blue-400 text-white ${
+                                isGreenSelect ? "border-emerald-300 bg-emerald-900/30" : ""
+                              }`}
+                            >
+                              <option value="" className="text-gray-900">—</option>
+                              {uniqueStaff.map((w) => (
+                                <option key={w.id} value={w.id} className="text-gray-900">
+                                  {w.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {session?.guestId && (
+                            <button
+                              type="button"
+                              onClick={() => openGuestModal(session.guestId!)}
+                              className="mt-2 w-full text-left rounded-lg border border-blue-400/50 bg-white/10 px-2 py-1.5 text-sm text-white hover:bg-white/20"
+                            >
+                              <span className="font-medium">{guestNames[session.guestId] ?? "Гость"}</span>
+                              <span className="ml-1.5 text-blue-200">
+                                Статус: {GUEST_TYPE_LABEL[guestTypeByGuestId[session.guestId] ?? "regular"] ?? "Новый"}
+                              </span>
+                              {guestRatings[session.guestId] != null && (
+                                <span className="ml-1.5 text-amber-300">⭐ {guestRatings[session.guestId]}</span>
+                              )}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => session && setCloseTableModal({ tableId: table.id, sessionId: session.sessionId })}
+                            className="mt-2 w-full rounded-lg border border-blue-400/70 bg-white/10 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+                          >
+                            Закрыть стол
+                          </button>
+                        </>
+                      )}
+                      {!isOccupied && (
+                        <>
+                          {isWaiterOffShift && (
+                            <p className="mt-1 text-xs font-medium text-amber-700">
+                              Официант не на смене
+                            </p>
+                          )}
+                          {!isWaiterOffShift && isWaiterOutsideGeo && (
+                            <p className="mt-1 text-xs font-medium text-red-600">
+                              Официант вне зоны
+                            </p>
+                          )}
+                          <div className="mt-2">
+                            <label className="block text-xs text-gray-500">Официант</label>
+                            <select
+                              value={selectValue ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const tid = table?.id;
+                                if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
+                                if (v && tid) saveTableWaiter(tid, v);
+                              }}
+                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
+                                isGreenSelect
+                                  ? "border-emerald-400 bg-emerald-50"
+                                  : "border-gray-300 bg-white"
+                              }`}
+                            >
+                              <option value="">—</option>
+                              {uniqueStaff.map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {isPlanSelection && (
+                            <p className="mt-1 text-xs italic text-gray-500">
+                              По плану из Команды
+                            </p>
+                          )}
+                          {activeBooking && startTimeDate && (
+                            <div className="mt-2 text-xs">
+                              <span
+                                className={
+                                  isUrgent
+                                    ? "font-extrabold text-orange-600 animate-pulse"
+                                    : "text-blue-700"
+                                }
+                              >
+                                🕒 {formatTimeSafe(startTimeDate)}
+                              </span>
+                              {activeBooking.guestName ? (
+                                <span className="text-blue-700">
+                                  {` · ${activeBooking.guestName}`}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
+                          <div className="mt-2 text-xs text-emerald-700 font-medium">Свободен</div>
+                        </>
                       )}
                     </div>
                   );
@@ -1482,6 +1573,38 @@ function AdminDashboardContent() {
             >
               Закрыть
             </button>
+          </div>
+        </div>
+      )}
+
+      {closeTableModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="font-semibold text-gray-900">Закрыть стол?</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Сессия будет завершена. Официант останется закреплённым за столом.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCloseTableModal(null)}
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={closeTableLoading}
+                onClick={closeTableConfirm}
+                className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {closeTableLoading ? "…" : "Закрыть стол"}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -55,6 +55,48 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const VENUE_EVENTS_ID = "venue_andrey_alt";
+
+    type FirestoreAdmin = ReturnType<typeof getAdminFirestore>;
+    async function addGuestArrivedEvent(
+      fs: FirestoreAdmin,
+      sessionId: string,
+      tableId: string,
+      tableNum: number | string,
+      guestId: string | undefined,
+      guestNameFromBooking: string | undefined
+    ) {
+      let name = guestNameFromBooking ?? "Гость";
+      if (guestId) {
+        const guestSnap = await fs
+          .collection("venues")
+          .doc(VENUE_EVENTS_ID)
+          .collection("guests")
+          .doc(guestId)
+          .get();
+        if (guestSnap.exists) {
+          const d = guestSnap.data();
+          name = (d?.name as string) || (d?.phone as string) || name;
+        }
+      }
+      const message = `Гость ${name} занял стол № ${tableNum}`;
+      await fs
+        .collection("venues")
+        .doc(VENUE_EVENTS_ID)
+        .collection("events")
+        .add({
+          type: "guest_arrived",
+          message,
+          text: message,
+          tableId,
+          tableNumber: typeof tableNum === "number" ? tableNum : null,
+          sessionId,
+          read: false,
+          venueId: VENUE_EVENTS_ID,
+          createdAt: now,
+        });
+    }
+
     if (matchedBooking) {
       await firestore.collection("bookings").doc(matchedBooking.id).update({
         arrived: true,
@@ -83,6 +125,14 @@ export async function POST(request: NextRequest) {
         targetUids: [],
         createdAt: now,
       });
+      await addGuestArrivedEvent(
+        firestore,
+        sessionRef.id,
+        tableId,
+        tableNumber ?? tableId,
+        matchedBooking.data()?.guestId,
+        matchedBooking.data()?.guestName
+      );
       return NextResponse.json({
         status: "check_in_success",
         sessionId: sessionRef.id,
@@ -153,6 +203,15 @@ export async function POST(request: NextRequest) {
       read: false,
       createdAt: now,
     });
+
+    await addGuestArrivedEvent(
+      firestore,
+      sessionRef.id,
+      tableId,
+      tableNumber ?? tableId,
+      undefined,
+      undefined
+    );
 
     return NextResponse.json({
       status: "check_in_success",
