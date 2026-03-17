@@ -128,6 +128,48 @@ function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void })
   );
 }
 
+/** Модалка карточки стола: QR (venue_andrey_alt) + форма редактирования */
+function TableCardModal({
+  table,
+  halls,
+  onSave,
+  onClose,
+}: {
+  table: VenueTable;
+  halls: Hall[];
+  onSave: (hallId: string, n: number, name: string, desc: string, seats: number) => void;
+  onClose: () => void;
+}) {
+  const url = buildCheckInUrl(table.id);
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
+        <h3 className="font-semibold text-gray-900">Стол {table.number}{table.name ? ` · ${table.name}` : ""}</h3>
+        <p className="mt-1 text-xs text-gray-500">QR и редактирование (v=venue_andrey_alt)</p>
+        <div className="mt-4 flex justify-center">
+          <img src={qrSrc} alt="QR" className="h-[200px] w-[200px]" />
+        </div>
+        <p className="mt-2 break-all text-xs text-gray-500">{url}</p>
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <EditTableForm
+            table={table}
+            halls={halls}
+            onSave={(hallId, num, name, desc, seats) => {
+              onSave(hallId, num, name, desc, seats);
+              onClose();
+            }}
+            onCancel={onClose}
+          />
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button type="button" className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50" onClick={onClose}>Закрыть</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddTableForm({ hallId, onSave, onCancel }: { hallId: string; onSave: (n: number, name: string, desc: string, seats: number) => void; onCancel: () => void }) {
   const [number, setNumber] = useState("");
   const [name, setName] = useState("");
@@ -210,6 +252,8 @@ export function SettingsHallsSection() {
   const [addingTableHallId, setAddingTableHallId] = useState<string | null>(null);
   const [editingTable, setEditingTable] = useState<VenueTable | null>(null);
   const [qrTable, setQrTable] = useState<VenueTable | null>(null);
+  /** Модалка «карточка стола»: редактирование + QR (открывается по клику на стол) */
+  const [tableCardModal, setTableCardModal] = useState<VenueTable | null>(null);
   const [confirmState, setConfirmState] = useState<{
     open: boolean;
     title: string;
@@ -224,35 +268,42 @@ export function SettingsHallsSection() {
 
   useEffect(() => {
     (async () => {
-      const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
-      let hallsSnap = await getDocs(hallsRef);
-      // Алиас: если halls пусты или коллекции нет, пробуем rooms (для старых данных)
-      if (hallsSnap.empty) {
-        try {
-          const roomsRef = collection(db, "venues", VENUE_ID, "rooms");
-          const roomsSnap = await getDocs(roomsRef);
-          if (!roomsSnap.empty) {
-            hallsSnap = roomsSnap;
-          }
-        } catch {
-          // ignore, работаем только с halls
+      let hallList: Hall[] = [];
+      let tableList: VenueTable[] = [];
+      try {
+        const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
+        if (venueSnap.exists() && venueSnap.data().venueType) setVenueType(venueSnap.data().venueType as VenueType);
+        if (venueSnap.exists() && venueSnap.data().messages) {
+          const m = venueSnap.data().messages as { checkIn?: string; booking?: string; thankYou?: string };
+          setMessages((prev) => ({ checkIn: m.checkIn ?? prev.checkIn, booking: m.booking ?? prev.booking, thankYou: m.thankYou ?? prev.thankYou }));
         }
+      } catch {
+        // venue load failed — не блокируем залы и столы
       }
-      const tablesSnap = await getDocs(tablesRef);
-      if (venueSnap.exists() && venueSnap.data().venueType) setVenueType(venueSnap.data().venueType as VenueType);
-      if (venueSnap.exists() && venueSnap.data().messages) {
-        const m = venueSnap.data().messages as { checkIn?: string; booking?: string; thankYou?: string };
-        setMessages((prev) => ({ checkIn: m.checkIn ?? prev.checkIn, booking: m.booking ?? prev.booking, thankYou: m.thankYou ?? prev.thankYou }));
+      try {
+        let hallsSnap = await getDocs(hallsRef);
+        if (hallsSnap.empty) {
+          try {
+            const roomsRef = collection(db, "venues", VENUE_ID, "rooms");
+            const roomsSnap = await getDocs(roomsRef);
+            if (!roomsSnap.empty) hallsSnap = roomsSnap;
+          } catch {
+            // ignore
+          }
+        }
+        hallList = hallsSnap.docs.map((d) => ({
+          id: d.id,
+          name: (d.data().name as string) ?? "",
+          order: (d.data().order as number) ?? 0,
+        }));
+        hallList.sort((a, b) => a.order - b.order);
+        setHalls(hallList);
+      } catch {
+        // залы не загрузились — не блокируем столы
       }
-      const hallList = hallsSnap.docs.map((d) => ({
-        id: d.id,
-        name: (d.data().name as string) ?? "",
-        order: (d.data().order as number) ?? 0,
-      }));
-      hallList.sort((a, b) => a.order - b.order);
-      setHalls(hallList);
-      setTables(
-        tablesSnap.docs.map((d) => {
+      try {
+        const tablesSnap = await getDocs(tablesRef);
+        tableList = tablesSnap.docs.map((d) => {
           const data = d.data();
           const hallId = (data.hallId as string) || (data.roomId as string) || "";
           return {
@@ -263,8 +314,11 @@ export function SettingsHallsSection() {
             description: data.description as string | undefined,
             seats: data.seats as number | undefined,
           };
-        })
-      );
+        });
+      } catch {
+        // столы не загрузились — оставляем пустой список
+      }
+      setTables(tableList);
       setLoaded(true);
     })();
   }, []);
@@ -308,7 +362,10 @@ export function SettingsHallsSection() {
 
   const addHall = async () => {
     const name = newHallName.trim();
-    if (!name) return;
+    if (!name) {
+      toast.error("Введите название зала");
+      return;
+    }
     try {
       await addDoc(hallsRef, { name, order: halls.length, updatedAt: serverTimestamp() });
       setNewHallName("");
@@ -420,6 +477,9 @@ export function SettingsHallsSection() {
     });
   };
 
+  /** Столы, не привязанные ни к одному залу (нет hallId или зал удалён) */
+  const unassignedTables = tables.filter((t) => !halls.some((h) => h.id === t.hallId));
+
   return (
     <div className="mt-3 space-y-6">
       <div className="rounded-xl border border-gray-200 bg-white p-6">
@@ -461,9 +521,9 @@ export function SettingsHallsSection() {
           {" "}
           https://heywaiter.vercel.app/check-in?v=venue_andrey_alt&t=ID_СТОЛА.
         </p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <input type="text" placeholder="Название зала" value={newHallName} onChange={(e) => setNewHallName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addHall()} className="rounded border border-gray-300 px-3 py-1.5 text-sm w-48" />
-          <button type="button" className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={addHall}><Plus className="h-4 w-4" /> Добавить зал</button>
+        <div className="mt-4 flex flex-wrap items-center gap-2 min-h-[40px]">
+          <input type="text" placeholder="Название зала" value={newHallName} onChange={(e) => setNewHallName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addHall()} className="rounded border border-gray-300 px-3 py-1.5 text-sm w-48 flex-shrink-0" />
+          <button type="button" className="inline-flex flex-shrink-0 items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={addHall}><Plus className="h-4 w-4" /> Добавить зал</button>
         </div>
         {!loaded ? (
           <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
@@ -498,9 +558,9 @@ export function SettingsHallsSection() {
                     {hallTables.map((t) => (
                       <div key={t.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3">
                         <div
-                          className="cursor-pointer"
-                          onClick={() => setQrTable(t)}
-                          title="Открыть карточку стола и QR"
+                          className="cursor-pointer min-w-0 flex-1"
+                          onClick={() => setTableCardModal(t)}
+                          title="Открыть карточку стола (редактирование и QR)"
                         >
                           <p className="font-medium text-gray-900">
                             Стол {t.number}
@@ -508,10 +568,10 @@ export function SettingsHallsSection() {
                           </p>
                           {t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}
                         </div>
-                        <div className="flex gap-1">
-                          <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setQrTable(t)} title="QR-код"><QrCode className="h-4 w-4" /></button>
-                          <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setEditingTable(t)} title="Редактировать"><Pencil className="h-3.5 w-3.5" /></button>
-                          <button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={() => openDeleteTableConfirm(t)} title="Удалить"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <div className="flex flex-shrink-0 gap-1">
+                          <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setTableCardModal(t); }} title="Карточка и QR"><QrCode className="h-4 w-4" /></button>
+                          <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setEditingTable(t); }} title="Редактировать"><Pencil className="h-3.5 w-3.5" /></button>
+                          <button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); openDeleteTableConfirm(t); }} title="Удалить"><Trash2 className="h-3.5 w-3.5" /></button>
                         </div>
                       </div>
                     ))}
@@ -527,56 +587,37 @@ export function SettingsHallsSection() {
                 </div>
               );
             })}
-            {tables.filter((t) => !t.hallId).length > 0 && (
-              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50/40 p-4">
+            {unassignedTables.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4">
                 <h5 className="flex items-center gap-2 text-sm font-medium text-gray-800">
-                  Столы без зала
+                  Нераспределенные столы
                 </h5>
                 <p className="mt-1 text-xs text-gray-500">
-                  Эти столы уже есть в базе (используются на Дашборде), но не привязаны к залу. Отредактируйте и выберите зал.
+                  Столы без зала или с нарушенной связью (зал удалён). Отредактируйте и выберите зал.
                 </p>
                 <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {tables
-                    .filter((t) => !t.hallId)
-                    .map((t) => (
-                      <div key={t.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3">
-                        <div>
-                          <p className="font-medium text-gray-900">
-                            Стол {t.number}
-                            {t.name ? ` · ${t.name}` : ""}
-                          </p>
-                          {t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}
-                        </div>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            className="rounded p-1 text-gray-500 hover:bg-gray-100"
-                            onClick={() => setQrTable(t)}
-                            title="QR-код"
-                          >
-                            <QrCode className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded p-1 text-gray-500 hover:bg-gray-100"
-                            onClick={() => setEditingTable(t)}
-                            title="Редактировать"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50"
-                            onClick={() => openDeleteTableConfirm(t)}
-                            title="Удалить"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
+                  {unassignedTables.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3">
+                      <div
+                        className="cursor-pointer min-w-0 flex-1"
+                        onClick={() => setTableCardModal(t)}
+                        title="Открыть карточку стола (редактирование и QR)"
+                      >
+                        <p className="font-medium text-gray-900">
+                          Стол {t.number}
+                          {t.name ? ` · ${t.name}` : ""}
+                        </p>
+                        {t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}
                       </div>
-                    ))}
+                      <div className="flex flex-shrink-0 gap-1">
+                        <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setTableCardModal(t); }} title="Карточка и QR"><QrCode className="h-4 w-4" /></button>
+                        <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={(e) => { e.stopPropagation(); setEditingTable(t); }} title="Редактировать"><Pencil className="h-3.5 w-3.5" /></button>
+                        <button type="button" className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); openDeleteTableConfirm(t); }} title="Удалить"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                {editingTable && !editingTable.hallId && (
+                {editingTable && unassignedTables.some((u) => u.id === editingTable.id) && (
                   <EditTableForm
                     table={editingTable}
                     halls={halls}
@@ -594,6 +635,15 @@ export function SettingsHallsSection() {
       </div>
 
       {qrTable && <QRModal table={qrTable} onClose={() => setQrTable(null)} />}
+
+      {tableCardModal && (
+        <TableCardModal
+          table={tableCardModal}
+          halls={halls}
+          onSave={(hallId, num, name, desc, seats) => updateTable(tableCardModal, hallId, num, name, desc, seats)}
+          onClose={() => setTableCardModal(null)}
+        />
+      )}
 
       {confirmState && (
         <ConfirmModal
