@@ -304,7 +304,7 @@ export default function TeamPage() {
     (async () => {
       try {
         const [hallsSnap, tablesFromSub, tablesFromRoot] = await Promise.all([
-          getDocs(collection(db, "venues", VENUE_ID, "halls")),
+          getDocs(collection(db, "venues", VENUE_ID, "rooms")),
           getDocs(collection(db, "venues", VENUE_ID, "tables")),
           getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
         ]);

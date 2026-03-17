@@ -38,8 +38,11 @@ interface VenueTable {
 }
 
 function buildCheckInUrl(tableId: string): string {
-  if (typeof window === "undefined") return "";
-  return `${window.location.origin}/check-in?v=${VENUE_ID}&t=${encodeURIComponent(tableId)}`;
+  // Жёсткая свая: QR всегда ведёт на прод-домен guest-интерфейса
+  // https://heywaiter.vercel.app/check-in?v=venue_andrey_alt&t={tableId}
+  return `https://heywaiter.vercel.app/check-in?v=${encodeURIComponent(
+    VENUE_ID
+  )}&t=${encodeURIComponent(tableId)}`;
 }
 
 function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void }) {
@@ -84,7 +87,7 @@ function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void })
         <p className="mt-2 break-all text-xs text-gray-500">{url}</p>
         <div className="mt-4 flex gap-2">
           <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={onClose}>Закрыть</button>
-          <button type="button" className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800" onClick={handlePrint}>На печать</button>
+          <button type="button" className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800" onClick={handlePrint}>Печать</button>
           <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={handleShare}>Поделиться</button>
         </div>
       </div>
@@ -110,18 +113,50 @@ function AddTableForm({ hallId, onSave, onCancel }: { hallId: string; onSave: (n
   );
 }
 
-function EditTableForm({ table, onSave, onCancel }: { table: VenueTable; onSave: (n: number, name: string, desc: string, seats: number) => void; onCancel: () => void }) {
+function EditTableForm({
+  table,
+  halls,
+  onSave,
+  onCancel,
+}: {
+  table: VenueTable;
+  halls: Hall[];
+  onSave: (hallId: string, n: number, name: string, desc: string, seats: number) => void;
+  onCancel: () => void;
+}) {
   const [number, setNumber] = useState(String(table.number));
   const [name, setName] = useState(table.name ?? "");
   const [description, setDescription] = useState(table.description ?? "");
   const [seats, setSeats] = useState(table.seats != null ? String(table.seats) : "");
+  const [hallId, setHallId] = useState(table.hallId ?? "");
   return (
-    <div className="mt-3 rounded border border-gray-200 bg-white p-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div className="mt-3 rounded border border-gray-200 bg-white p-3 grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <label className="col-span-2 sm:col-span-2">
+        <span className="block text-xs text-gray-600">Зал</span>
+        <select
+          value={hallId}
+          onChange={(e) => setHallId(e.target.value)}
+          className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+        >
+          <option value="">Без зала</option>
+          {halls.map((h) => (
+            <option key={h.id} value={h.id}>
+              {h.name || h.id}
+            </option>
+          ))}
+        </select>
+      </label>
       <label><span className="block text-xs text-gray-600">Номер *</span><input type="number" min={1} value={number} onChange={(e) => setNumber(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" /></label>
       <label><span className="block text-xs text-gray-600">Название</span><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" /></label>
       <label><span className="block text-xs text-gray-600">Мест</span><input type="number" min={0} value={seats} onChange={(e) => setSeats(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" /></label>
       <div className="flex items-end gap-1">
-        <button type="button" className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white hover:bg-gray-800" onClick={() => onSave(Number(number) || 0, name, description, Number(seats) || 0)}>Сохранить</button>
+        <button
+          type="button"
+          className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm text-white hover:bg-gray-800"
+          onClick={() => onSave(hallId, Number(number) || 0, name, description, Number(seats) || 0)}
+        >
+          Сохранить
+        </button>
         <button type="button" className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50" onClick={onCancel}>Отмена</button>
       </div>
     </div>
@@ -150,37 +185,68 @@ export function SettingsHallsSection() {
     onConfirm: () => void | Promise<void>;
   } | null>(null);
 
-  const hallsRef = collection(db, "venues", VENUE_ID, "halls");
+  // Жёсткая свая: работаем только с venues/venue_andrey_alt/rooms и /tables
+  const hallsRef = collection(db, "venues", VENUE_ID, "rooms");
   const tablesRef = collection(db, "venues", VENUE_ID, "tables");
 
   useEffect(() => {
     (async () => {
-      const [venueSnap, hallsSnap, tablesSnap] = await Promise.all([getDoc(doc(db, "venues", VENUE_ID)), getDocs(hallsRef), getDocs(tablesRef)]);
+      const [venueSnap, hallsSnap, tablesSnap] = await Promise.all([
+        getDoc(doc(db, "venues", VENUE_ID)),
+        getDocs(hallsRef),
+        getDocs(tablesRef),
+      ]);
       if (venueSnap.exists() && venueSnap.data().venueType) setVenueType(venueSnap.data().venueType as VenueType);
       if (venueSnap.exists() && venueSnap.data().messages) {
         const m = venueSnap.data().messages as { checkIn?: string; booking?: string; thankYou?: string };
         setMessages((prev) => ({ checkIn: m.checkIn ?? prev.checkIn, booking: m.booking ?? prev.booking, thankYou: m.thankYou ?? prev.thankYou }));
       }
-      const hallList = hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "", order: (d.data().order as number) ?? 0 }));
+      const hallList = hallsSnap.docs.map((d) => ({
+        id: d.id,
+        name: (d.data().name as string) ?? "",
+        order: (d.data().order as number) ?? 0,
+      }));
       hallList.sort((a, b) => a.order - b.order);
       setHalls(hallList);
-      setTables(tablesSnap.docs.map((d) => {
-        const data = d.data();
-        return { id: d.id, hallId: (data.hallId as string) ?? "", number: (data.number as number) ?? 0, name: data.name as string | undefined, description: data.description as string | undefined, seats: data.seats as number | undefined };
-      }));
+      setTables(
+        tablesSnap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            hallId: (data.hallId as string) ?? "",
+            number: (data.number as number) ?? 0,
+            name: data.name as string | undefined,
+            description: data.description as string | undefined,
+            seats: data.seats as number | undefined,
+          };
+        })
+      );
       setLoaded(true);
     })();
   }, []);
 
   const loadHallsAndTables = async () => {
     const [hallsSnap, tablesSnap] = await Promise.all([getDocs(hallsRef), getDocs(tablesRef)]);
-    const hallList = hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "", order: (d.data().order as number) ?? 0 }));
+    const hallList = hallsSnap.docs.map((d) => ({
+      id: d.id,
+      name: (d.data().name as string) ?? "",
+      order: (d.data().order as number) ?? 0,
+    }));
     hallList.sort((a, b) => a.order - b.order);
     setHalls(hallList);
-    setTables(tablesSnap.docs.map((d) => {
-      const data = d.data();
-      return { id: d.id, hallId: (data.hallId as string) ?? "", number: (data.number as number) ?? 0, name: data.name as string | undefined, description: data.description as string | undefined, seats: data.seats as number | undefined };
-    }));
+    setTables(
+      tablesSnap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          hallId: (data.hallId as string) ?? "",
+          number: (data.number as number) ?? 0,
+          name: data.name as string | undefined,
+          description: data.description as string | undefined,
+          seats: data.seats as number | undefined,
+        };
+      })
+    );
   };
 
   const addHall = async () => {
@@ -200,7 +266,10 @@ export function SettingsHallsSection() {
     const name = editingHallName.trim();
     if (!name) return;
     try {
-      await updateDoc(doc(db, "venues", VENUE_ID, "halls", hall.id), { name, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id), {
+        name,
+        updatedAt: serverTimestamp(),
+      });
       setEditingHall(null);
       setEditingHallName("");
       await loadHallsAndTables();
@@ -218,8 +287,10 @@ export function SettingsHallsSection() {
       variant: "danger",
       onConfirm: async () => {
         try {
-          for (const t of tables.filter((x) => x.hallId === hall.id)) await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
-          await deleteDoc(doc(db, "venues", VENUE_ID, "halls", hall.id));
+          for (const t of tables.filter((x) => x.hallId === hall.id)) {
+            await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
+          }
+          await deleteDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id));
           await loadHallsAndTables();
           toast.success("Зал удалён");
         } catch (e) {
@@ -242,9 +313,16 @@ export function SettingsHallsSection() {
     }
   };
 
-  const updateTable = async (t: VenueTable, number: number, name: string, description: string, seats: number) => {
+  const updateTable = async (t: VenueTable, hallId: string, number: number, name: string, description: string, seats: number) => {
     try {
-      await updateDoc(doc(db, "venues", VENUE_ID, "tables", t.id), { number: Number(number), name: name.trim() || null, description: description.trim() || null, seats: seats > 0 ? seats : null, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, "venues", VENUE_ID, "tables", t.id), {
+        hallId: hallId || null,
+        number: Number(number),
+        name: name.trim() || null,
+        description: description.trim() || null,
+        seats: seats > 0 ? seats : null,
+        updatedAt: serverTimestamp(),
+      });
       setEditingTable(null);
       await loadHallsAndTables();
       toast.success("Стол сохранён");
@@ -308,7 +386,11 @@ export function SettingsHallsSection() {
 
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <h4 className="flex items-center gap-2 font-medium text-gray-900"><Map className="h-5 w-5 text-gray-500" /> Залы и столы</h4>
-        <p className="mt-1 text-sm text-gray-500">Создайте залы и добавляйте столы. QR ведёт на /check-in?v=venueId&t=tableId.</p>
+        <p className="mt-1 text-sm text-gray-500">
+          Создайте залы и добавляйте столы. QR ведёт на
+          {" "}
+          https://heywaiter.vercel.app/check-in?v=venue_andrey_alt&t=ID_СТОЛА.
+        </p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <input type="text" placeholder="Название зала" value={newHallName} onChange={(e) => setNewHallName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addHall()} className="rounded border border-gray-300 px-3 py-1.5 text-sm w-48" />
           <button type="button" className="inline-flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={addHall}><Plus className="h-4 w-4" /> Добавить зал</button>
@@ -354,11 +436,79 @@ export function SettingsHallsSection() {
                       </div>
                     ))}
                   </div>
-                  {editingTable && editingTable.hallId === hall.id && <EditTableForm table={editingTable} onSave={(num, name, desc, seats) => updateTable(editingTable, num, name, desc, seats)} onCancel={() => setEditingTable(null)} />}
+                  {editingTable && editingTable.hallId === hall.id && (
+                    <EditTableForm
+                      table={editingTable}
+                      halls={halls}
+                      onSave={(hallId, num, name, desc, seats) => updateTable(editingTable, hallId, num, name, desc, seats)}
+                      onCancel={() => setEditingTable(null)}
+                    />
+                  )}
                 </div>
               );
             })}
-            {halls.length === 0 && <p className="text-sm text-gray-500">Нет залов. Добавьте зал выше.</p>}
+            {tables.filter((t) => !t.hallId).length > 0 && (
+              <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50/40 p-4">
+                <h5 className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                  Столы без зала
+                </h5>
+                <p className="mt-1 text-xs text-gray-500">
+                  Эти столы уже есть в базе (используются на Дашборде), но не привязаны к залу. Отредактируйте и выберите зал.
+                </p>
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {tables
+                    .filter((t) => !t.hallId)
+                    .map((t) => (
+                      <div key={t.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            Стол {t.number}
+                            {t.name ? ` · ${t.name}` : ""}
+                          </p>
+                          {t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                            onClick={() => setQrTable(t)}
+                            title="QR-код"
+                          >
+                            <QrCode className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-gray-500 hover:bg-gray-100"
+                            onClick={() => setEditingTable(t)}
+                            title="Редактировать"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50"
+                            onClick={() => openDeleteTableConfirm(t)}
+                            title="Удалить"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+                {editingTable && !editingTable.hallId && (
+                  <EditTableForm
+                    table={editingTable}
+                    halls={halls}
+                    onSave={(hallId, num, name, desc, seats) => updateTable(editingTable, hallId, num, name, desc, seats)}
+                    onCancel={() => setEditingTable(null)}
+                  />
+                )}
+              </div>
+            )}
+            {halls.length === 0 && tables.length === 0 && (
+              <p className="text-sm text-gray-500">Нет залов. Добавьте зал выше.</p>
+            )}
           </div>
         )}
       </div>
