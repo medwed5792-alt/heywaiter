@@ -86,8 +86,9 @@ interface FeedEvent {
   read: boolean;
   createdAt: unknown;
   venueId?: string;
-  /** Откуда пришло событие: от этого зависит путь удаления */
   collectionName?: "staffNotifications" | "venue_events";
+  /** Для guest_arrived: id сессии, чтобы подтянуть гостя из venues/.../guests */
+  sessionId?: string;
 }
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -188,6 +189,76 @@ function EventSkeleton() {
       <div className="mt-1 h-3 w-2/3 rounded bg-gray-200" />
     </div>
   );
+}
+
+/** Иконки по типу гостя для ленты guest_arrived */
+const GUEST_TYPE_ICON: Record<string, string> = {
+  vip: "🌟",
+  constant: "✅",
+  blacklisted: "🚫",
+};
+
+/** Подпись типа гостя для ленты */
+const GUEST_TYPE_LABEL: Record<string, string> = {
+  regular: "Новый",
+  constant: "Постоянный",
+  favorite: "Любимый",
+  vip: "VIP",
+  blacklisted: "ЧС",
+};
+
+/** Сообщение «Гость пришел» с подтяжкой данных из venues/venueId/guests */
+function GuestArrivedMessage({
+  ev,
+  venueId,
+}: {
+  ev: FeedEvent;
+  venueId: string;
+}) {
+  const [guestData, setGuestData] = useState<{
+    name: string;
+    type: string;
+    note?: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!ev.sessionId || !venueId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sessionSnap = await getDoc(doc(db, "activeSessions", ev.sessionId!));
+        if (cancelled || !sessionSnap.exists()) return;
+        const guestId = sessionSnap.data()?.guestId as string | undefined;
+        if (!guestId) {
+          setGuestData(null);
+          return;
+        }
+        const guestSnap = await getDoc(doc(db, "venues", venueId, "guests", guestId));
+        if (cancelled || !guestSnap.exists()) return;
+        const d = guestSnap.data() ?? {};
+        setGuestData({
+          name: (d.name as string) || (d.phone as string) || "Гость",
+          type: (d.type as string) ?? "regular",
+          note: (d.note as string) ?? undefined,
+        });
+      } catch {
+        if (!cancelled) setGuestData(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ev.sessionId, venueId]);
+
+  const tableNum = ev.tableId != null && !looksLikeTableIdError(ev.tableId) ? ev.tableId : "—";
+  if (guestData) {
+    const icon = GUEST_TYPE_ICON[guestData.type] ?? "";
+    const typeLabel = GUEST_TYPE_LABEL[guestData.type] ?? guestData.type;
+    return (
+      <span>
+        {icon} {typeLabel} {guestData.name} (Стол №{tableNum}) занял место.
+        {guestData.note?.trim() ? ` Примечание: ${guestData.note.trim()}` : ""}
+      </span>
+    );
+  }
+  return <span>{ev.message}</span>;
 }
 
 const venueId = "venue_andrey_alt";
@@ -558,31 +629,37 @@ function AdminDashboardContent() {
   const guestIds = Object.values(sessionsByTable)
     .map((s) => s.guestId)
     .filter(Boolean) as string[];
+  const [guestTypeByGuestId, setGuestTypeByGuestId] = useState<Record<string, string>>({});
   useEffect(() => {
     if (guestIds.length === 0) {
       setGuestNames({});
       setGuestRatings({});
+      setGuestTypeByGuestId({});
       return;
     }
     let cancelled = false;
     (async () => {
       const names: Record<string, string> = {};
       const ratings: Record<string, number> = {};
+      const types: Record<string, string> = {};
       await Promise.all(
         guestIds.map(async (id) => {
           if (cancelled) return;
-          const snap = await getDoc(doc(db, "guests", id));
+          const snap = await getDoc(doc(db, "venues", venueId, "guests", id));
           if (snap.exists()) {
             const d = snap.data();
-            names[id] = (d.name as string) || (d.nickname as string) || (d.phone as string) || id.slice(0, 8);
+            names[id] = (d.name as string) || (d.phone as string) || id.slice(0, 8);
             const r = (d.globalGuestScore as number) ?? (d.rating as number);
             if (r != null) ratings[id] = r;
+            const t = (d.type as string) ?? "regular";
+            types[id] = t;
           }
         })
       );
       if (!cancelled) {
         setGuestNames(names);
         setGuestRatings(ratings);
+        setGuestTypeByGuestId(types);
       }
     })();
     return () => {
@@ -609,6 +686,7 @@ function AdminDashboardContent() {
             read: data.read === true,
             createdAt: data.createdAt,
             collectionName: "staffNotifications" as const,
+            sessionId: data.sessionId as string | undefined,
           };
         });
         setFeedEvents(list);
@@ -744,7 +822,7 @@ function AdminDashboardContent() {
   }, []);
 
   const openGuestModal = useCallback(async (guestId: string) => {
-    const snap = await getDoc(doc(db, "guests", guestId));
+    const snap = await getDoc(doc(db, "venues", venueId, "guests", guestId));
     if (snap.exists()) setGuestModal({ id: snap.id, ...snap.data() } as Guest);
     else toast.error("Гость не найден");
   }, []);
@@ -1012,9 +1090,15 @@ function AdminDashboardContent() {
                         ? "📞 Вызов"
                         : ev.type === "request_bill"
                         ? "🧾 Счёт"
+                        : ev.type === "guest_arrived"
+                        ? "👤"
                         : ""}{" "}
-                      {ev.message}
-                      {(ev as FeedEvent & { sender?: string }).sender && (
+                      {ev.type === "guest_arrived" ? (
+                        <GuestArrivedMessage ev={ev} venueId={venueId} />
+                      ) : (
+                        ev.message
+                      )}
+                      {(ev as FeedEvent & { sender?: string }).sender && ev.type !== "guest_arrived" && (
                         <span className="ml-1 text-xs opacity-90">
                           ({(ev as FeedEvent & { sender?: string }).sender})
                         </span>
@@ -1210,8 +1294,12 @@ function AdminDashboardContent() {
                       : "");
                   const isPlanSelection = Boolean(selectValue && !assignedStaffId);
                   const hasEmergency = emergencyTableIds.has(table.id);
+                  const sessionGuestId = session?.guestId;
+                  const isVipGuest = Boolean(sessionGuestId && guestTypeByGuestId[sessionGuestId] === "vip");
                   const cardBorder = hasEmergency
                     ? "border-red-600 border-8 animate-bounce"
+                    : isVipGuest && isOccupied
+                    ? "border-violet-500 border-4 animate-pulse shadow-[0_0_15px_rgba(139,92,246,0.5)]"
                     : hasTodayBookingForTable
                     ? "border-orange-500 border-4 animate-pulse"
                     : isUrgent

@@ -267,8 +267,13 @@ export default function AdminBookingsPage() {
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const phoneInputRef = useRef<HTMLInputElement>(null);
   const [venueEvents, setVenueEvents] = useState<{ id: string; type?: string; message?: string; createdAt?: unknown; collectionName?: "venue_events" }[]>([]);
+  const [riskAcknowledged, setRiskAcknowledged] = useState(false);
 
   const selectedDate = gridDate;
+
+  useEffect(() => {
+    setRiskAcknowledged(false);
+  }, [editing?.id, editing?.guestId]);
 
   const dismissVenueEvent = useCallback(async (eventId: string, collectionName?: string) => {
     const ref =
@@ -795,6 +800,9 @@ export default function AdminBookingsPage() {
       {editing && (() => {
         const selectedGuest = editing.guestId ? venueGuests.find((g) => g.id === editing.guestId) : null;
         const isBlacklisted = selectedGuest?.type === "blacklisted";
+        const noteText = selectedGuest?.note ?? "";
+        const hasRiskNote = /конфликт|не пришел|инцидент/i.test(noteText);
+        const hasRisk = isBlacklisted || hasRiskNote;
         const phoneDigitsTyped = phoneDigits(editing.guestContact ?? "");
         const phoneSuggestions =
           phoneDigitsTyped.length >= 2
@@ -807,9 +815,22 @@ export default function AdminBookingsPage() {
             : [];
         const hasConflict = Boolean(conflictError);
         return (
-        <div className={`mt-4 rounded-xl border p-4 ${isBlacklisted ? "border-red-500 bg-red-50/80" : hasConflict ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
-          {isBlacklisted && (
-            <p className="mb-3 text-sm font-medium text-red-800">Внимание! Гость в черном списке</p>
+        <div className={`mt-4 rounded-xl border p-4 ${hasRisk || hasConflict ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
+          {hasRisk && (
+            <div className="mb-3 rounded-lg border-2 border-red-500 bg-red-100 p-3">
+              <p className="text-sm font-bold text-red-800">
+                ⚠️ ВНИМАНИЕ! У гостя были инциденты в прошлом. Бронировать с осторожностью!
+              </p>
+              <label className="mt-2 flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-red-500"
+                  checked={riskAcknowledged}
+                  onChange={(e) => setRiskAcknowledged(e.target.checked)}
+                />
+                <span className="text-sm font-medium text-red-800">Я ознакомлен с риском и подтверждаю бронирование</span>
+              </label>
+            </div>
           )}
           {hasConflict && (
             <p className="mb-3 text-sm font-medium text-red-800">{conflictError}</p>
@@ -929,7 +950,7 @@ export default function AdminBookingsPage() {
               <span>Подсветить стол на дашборде (flashDashboard)</span>
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button type="submit" disabled={saving || hasConflict} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
+              <button type="submit" disabled={saving || hasConflict || (hasRisk && !riskAcknowledged)} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
               {editing.id && (
                 <button type="button" onClick={() => editing.id && setDeleteConfirmId(editing.id)} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Удалить</button>
               )}
