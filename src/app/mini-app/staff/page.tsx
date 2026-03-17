@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { collection, getDocs, query, where } from "firebase/firestore";
@@ -179,6 +179,10 @@ function StaffContentInner() {
   const [availableTableNumbers, setAvailableTableNumbers] = useState<number[]>([]);
   const [sosLoading, setSosLoading] = useState(false);
   const [sosError, setSosError] = useState<string | null>(null);
+  const [sosEmergencyLoading, setSosEmergencyLoading] = useState(false);
+  const [sosEmergencyHoldProgress, setSosEmergencyHoldProgress] = useState(0);
+  const sosHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sosHoldProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -342,6 +346,86 @@ function StaffContentInner() {
     };
   }, [currentVenueId]);
 
+  const SOS_HOLD_MS = 1500;
+
+  const cancelSosHold = useCallback(() => {
+    if (sosHoldTimerRef.current) {
+      clearTimeout(sosHoldTimerRef.current);
+      sosHoldTimerRef.current = null;
+    }
+    if (sosHoldProgressRef.current) {
+      clearInterval(sosHoldProgressRef.current);
+      sosHoldProgressRef.current = null;
+    }
+    setSosEmergencyHoldProgress(0);
+  }, []);
+
+  const handleSosEmergencyStart = useCallback(() => {
+    if (sosEmergencyLoading) return;
+    cancelSosHold();
+    setSosEmergencyHoldProgress(0);
+    const start = Date.now();
+    sosHoldProgressRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const p = Math.min(100, (elapsed / SOS_HOLD_MS) * 100);
+      setSosEmergencyHoldProgress(p);
+      if (p >= 100 && sosHoldTimerRef.current === null) {
+        if (sosHoldProgressRef.current) {
+          clearInterval(sosHoldProgressRef.current);
+          sosHoldProgressRef.current = null;
+        }
+      }
+    }, 50);
+    sosHoldTimerRef.current = setTimeout(() => {
+      sosHoldTimerRef.current = null;
+      if (sosHoldProgressRef.current) {
+        clearInterval(sosHoldProgressRef.current);
+        sosHoldProgressRef.current = null;
+      }
+      setSosEmergencyHoldProgress(100);
+      (async () => {
+        setSosEmergencyLoading(true);
+        setSosError(null);
+        try {
+          const res = await fetch("/api/notify/emergency-call", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ staffId: staffId ?? undefined }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data.ok === false) {
+            throw new Error(data.error || "Ошибка отправки SOS");
+          }
+          alert("Критический вызов (SOS) отправлен. ЛПР уведомлены.");
+        } catch (e) {
+          setSosError(e instanceof Error ? e.message : "Ошибка отправки SOS");
+        } finally {
+          setSosEmergencyLoading(false);
+          setSosEmergencyHoldProgress(0);
+        }
+      })();
+    }, SOS_HOLD_MS);
+  }, [sosEmergencyLoading, staffId, cancelSosHold]);
+
+  const handleSosEmergencyEnd = useCallback(() => {
+    if (sosHoldTimerRef.current) {
+      clearTimeout(sosHoldTimerRef.current);
+      sosHoldTimerRef.current = null;
+    }
+    if (sosHoldProgressRef.current) {
+      clearInterval(sosHoldProgressRef.current);
+      sosHoldProgressRef.current = null;
+    }
+    setSosEmergencyHoldProgress(0);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (sosHoldTimerRef.current) clearTimeout(sosHoldTimerRef.current);
+      if (sosHoldProgressRef.current) clearInterval(sosHoldProgressRef.current);
+    };
+  }, []);
+
   const handleSendSos = async () => {
     if (!staffId || !currentVenueId) return;
     const num = Number(sosTableNumber);
@@ -363,8 +447,6 @@ function StaffContentInner() {
       if (!res.ok || data.ok === false) {
         throw new Error(data.error || "Ошибка отправки SOS");
       }
-      // Telegram-тонкая интеграция: уведомление на часы/браслет обрабатывается на сервере.
-      // Здесь только локальный сброс поля.
       alert("Сигнал отправлен охране");
       setSosTableNumber("");
     } catch (e) {
@@ -533,8 +615,56 @@ function StaffContentInner() {
               </button>
             </section>
 
+            <section className="rounded-2xl border-2 border-red-300 bg-red-50 p-5 shadow-sm">
+              <h2 className="text-sm font-medium text-red-700">Вызов охраны / ЛПР</h2>
+              <p className="mt-0.5 text-xs text-slate-600">
+                Удерживайте кнопку 1,5 сек — защита от случайного нажатия.
+              </p>
+              <div className="mt-4">
+                <button
+                  type="button"
+                  disabled={sosEmergencyLoading}
+                  onMouseDown={handleSosEmergencyStart}
+                  onMouseUp={handleSosEmergencyEnd}
+                  onMouseLeave={handleSosEmergencyEnd}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    handleSosEmergencyStart();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    handleSosEmergencyEnd();
+                  }}
+                  onTouchCancel={handleSosEmergencyEnd}
+                  className={`w-full rounded-2xl py-6 text-lg font-bold text-white shadow-lg transition select-none touch-none ${
+                    sosEmergencyLoading
+                      ? "bg-red-400"
+                      : sosEmergencyHoldProgress > 0
+                        ? "bg-red-600"
+                        : "bg-red-600 hover:bg-red-700 active:bg-red-700"
+                  }`}
+                >
+                  {sosEmergencyLoading ? (
+                    "Отправка…"
+                  ) : sosEmergencyHoldProgress > 0 && sosEmergencyHoldProgress < 100 ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="inline-block h-5 w-32 rounded-full bg-red-400 overflow-hidden">
+                        <span
+                          className="block h-full bg-white/90 transition-all duration-75"
+                          style={{ width: `${sosEmergencyHoldProgress}%` }}
+                        />
+                      </span>
+                      Удерживайте…
+                    </span>
+                  ) : (
+                    "🚨 SOS / ВЫЗОВ ОХРАНЫ"
+                  )}
+                </button>
+              </div>
+            </section>
+
             <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm">
-              <h2 className="text-sm font-medium text-red-600">Экстренная помощь</h2>
+              <h2 className="text-sm font-medium text-red-600">SOS по столу</h2>
               <p className="mt-0.5 text-xs text-slate-600">
                 Введите номер стола и нажмите SOS. Кнопка активируется только для существующих столов.
               </p>

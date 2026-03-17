@@ -210,6 +210,8 @@ function AdminDashboardContent() {
   const [shiftEvents, setShiftEvents] = useState<FeedEvent[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [activeSos, setActiveSos] = useState<FeedEvent | null>(null);
+  const [confirmEmergencyArchive, setConfirmEmergencyArchive] = useState<FeedEvent | null>(null);
+  const emergencyPlayedRef = useRef<Set<string>>(new Set());
   const [unratedClosedSessions, setUnratedClosedSessions] = useState<ClosedSessionForRating[]>([]);
   const [dismissedBookings, setDismissedBookings] = useState<string[]>([]);
   const [ratingSubmitting, setRatingSubmitting] = useState(false);
@@ -635,12 +637,13 @@ function AdminDashboardContent() {
             id: d.id,
             ...data,
             type: (data.type as string) ?? "shift",
-            message: (data.message as string) ?? "",
+            message: (data.message as string) ?? (data.text as string) ?? "",
             tableId: data.tableId as string | undefined,
             read: Boolean(data.read),
             createdAt: data.createdAt,
             venueId: (data.venueId as string) || venueId,
-          } as FeedEvent;
+            sender: data.sender as string | undefined,
+          } as FeedEvent & { sender?: string };
         });
         setShiftEvents(eventList);
         setFeedLoading(false);
@@ -794,6 +797,32 @@ function AdminDashboardContent() {
     return [...bookingReminderEvents.map((e) => ({ ...e, createdAt: null as unknown })), ...shifts, ...feed];
   }, [bookingReminderEvents, feedEvents, shiftEvents]);
 
+  // Звуковой сигнал при появлении нового emergency в ленте
+  useEffect(() => {
+    const emergencies = (shiftEvents ?? []).filter((e) => e.type === "emergency" && !e.read);
+    for (const ev of emergencies) {
+      if (!emergencyPlayedRef.current.has(ev.id)) {
+        emergencyPlayedRef.current.add(ev.id);
+        try {
+          const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.setValueAtTime(660, ctx.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        } catch (_) {
+          // ignore if AudioContext not supported
+        }
+        break;
+      }
+    }
+  }, [shiftEvents]);
+
   const safeStaffList = staffList ?? [];
   const safeBookingsByTable = bookingsByTable ?? {};
   const safeTables = tables ?? [];
@@ -939,6 +968,7 @@ function AdminDashboardContent() {
                 const isShift = ev.type === "shift";
                 const isStartedShift = isShift && ev.message.includes("заступил");
                 const isStoppedShift = isShift && ev.message.includes("ушел");
+                const isEmergency = ev.type === "emergency";
 
                 return (
                   <li
@@ -946,6 +976,8 @@ function AdminDashboardContent() {
                     className={
                       isBookingReminder
                         ? "text-sm bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 shadow-md flex justify-between items-center rounded-md"
+                        : isEmergency
+                        ? `flex items-center justify-between gap-3 rounded-lg border-2 border-red-600 bg-red-100 p-4 text-sm font-medium text-red-900 ${ev.read ? "opacity-80" : "animate-pulse"}`
                         : `flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
                             ev.read
                               ? "border-gray-100 bg-gray-50/50 text-gray-500"
@@ -953,6 +985,8 @@ function AdminDashboardContent() {
                               ? "border-green-200 bg-[#e6fffa] text-emerald-900"
                               : isOrphan
                               ? "border-red-400 bg-red-50/80 text-red-900 animate-pulse"
+                              : ev.type === "sos"
+                              ? "border-red-400 bg-red-50/80 text-red-900"
                               : "border-amber-200 bg-amber-50/80 text-amber-900"
                           }`
                     }
@@ -960,6 +994,8 @@ function AdminDashboardContent() {
                     <span>
                       {isBookingReminder
                         ? "⚠️ "
+                        : isEmergency
+                        ? "🚨 КРИТИЧЕСКИЙ ВЫЗОВ "
                         : ev.type === "sos"
                         ? "🚨 SOS"
                         : isOrphan
@@ -970,6 +1006,11 @@ function AdminDashboardContent() {
                         ? "🧾 Счёт"
                         : ""}{" "}
                       {ev.message}
+                      {(ev as FeedEvent & { sender?: string }).sender && (
+                        <span className="ml-1 text-xs opacity-90">
+                          ({(ev as FeedEvent & { sender?: string }).sender})
+                        </span>
+                      )}
                       {createdAtLabel && (
                         <span className="ml-1 text-xs text-gray-500">· {createdAtLabel}</span>
                       )}
@@ -991,6 +1032,8 @@ function AdminDashboardContent() {
                           } catch (e) {
                             toast.error(e instanceof Error ? e.message : "Ошибка");
                           }
+                        } else if (isEmergency) {
+                          setConfirmEmergencyArchive(ev);
                         } else {
                           archiveEvent(ev);
                         }
@@ -998,6 +1041,8 @@ function AdminDashboardContent() {
                       className={
                         isBookingReminder
                           ? "ml-4 shrink-0 px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors text-xs font-semibold"
+                          : isEmergency
+                          ? "shrink-0 rounded-lg border-2 border-red-600 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
                           : "shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                       }
                     >
@@ -1047,6 +1092,46 @@ function AdminDashboardContent() {
                 }}
               >
                 Принято
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmEmergencyArchive && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-emergency-title"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg border-2 border-red-200">
+            <h3 id="confirm-emergency-title" className="text-base font-semibold text-red-800">
+              Подтвердить принятие вызова?
+            </h3>
+            <p className="mt-2 text-sm text-gray-700">
+              Вы подтверждаете, что приняли критический вызов (SOS) и событие можно снять с ленты?
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setConfirmEmergencyArchive(null)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                onClick={() => {
+                  if (confirmEmergencyArchive) {
+                    archiveEvent(confirmEmergencyArchive);
+                    setConfirmEmergencyArchive(null);
+                    toast.success("Вызов принят");
+                  }
+                }}
+              >
+                Подтвердить
               </button>
             </div>
           </div>
