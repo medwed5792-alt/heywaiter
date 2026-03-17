@@ -18,6 +18,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Booking } from "@/lib/types";
+import type { GuestType } from "@/lib/types";
 
 const VENUE_ID = "venue_andrey_alt";
 const LATE_NOTIFY_INTERVAL_MS = 15 * 60 * 1000; // 15 мин
@@ -53,6 +54,14 @@ const DISABLE_OPTIONS = [
   { value: 9999, label: "Бессрочно" },
 ];
 
+const GUEST_TYPE_LABELS: Record<GuestType, string> = {
+  regular: "Новый",
+  constant: "Постоянный",
+  favorite: "Любимый",
+  vip: "VIP",
+  blacklisted: "ЧС",
+};
+
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<(Booking & { startAt?: unknown; endAt?: unknown; notifyWaiter?: boolean; flashDashboard?: boolean; isUrgent?: boolean })[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
@@ -63,6 +72,25 @@ export default function AdminBookingsPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [disableBookingModalOpen, setDisableBookingModalOpen] = useState(false);
   const [disableBookingDays, setDisableBookingDays] = useState<number>(1);
+  const [venueGuests, setVenueGuests] = useState<{ id: string; name?: string; phone?: string; type: GuestType; note?: string }[]>([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "guests"), (snap) => {
+      setVenueGuests(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: (data.name as string) ?? "",
+            phone: (data.phone as string) ?? "",
+            type: (data.type as GuestType) ?? "regular",
+            note: data.note as string | undefined,
+          };
+        })
+      );
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const q = query(collection(db, "bookings"), where("venueId", "==", VENUE_ID));
@@ -163,7 +191,7 @@ export default function AdminBookingsPage() {
         // Если гостя нет в базе — создаём запись в коллекции guests с type "regular" (Новый), чтобы не слать undefined в Firestore
         let guestIdResolved: string | null = payload.guestId != null && payload.guestId !== "" ? String(payload.guestId) : null;
         if (guestIdResolved == null) {
-          const newGuestRef = await addDoc(collection(db, "guests"), {
+          const newGuestRef = await addDoc(collection(db, "venues", venueId, "guests"), {
             venueId,
             name: guestNameStr.trim() || null,
             phone: guestContactStr.trim() || null,
@@ -403,13 +431,48 @@ export default function AdminBookingsPage() {
         </div>
       )}
 
-      {editing && (
-        <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+      {editing && (() => {
+        const selectedGuest = editing.guestId ? venueGuests.find((g) => g.id === editing.guestId) : null;
+        const isBlacklisted = selectedGuest?.type === "blacklisted";
+        return (
+        <div className={`mt-4 rounded-xl border p-4 ${isBlacklisted ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
+          {isBlacklisted && (
+            <p className="mb-3 text-sm font-medium text-red-800">Внимание! Гость в черном списке</p>
+          )}
           <h3 className="text-sm font-medium text-gray-700">{editing.id ? "Редактирование брони" : "Новая бронь"}</h3>
           <form
             className="mt-3 grid gap-3 sm:grid-cols-2"
             onSubmit={(e) => { e.preventDefault(); saveBooking(editing); }}
           >
+            <label className="block sm:col-span-2">
+              <span className="block text-xs text-gray-600">Гость из базы</span>
+              <select
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                value={editing.guestId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) {
+                    setEditing((p) => ({ ...p, guestId: undefined, guestName: p.guestName ?? "", guestContact: p.guestContact ?? "" }));
+                    return;
+                  }
+                  const g = venueGuests.find((x) => x.id === id);
+                  if (g) setEditing((p) => ({ ...p, guestId: g.id, guestName: g.name ?? "", guestContact: g.phone ?? "" }));
+                }}
+              >
+                <option value="">— Ввести вручную —</option>
+                {venueGuests.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name || g.phone || g.id.slice(0, 8)} {g.type !== "regular" ? `(${GUEST_TYPE_LABELS[g.type]})` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedGuest && (
+              <div className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-sm">
+                <p className="font-medium text-amber-900">Тип гостя: {GUEST_TYPE_LABELS[selectedGuest.type]}</p>
+                {selectedGuest.note?.trim() ? <p className="mt-1 text-amber-800 whitespace-pre-wrap">{selectedGuest.note}</p> : null}
+              </div>
+            )}
             <label className="block">
               <span className="block text-xs text-gray-600">ФИО</span>
               <input className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.guestName ?? ""} onChange={(e) => setEditing((p) => ({ ...p, guestName: e.target.value }))} required />
@@ -465,7 +528,8 @@ export default function AdminBookingsPage() {
             </div>
           </form>
         </div>
-      )}
+        );
+      })()}
 
       <div className="mt-4 overflow-x-auto">
         {loading ? (

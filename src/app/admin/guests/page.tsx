@@ -3,11 +3,12 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import toast from "react-hot-toast";
 import { collection, doc, addDoc, updateDoc, getDoc, query, where, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { StickyNote } from "lucide-react";
 import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
 import type { MessengerChannel } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 const GLOBAL_GUESTS_BATCH = 30;
 const DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -63,16 +64,15 @@ export default function AdminGuestsPage() {
   const [globalScores, setGlobalScores] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const unsubG = onSnapshot(
-      query(collection(db, "guests"), where("venueId", "==", VENUE_ID)),
-      (snap) => {
-        setGuests(snap.docs.map((d) => {
+    const unsubG = onSnapshot(collection(db, "venues", VENUE_ID, "guests"), (snap) => {
+      setGuests(
+        snap.docs.map((d) => {
           const data = d.data();
-          return { id: d.id, ...data, type: (data.type as GuestType) || "regular" } as Guest;
-        }));
-        setLoading(false);
-      }
-    );
+          return { id: d.id, ...data, type: (data.type as GuestType) || "regular", note: data.note as string | undefined } as Guest;
+        })
+      );
+      setLoading(false);
+    });
     return () => unsubG();
   }, []);
 
@@ -94,7 +94,7 @@ export default function AdminGuestsPage() {
   const inHallGuestIds = useMemo(() => new Set(sessions.map((s) => s.guestId).filter(Boolean)), [sessions]);
 
   const visibleGuests = useMemo(() => {
-    return guests.filter((g) => {
+    const filtered = guests.filter((g) => {
       const inHall = inHallGuestIds.has(g.id);
       const own = isOwnType(g);
       const recent = lastVisitWithin7Days(g);
@@ -106,6 +106,8 @@ export default function AdminGuestsPage() {
       if (typeFilter === "blacklisted") return g.type === "blacklisted";
       return true;
     });
+    const typeOrder: Record<GuestType, number> = { constant: 0, favorite: 1, vip: 2, blacklisted: 3, regular: 4 };
+    return [...filtered].sort((a, b) => (typeOrder[a.type ?? "regular"] ?? 4) - (typeOrder[b.type ?? "regular"] ?? 4));
   }, [guests, inHallGuestIds, typeFilter]);
 
   const newGuests = useMemo(() => visibleGuests.filter((g) => g.type === "regular"), [visibleGuests]);
@@ -115,7 +117,7 @@ export default function AdminGuestsPage() {
 
   const convertToOwn = useCallback(async (g: Guest) => {
     try {
-      await updateDoc(doc(db, "guests", g.id), { type: "constant", updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, "venues", VENUE_ID, "guests", g.id), { type: "constant", updatedAt: serverTimestamp() });
       setEditingGuest({ ...g, type: "constant" });
       toast.success("Гость переведён в «Свои». Заполните доп. данные при необходимости.");
     } catch (err) {
@@ -208,7 +210,10 @@ export default function AdminGuestsPage() {
                   <tbody>
                     {newGuests.map((g) => (
                       <tr key={g.id} className="border-b border-gray-100">
-                        <td className="p-3 text-sm">{g.name || g.nickname || g.phone || g.id.slice(0, 8)}</td>
+                        <td className="p-3 text-sm flex items-center gap-1.5">
+                          {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
+                          {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
+                        </td>
                         <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
                         <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
                         <td className="p-3 flex flex-wrap gap-1">
@@ -240,7 +245,10 @@ export default function AdminGuestsPage() {
                   <tbody>
                     {ownGuests.map((g) => (
                       <tr key={g.id} className="border-b border-gray-100">
-                        <td className="p-3 text-sm">{g.name || g.nickname || g.phone || g.id.slice(0, 8)}</td>
+                        <td className="p-3 text-sm flex items-center gap-1.5">
+                          {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
+                          {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
+                        </td>
                         <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
                         <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
                         <td className="p-3 text-xs">{inHallGuestIds.has(g.id) ? "Да" : "—"}</td>
@@ -268,7 +276,8 @@ export default function AdminGuestsPage() {
             <tbody>
               {visibleGuests.map((g) => (
                 <tr key={g.id} className="border-b border-gray-100">
-                  <td className="p-3 text-sm">
+                  <td className="p-3 text-sm flex items-center gap-1.5">
+                    {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
                     {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                   </td>
                   <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
@@ -318,6 +327,7 @@ function GuestCardModal({
   const [birthday, setBirthday] = useState(guest?.birthday ?? "");
   const [phone, setPhone] = useState(guest?.phone ?? "");
   const [type, setType] = useState<GuestType>(guest?.type ?? "regular");
+  const [note, setNote] = useState(guest?.note ?? "");
   const [channelIds, setChannelIds] = useState<Record<MessengerChannel, string>>({
     telegram: guest?.tgId ?? "",
     whatsapp: guest?.waId ?? "",
@@ -349,12 +359,14 @@ function GuestCardModal({
     e.preventDefault();
     setSaving(true);
     try {
+      const venueId = VENUE_ID;
       const payload: Record<string, unknown> = {
         name: name.trim() || null,
         gender: gender || null,
         birthday: birthday || null,
         phone: phone.trim() || null,
         type,
+        note: note.trim() || null,
         venueId,
         tgId: channelIds.telegram.trim() || null,
         waId: channelIds.whatsapp.trim() || null,
@@ -367,10 +379,10 @@ function GuestCardModal({
         updatedAt: serverTimestamp(),
       };
       if (guest?.id) {
-        await updateDoc(doc(db, "guests", guest.id), payload);
+        await updateDoc(doc(db, "venues", venueId, "guests", guest.id), payload);
         toast.success("Гость сохранён");
       } else {
-        await addDoc(collection(db, "guests"), { ...payload, venueId, createdAt: serverTimestamp() });
+        await addDoc(collection(db, "venues", venueId, "guests"), { ...payload, createdAt: serverTimestamp() });
         toast.success("Гость добавлен");
       }
       onSaved();
@@ -440,6 +452,10 @@ function GuestCardModal({
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-gray-600">Примечание</span>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm min-h-[80px]" placeholder="Заметка о госте для бронирования и дашборда" />
           </label>
           {guest?.id && (
             <div className="block">
