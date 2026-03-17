@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 type VenueMenuConfig = {
   menuLink?: string;

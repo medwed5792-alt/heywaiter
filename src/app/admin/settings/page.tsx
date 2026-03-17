@@ -1,32 +1,22 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { SettingsHallsSection } from "./SettingsHallsSection";
 import { SettingsMenuSection } from "./SettingsMenuSection";
 import { SettingsGeoSection } from "./SettingsGeoSection";
 import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
 
+const VENUE_ID = "venue_andrey_alt";
+
 function SettingsContent() {
-  const searchParams = useSearchParams();
-  const fromUrl = (searchParams.get("v") || searchParams.get("venueId") || "").trim();
-  const [fromStorage, setFromStorage] = useState<string | null>(null);
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setFromStorage(localStorage.getItem("lastVenueId"));
-    }
-  }, []);
-  const currentVenueId =
-    (fromUrl && fromUrl !== "current" ? fromUrl : null) || fromStorage || "current";
-  const hasVenue = Boolean(currentVenueId);
-  const venueIdFromStorage = Boolean(fromStorage && currentVenueId === fromStorage);
+  const currentVenueId = VENUE_ID;
+  const hasVenue = true;
+  const venueIdFromStorage = false;
 
   return (
     <div className="max-w-4xl">
       <h2 className="text-lg font-semibold text-gray-900">Настройки</h2>
-      {venueIdFromStorage && currentVenueId ? (
-        <p className="mt-1 text-xs text-gray-500">Настройки для заведения: {currentVenueId}</p>
-      ) : null}
+      <p className="mt-1 text-xs text-gray-500">Настройки для заведения: {currentVenueId}</p>
       <p className="mt-2 text-sm text-gray-600">
         Залы и столы, меню заведения, гео-периметр. Все данные сохраняются в Firestore под venueId.
       </p>
@@ -36,7 +26,7 @@ function SettingsContent() {
         <SettingsOperatingHoursSection
           finalVenueId={currentVenueId}
           hasVenue={hasVenue}
-          venueIdSource={venueIdFromStorage ? "localStorage" : fromUrl ? "url" : null}
+          venueIdSource={null}
         />
       </section>
 

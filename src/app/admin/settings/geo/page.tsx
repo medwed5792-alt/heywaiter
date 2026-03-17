@@ -6,7 +6,7 @@ import { db } from "@/lib/firebase";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import type { VenueGeo, StaffLiveGeo } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";

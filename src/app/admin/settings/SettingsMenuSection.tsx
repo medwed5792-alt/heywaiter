@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /** Ссылка на внешнее облачное хранилище (Google Диск, PDF и т.д.). При нажатии гостем кнопки «Меню» в Mini App происходит переход по этой ссылке в браузере. */
 type VenueMenuConfig = {

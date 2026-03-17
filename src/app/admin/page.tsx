@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import {
   collection,
@@ -96,6 +95,8 @@ interface OperatingDay {
   working: boolean;
   openTime: string;
   closeTime: string;
+  /** Принудительно открыто (кнопка «ОТКРЫТЬ ПРИНУДИТЕЛЬНО») */
+  isOpen?: boolean;
 }
 
 type OperatingHours = Record<DayKey, OperatingDay>;
@@ -191,14 +192,7 @@ function EventSkeleton() {
 }
 
 function AdminDashboardContent() {
-  const searchParams = useSearchParams();
-  const venueId = (searchParams.get("v") || searchParams.get("venueId") || "venue_andrey_alt").trim() || "venue_andrey_alt";
-
-  useEffect(() => {
-    if (venueId && venueId !== "venue_andrey_alt" && typeof window !== "undefined") {
-      localStorage.setItem("lastVenueId", venueId);
-    }
-  }, [venueId]);
+  const venueId = "venue_andrey_alt";
 
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
@@ -227,6 +221,7 @@ function AdminDashboardContent() {
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
   const [confirmEndOfDayOpen, setConfirmEndOfDayOpen] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
+  const [forceOpenSaving, setForceOpenSaving] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
   const migrationTablesDoneRef = useRef(false);
   const autoResetDoneRef = useRef(false);
@@ -386,12 +381,12 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueType]);
 
-  // Миграция (один раз): прописать всем столам в корневой коллекции tables venueId: venue_andrey_alt
+  // Миграция (один раз): столы с venueId === "current" переписать на venue_andrey_alt
   useEffect(() => {
     if (migrationTablesDoneRef.current) return;
     migrationTablesDoneRef.current = true;
     let cancelled = false;
-    getDocs(collection(db, "tables"))
+    getDocs(query(collection(db, "tables"), where("venueId", "==", "current")))
       .then((snap) => {
         if (cancelled || snap.empty) return;
         return Promise.all(
@@ -890,13 +885,15 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
-  /** Заведение закрыто, если сейчас не внутри [openTime, closeTime) для сегодняшнего дня недели */
+  /** Заведение закрыто только если есть график, день настроен, и время вне диапазона; при isOpen — всегда открыто */
   const isVenueClosedBySchedule = useMemo(() => {
-    if (!operatingHours) return false;
     const now = new Date();
     const dayKey = getTodayKey(now);
+    if (!operatingHours) return false; // нет настроек — считаем открытым, баннер не показываем
     const today = operatingHours[dayKey];
-    if (!today || !today.working) return true;
+    if (!today) return false;
+    if (today.isOpen === true) return false; // принудительно открыто
+    if (!today.working) return true;
     const open = parseTimeToToday(now, today.openTime);
     const close = parseTimeToToday(now, today.closeTime);
     if (!open || !close) return false;
@@ -910,6 +907,34 @@ function AdminDashboardContent() {
     }
     return t < openMs || t >= closeMs;
   }, [operatingHours]);
+
+  const handleForceOpenNow = useCallback(async () => {
+    setForceOpenSaving(true);
+    try {
+      const now = new Date();
+      const dayKey = getTodayKey(now);
+      const ref = doc(db, "venues", DASHBOARD_VENUE_ID);
+      const snap = await getDoc(ref);
+      const current = (snap.exists() ? snap.data()?.operatingHours : null) as OperatingHours | null | undefined;
+      const next: OperatingHours = current
+        ? { ...current, [dayKey]: { ...(current[dayKey] ?? { working: true, openTime: "00:01", closeTime: "23:00" }), isOpen: true } }
+        : ({ [dayKey]: { working: true, openTime: "00:01", closeTime: "23:00", isOpen: true } } as OperatingHours);
+      if (!current) {
+        const defaultDay: OperatingDay = { working: true, openTime: "09:00", closeTime: "23:00" };
+        (["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const).forEach((k) => {
+          if (!next[k]) (next as any)[k] = { ...defaultDay };
+        });
+      }
+      await setDoc(ref, { operatingHours: next, updatedAt: serverTimestamp() }, { merge: true });
+      setOperatingHours(next);
+      setForceOpen(true);
+      toast.success("Заведение открыто принудительно");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setForceOpenSaving(false);
+    }
+  }, []);
 
   const isEffectivelyClosed = isVenueClosedBySchedule && !forceOpen;
   const shouldShowForceEndOfDay = useMemo(
@@ -943,10 +968,11 @@ function AdminDashboardContent() {
           <p className="text-sm font-medium text-amber-900">Заведение по графику закрыто.</p>
           <button
             type="button"
-            onClick={() => setForceOpen(true)}
-            className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors"
+            disabled={forceOpenSaving}
+            onClick={handleForceOpenNow}
+            className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
           >
-            ОТКРЫТЬ ЗАВЕДЕНИЕ ПРИНУДИТЕЛЬНО
+            {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ЗАВЕДЕНИЕ ПРИНУДИТЕЛЬНО"}
           </button>
         </div>
       )}
@@ -974,8 +1000,16 @@ function AdminDashboardContent() {
             <TableSkeleton />
           </>
         ) : venueType === "full_service" && tables.length === 0 ? (
-          <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
-            Заведение пустое. Создайте столы и добавьте команду.
+          <div className="col-span-full flex flex-col items-center justify-center gap-4 rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
+            <p>Заведение пустое. Создайте столы и добавьте команду.</p>
+            <button
+              type="button"
+              disabled={forceOpenSaving}
+              onClick={handleForceOpenNow}
+              className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
+            >
+              {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ПРИНУДИТЕЛЬНО"}
+            </button>
           </div>
         ) : venueType === "full_service" ? (
           <>

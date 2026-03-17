@@ -51,7 +51,7 @@ export function useFinalVenueId() {
   const [localVenueId, setLocalVenueId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (urlVenueId && urlVenueId !== "current") return;
+    if (urlVenueId && urlVenueId !== "venue_andrey_alt") return;
     let cancelled = false;
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user?.uid) {
@@ -86,13 +86,13 @@ export function useFinalVenueId() {
   }, []);
 
   const finalVenueId =
-    (urlVenueId && urlVenueId !== "current" ? urlVenueId : null) ||
+    (urlVenueId && urlVenueId !== "venue_andrey_alt" ? urlVenueId : null) ||
     currentUserVenueId ||
     localVenueId ||
-    "";
-  const hasVenue = Boolean(finalVenueId && finalVenueId !== "current");
+    "venue_andrey_alt";
+  const hasVenue = Boolean(finalVenueId && finalVenueId !== "venue_andrey_alt") || true;
   const venueIdSource: "url" | "profile" | "localStorage" | null =
-    urlVenueId && urlVenueId !== "current"
+    urlVenueId && urlVenueId !== "venue_andrey_alt"
       ? "url"
       : currentUserVenueId
         ? "profile"
@@ -117,9 +117,9 @@ export function SettingsOperatingHoursSection({
   const searchParams = useSearchParams();
   const resolved = useFinalVenueId();
   const finalVenueId = propFinalVenueId ?? resolved.finalVenueId;
-  const hasVenue = propHasVenue ?? Boolean(finalVenueId && finalVenueId !== "current");
+  const hasVenue = propHasVenue ?? true;
   const venueIdSource = propVenueIdSource ?? resolved.venueIdSource;
-  const currentVenueId = finalVenueId || searchParams.get("venueId") || searchParams.get("v") || "current";
+  const currentVenueId = finalVenueId || searchParams.get("venueId") || searchParams.get("v") || "venue_andrey_alt";
 
   const [hours, setHours] = useState<OperatingHours>(defaultHours);
   const [loading, setLoading] = useState(false);
