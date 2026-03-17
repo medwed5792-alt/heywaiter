@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     const platform = typeof body.platform === "string" ? body.platform.trim() : "tg";
     const platformId = typeof body.platformId === "string" ? body.platformId.trim() : "";
-    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "current";
+    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "venue_andrey_alt";
 
     if (!phone || !platformId) {
       return NextResponse.json(

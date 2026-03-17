@@ -19,7 +19,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { Booking } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 const LATE_NOTIFY_INTERVAL_MS = 15 * 60 * 1000; // 15 мин
 
 function toStartAt(date: string, startTime: string): Date {

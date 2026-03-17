@@ -5,7 +5,7 @@ import { collection, doc, getDoc, getDocs, query, where } from "firebase/firesto
 import { db } from "@/lib/firebase";
 import type { Staff, GlobalUser } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /**
  * GET /api/admin/team

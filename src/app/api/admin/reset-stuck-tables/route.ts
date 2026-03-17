@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 const STUCK_AGE_MS = 2 * 60 * 60 * 1000; // 2 часа
 
 /**

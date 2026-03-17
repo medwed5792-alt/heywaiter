@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     console.log("SENDING OFFER TO:", body);
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "current";
+    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "venue_andrey_alt";
     const tgId = typeof body.tgId === "string" ? body.tgId.trim() : "";
     const firstName = typeof body.firstName === "string" ? body.firstName.trim() : null;
     const lastName = typeof body.lastName === "string" ? body.lastName.trim() : null;

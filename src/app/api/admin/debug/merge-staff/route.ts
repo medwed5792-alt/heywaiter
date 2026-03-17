@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const venueId = (keepData.venueId as string) || "current";
+    const venueId = (keepData.venueId as string) || "venue_andrey_alt";
     const venueSourceStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(sourceId);
     batch.set(
       venueSourceStaffRef,

@@ -105,14 +105,27 @@ export async function GET(request: NextRequest) {
     const id = snap.id;
     const d = snap.data() ?? {};
     const userId = (d.userId as string) || (d.tgId as string) || telegramId;
+    const resolvedVenueId = (d.venueId as string) ?? venueId;
+
+    // onShift только из venues/venueId/staff (единая точка с Дашбордом)
+    let onShift = false;
+    let shiftStartTime: string | null = null;
+    let shiftEndTime: string | null = null;
+    const venueStaffSnap = await firestore.collection("venues").doc(resolvedVenueId).collection("staff").doc(id).get();
+    if (venueStaffSnap.exists) {
+      const vd = venueStaffSnap.data() ?? {};
+      onShift = vd.onShift === true;
+      shiftStartTime = (vd.shiftStartTime as { toDate?: () => Date })?.toDate?.()?.toISOString?.() ?? null;
+      shiftEndTime = (vd.shiftEndTime as { toDate?: () => Date })?.toDate?.()?.toISOString?.() ?? null;
+    }
 
     return NextResponse.json({
       userId,
       staffId: id,
-      venueId: d.venueId ?? venueId,
-      onShift: d.onShift === true,
-      shiftStartTime: (d.shiftStartTime as { toDate?: () => Date })?.toDate?.()?.toISOString?.() ?? null,
-      shiftEndTime: (d.shiftEndTime as { toDate?: () => Date })?.toDate?.()?.toISOString?.() ?? null,
+      venueId: resolvedVenueId,
+      onShift,
+      shiftStartTime,
+      shiftEndTime,
     });
   } catch (err) {
     console.error("[staff/me]", err);

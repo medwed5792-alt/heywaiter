@@ -5,7 +5,7 @@ import { collection, query, where, getDocs, orderBy, limit } from "firebase/fire
 import { db } from "@/lib/firebase";
 import type { Review } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;

@@ -9,7 +9,7 @@ import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /** Подписи ролей для UI (расширяемый список) */
 const ROLE_LABELS: Partial<Record<string, string>> = {
@@ -65,7 +65,7 @@ function factHoursFromCheckInOut(checkIn?: string, checkOut?: string): number | 
 function normalizeEntry(d: { id: string; data: () => Record<string, unknown> }): ScheduleEntry {
   const data = d.data() ?? {};
   const id = d.id;
-  const venueId = (data?.venueId as string) || "current";
+  const venueId = (data?.venueId as string) || VENUE_ID;
   const staffId = (data?.staffId as string) ?? "";
   const date = (data?.date as string) ?? todayISO();
   const planHours = (data?.planHours as number) ?? 0;

@@ -10,7 +10,7 @@ import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, Me
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /** Тип поиска: номер телефона или одна из соцсетей (совпадает с API). */
 type LookupSearchType = "phone" | keyof Pick<UnifiedIdentities, "tg" | "wa" | "vk" | "viber" | "wechat" | "inst" | "fb" | "line">;

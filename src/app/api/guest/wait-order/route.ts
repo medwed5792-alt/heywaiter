@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /**
  * POST /api/guest/wait-order

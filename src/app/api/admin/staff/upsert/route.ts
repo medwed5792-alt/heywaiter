@@ -6,7 +6,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { findExistingUserIdByIdentities, findUserIdByIdentityKey } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /** Номер телефона в БД — только цифры (без +, скобок, пробелов). */
 function cleanPhone(value: string | undefined | null): string {

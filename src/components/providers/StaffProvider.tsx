@@ -3,7 +3,7 @@
 /**
  * StaffProvider — централизованное состояние сотрудника (Unified ID V.2.0).
  * Хранит текущее заведение, данные из /api/staff/me и список заведений из /api/staff/venues.
- * Восстановление currentVenueId из sessionStorage; при v=current — загрузка списка и выбор.
+ * Восстановление currentVenueId из sessionStorage; при v=venue_andrey_alt — загрузка списка и выбор.
  */
 
 import {
@@ -17,7 +17,7 @@ import {
 } from "react";
 
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
-const DEFAULT_VENUE_ID = "current";
+const DEFAULT_VENUE_ID = "venue_andrey_alt";
 
 function getTelegramUserId(): string | null {
   if (typeof window === "undefined") return null;
@@ -91,7 +91,7 @@ export function useStaff(): StaffContextValue {
 
 interface StaffProviderProps {
   children: ReactNode;
-  /** Значение v из URL (mini-app/staff?v=...). "current" или конкретный venueId. */
+  /** Значение v из URL (mini-app/staff?v=...). По умолчанию venue_andrey_alt. */
   initialVenueFromUrl?: string | null;
 }
 

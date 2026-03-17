@@ -15,7 +15,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { GuestType } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 const SCALE = 0.75;
 
 function toMillis(v: unknown): number | null {

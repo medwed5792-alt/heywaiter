@@ -6,7 +6,7 @@ import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Order } from "@/lib/types";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /** Проигрывает короткий звуковой сигнал при появлении нового заказа */
 function useNewOrderSound(pendingCount: number) {

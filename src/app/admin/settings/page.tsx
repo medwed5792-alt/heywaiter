@@ -9,25 +9,17 @@ import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
 const VENUE_ID = "venue_andrey_alt";
 
 function SettingsContent() {
-  const currentVenueId = VENUE_ID;
-  const hasVenue = true;
-  const venueIdFromStorage = false;
-
   return (
     <div className="max-w-4xl">
       <h2 className="text-lg font-semibold text-gray-900">Настройки</h2>
-      <p className="mt-1 text-xs text-gray-500">Настройки для заведения: {currentVenueId}</p>
+      <p className="mt-1 text-xs text-gray-500">Заведение: {VENUE_ID}</p>
       <p className="mt-2 text-sm text-gray-600">
-        Залы и столы, меню заведения, гео-периметр. Все данные сохраняются в Firestore под venueId.
+        Залы и столы, меню заведения, гео-периметр. Все данные сохраняются в Firestore.
       </p>
 
       <section className="mt-6">
         <h3 className="text-base font-medium text-gray-900">0. Режим работы</h3>
-        <SettingsOperatingHoursSection
-          finalVenueId={currentVenueId}
-          hasVenue={hasVenue}
-          venueIdSource={null}
-        />
+        <SettingsOperatingHoursSection />
       </section>
 
         <section className="mt-6">

@@ -5,7 +5,7 @@ import { notifyOrderReadyEdge } from "@/lib/notify-order-ready-edge";
 
 export const runtime = "edge";
 
-const VENUE_ID = "current";
+const VENUE_ID = "venue_andrey_alt";
 
 /**
  * POST /api/admin/delivery/notify
