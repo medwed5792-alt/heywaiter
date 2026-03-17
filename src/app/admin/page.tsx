@@ -495,10 +495,10 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     if (!venueType) return;
-    const unsub = onSnapshot(
-      query(collection(db, "staff"), where("venueId", "==", venueId), where("active", "==", true)),
-      (snap) => {
-        const list: StaffWithTables[] = snap.docs.map((d) => {
+    const unsub = onSnapshot(collection(db, "venues", venueId, "staff"), (snap) => {
+      const list: StaffWithTables[] = snap.docs
+        .filter((d) => d.data().active !== false)
+        .map((d) => {
           const data = d.data();
           const firstName = (data.firstName as string) ?? "";
           const lastName = (data.lastName as string) ?? "";
@@ -511,9 +511,8 @@ function AdminDashboardContent() {
             onShift: data.onShift === true,
           };
         });
-        setStaffList(list);
-      }
-    );
+      setStaffList(list);
+    });
     return () => unsub();
   }, [venueType]);
 

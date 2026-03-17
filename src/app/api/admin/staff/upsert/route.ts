@@ -2,11 +2,54 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import type { DocumentReference } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { findExistingUserIdByIdentities, findUserIdByIdentityKey } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 
 const VENUE_ID = "venue_andrey_alt";
+
+/** Синхронизирует назначение столов: в venues/VENUE_ID/tables у каждого выбранного стола — assignments.waiter = staffDocId; у снятых — удаляем waiter. */
+async function syncTableAssignments(
+  firestore: ReturnType<typeof getAdminFirestore>,
+  staffDocId: string,
+  assignedTableIds: string[],
+  previousAssignedTableIds: string[]
+): Promise<void> {
+  const tablesRef = firestore.collection("venues").doc(VENUE_ID).collection("tables");
+  const toAssign = new Set(assignedTableIds);
+  const toClear = previousAssignedTableIds.filter((id) => !toAssign.has(id));
+
+  const refsToClear: DocumentReference[] = [];
+  for (const tableId of toClear) {
+    const ref = tablesRef.doc(tableId);
+    const snap = await ref.get();
+    const waiter = (snap.data()?.assignments as { waiter?: string } | undefined)?.waiter;
+    if (waiter === staffDocId) refsToClear.push(ref);
+  }
+
+  const BATCH_MAX = 450;
+  const writes: Array<{ ref: DocumentReference; type: "set" | "update" }> = [];
+  for (const tableId of assignedTableIds) {
+    writes.push({ ref: tablesRef.doc(tableId), type: "set" });
+  }
+  for (const ref of refsToClear) {
+    writes.push({ ref, type: "update" });
+  }
+
+  for (let i = 0; i < writes.length; i += BATCH_MAX) {
+    const batch = firestore.batch();
+    const chunk = writes.slice(i, i + BATCH_MAX);
+    for (const w of chunk) {
+      if (w.type === "set") {
+        batch.set(w.ref, { assignments: { waiter: staffDocId }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      } else {
+        batch.update(w.ref, { "assignments.waiter": FieldValue.delete(), updatedAt: FieldValue.serverTimestamp() });
+      }
+    }
+    await batch.commit();
+  }
+}
 
 /** Номер телефона в БД — только цифры (без +, скобок, пробелов). */
 function cleanPhone(value: string | undefined | null): string {
@@ -162,9 +205,12 @@ export async function POST(request: NextRequest) {
 
       const venueStaffRef = firestore.collection("venues").doc(VENUE_ID).collection("staff").doc(staffId);
       await venueStaffRef.set(
-        { ...(staffPhone != null && { phone: staffPhone }), updatedAt: FieldValue.serverTimestamp() },
+        { ...(staffPhone != null && { phone: staffPhone }), assignedTableIds, updatedAt: FieldValue.serverTimestamp() },
         { merge: true }
       );
+
+      const previousTableIds = (staffData.assignedTableIds as string[] | undefined) ?? [];
+      await syncTableAssignments(firestore, staffId, assignedTableIds, previousTableIds);
 
       return NextResponse.json({ ok: true, staffId });
     }
@@ -284,6 +330,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    await syncTableAssignments(firestore, linkId, assignedTableIds, []);
     return NextResponse.json({ ok: true, staffId: linkId });
   } catch (err) {
     console.error("[staff/upsert] Error:", err);

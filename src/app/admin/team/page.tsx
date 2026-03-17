@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { collection, doc, getDoc, getDocs, onSnapshot, query, where, writeBatch, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Phone, BookOpen } from "lucide-react";
 import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, MedicalCard } from "@/lib/types";
@@ -287,42 +287,6 @@ export default function TeamPage() {
   const [offerLoading, setOfferLoading] = useState(false);
   const [offerStatus, setOfferStatus] = useState<{ status: string | null; staffId: string | null } | null>(null);
   const [cancelOfferLoading, setCancelOfferLoading] = useState(false);
-  const [migrateStaffLoading, setMigrateStaffLoading] = useState(false);
-
-  const migrateStaff = useCallback(async () => {
-    setMigrateStaffLoading(true);
-    try {
-      const snap = await getDocs(collection(db, "venues", "current", "staff"));
-      if (snap.empty) {
-        toast.success("В старой папке нет сотрудников для переноса");
-        return;
-      }
-      const docs = snap.docs;
-      const BATCH_SIZE = 450;
-      let migrated = 0;
-      for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-        const batch = writeBatch(db);
-        const chunk = docs.slice(i, i + BATCH_SIZE);
-        chunk.forEach((d) => {
-          const data = d.data() as Record<string, unknown>;
-          const ref = doc(db, "venues", VENUE_ID, "staff", d.id);
-          batch.set(ref, {
-            ...data,
-            venueId: VENUE_ID,
-            updatedAt: serverTimestamp(),
-          }, { merge: true });
-        });
-        await batch.commit();
-        migrated += chunk.length;
-      }
-      toast.success(`Перенесено сотрудников: ${migrated}`);
-    } catch (e) {
-      console.error(e);
-      toast.error(e instanceof Error ? e.message : "Ошибка миграции");
-    } finally {
-      setMigrateStaffLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     setOfferLoading(false);
@@ -707,16 +671,6 @@ export default function TeamPage() {
       <p className="mt-2 text-sm text-gray-600">
         Управление штатом заведения: только сотрудники, привязанные к этому venue. «Отвязать» — снятие связи с заведением (причина увольнения сохраняется в глобальный профиль в архив).
       </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={migrateStaffLoading}
-          onClick={migrateStaff}
-          className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-        >
-          {migrateStaffLoading ? "Перенос…" : "Перенести сотрудников из venues/current"}
-        </button>
-      </div>
 
       <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50/50 p-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
