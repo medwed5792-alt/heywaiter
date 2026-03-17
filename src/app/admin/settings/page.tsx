@@ -117,17 +117,22 @@ function SettingsContent() {
         <SettingsOperatingHoursSection />
       </section>
 
-        <section className="mt-6">
-          <h3 className="text-base font-medium text-gray-900">2. Залы и столы</h3>
-          <SettingsHallsSection />
-        </section>
+      <section className="mt-6 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-medium text-gray-900">2. Залы и столы</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Управление залами, столами и QR-кодами. Данные хранятся в Firestore в коллекциях
+          <span className="font-mono"> venues/venue_andrey_alt/halls</span> и
+          <span className="font-mono"> venues/venue_andrey_alt/tables</span>.
+        </p>
+        <SettingsHallsSection />
+      </section>
 
-        <section className="mt-8">
-          <h3 className="text-base font-medium text-gray-900">3. Меню заведения</h3>
-          <SettingsMenuSection />
-        </section>
+      <section className="mt-8 border-t border-gray-200 pt-6">
+        <h3 className="text-base font-medium text-gray-900">3. Меню заведения</h3>
+        <SettingsMenuSection />
+      </section>
 
-      <section className="mt-8">
+      <section className="mt-8 border-t border-gray-200 pt-6">
         <h3 className="text-base font-medium text-gray-900">4. Гео-периметр (GPS)</h3>
         <SettingsGeoSection />
       </section>
