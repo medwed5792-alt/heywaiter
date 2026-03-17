@@ -100,6 +100,11 @@ function phoneDigits(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
+/** Для сравнения стола: убираем «Стол», оставляем только цифры. */
+function tableNumberDigits(value: string | number | undefined): string {
+  return String(value ?? "").replace(/\s/g, "").replace(/Стол/gi, "").replace(/\D/g, "");
+}
+
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 interface DayHours {
   openTime: string;
@@ -587,17 +592,23 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
-  /** Брони по venue_andrey_alt и выбранной дате (selectedDate/gridDate). Синхронизация: фильтр по дате вверху страницы. */
+  /** Брони по venue_andrey_alt и выбранной дате. Фильтрация по столу — только по цифрам (без «Стол»). */
   const filteredBookingsForGrid = useMemo(() => {
     let list = bookings.filter((b) => b.venueId === VENUE_ID && b.date === selectedDate && b.status !== "cancelled");
     if (filterTableId) {
       const selTable = venueTables.find((t) => t.id === filterTableId);
+      const selIdDigits = tableNumberDigits(filterTableId);
+      const selNumDigits = selTable ? tableNumberDigits(selTable.number) : "";
+      const tableIdStr = String(filterTableId).trim();
+      const tableNumStr = selTable ? String(selTable.number).trim() : "";
       list = list.filter((b) => {
-        const tid = String(b.tableId ?? "").trim();
-        const tnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
-        const tableIdStr = String(filterTableId).trim();
-        const tableNumStr = selTable ? String(selTable.number).trim() : "";
-        return tid === tableIdStr || tnum === tableIdStr || (tableNumStr !== "" && tnum === tableNumStr);
+        const bTid = tableNumberDigits(b.tableId);
+        const bNum = tableNumberDigits((b as BookingWithMeta).tableNumber);
+        const rawTid = String(b.tableId ?? "").trim();
+        const rawTnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
+        const byDigits = (selIdDigits !== "" && (bTid === selIdDigits || bNum === selIdDigits)) || (selNumDigits !== "" && (bTid === selNumDigits || bNum === selNumDigits));
+        const byRaw = rawTid === tableIdStr || rawTnum === tableIdStr || (tableNumStr !== "" && rawTnum === tableNumStr);
+        return byDigits || byRaw;
       });
     }
     if (filterPhone.trim()) {
@@ -738,9 +749,9 @@ export default function AdminBookingsPage() {
                       type="button"
                       onClick={() => dismissVenueEvent(ev.id)}
                       className="rounded border border-red-400 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                      title="Удалить событие из Firestore навсегда"
+                      title="Удалить событие из Firestore (venues/venue_andrey_alt/events)"
                     >
-                      ОТМЕНИТЬ
+                      ОТМЕНИТЬ ЛПР
                     </button>
                   </li>
                 ))}
@@ -939,11 +950,17 @@ export default function AdminBookingsPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {venueTables.map((table) => {
               const tableBookings = filteredBookingsForGrid.filter((b) => {
-                const tid = String(b.tableId ?? "").trim();
-                const tnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
+                const bTid = tableNumberDigits(b.tableId);
+                const bNum = tableNumberDigits((b as BookingWithMeta).tableNumber);
+                const tIdDigits = tableNumberDigits(table.id);
+                const tNumDigits = tableNumberDigits(table.number);
+                const byDigits = (tIdDigits !== "" && (bTid === tIdDigits || bNum === tIdDigits)) || (tNumDigits !== "" && (bTid === tNumDigits || bNum === tNumDigits));
+                const rawTid = String(b.tableId ?? "").trim();
+                const rawTnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
                 const tableIdStr = String(table.id ?? "").trim();
                 const tableNumStr = String(table.number ?? "").trim();
-                return tid === tableIdStr || tnum === tableIdStr || tnum === tableNumStr || String(b.tableNumber ?? "").trim() === String(table.id).trim();
+                const byRaw = rawTid === tableIdStr || rawTnum === tableIdStr || rawTnum === tableNumStr;
+                return byDigits || byRaw;
               });
               const tableHasSearchMatch = !hasSearchFilter || tableBookings.length > 0;
               return (
@@ -955,6 +972,8 @@ export default function AdminBookingsPage() {
                   <div className="mt-2 space-y-1.5">
                     {buildTimelineSegments(tableBookings, selectedDate, dayStart, dayEnd).map((seg, idx) => {
                       if (seg.type === "free") {
+                        const isFirstSlot = seg.startTime === dayStart;
+                        const label = isFirstSlot ? "До" : "После";
                         return (
                           <button
                             key={`free-${idx}-${seg.startTime}`}
@@ -975,7 +994,8 @@ export default function AdminBookingsPage() {
                             }}
                             className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-100 px-2 py-2 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-200"
                           >
-                            --:--
+                            <span className="font-medium">{label}</span>
+                            <span className="ml-1 text-xs">{seg.startTime} – {seg.endTime}</span>
                           </button>
                         );
                       }
@@ -992,7 +1012,7 @@ export default function AdminBookingsPage() {
                               : "border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100"
                           }`}
                         >
-                          {b.startTime ?? "--:--"}
+                          {b.startTime ?? ""}
                         </button>
                       );
                     })}

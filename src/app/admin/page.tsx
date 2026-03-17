@@ -936,7 +936,7 @@ function AdminDashboardContent() {
       {venueType === "full_service" && (
         <section className="mt-8 w-full">
           <h3 className="text-base font-semibold text-gray-900">События на смене</h3>
-          <p className="mt-1 text-sm text-gray-500">Новые события сверху. «ОТМЕНИТЬ» — удаляет событие из Firestore навсегда.</p>
+          <p className="mt-1 text-sm text-gray-500">Новые события сверху. Кнопка «ОК» — подтверждение.</p>
           {feedLoading ? (
             <div className="mt-3 space-y-2">
               <EventSkeleton />
@@ -1042,11 +1042,10 @@ function AdminDashboardContent() {
                           ? "ml-4 shrink-0 px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 transition-colors text-xs font-semibold"
                           : isEmergency
                           ? "shrink-0 rounded-lg border-2 border-red-600 bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
-                          : "shrink-0 rounded-lg border border-red-400 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                          : "shrink-0 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                       }
-                      title={!isBookingReminder && !isEmergency ? "Удалить событие из Firestore (venues/venue_andrey_alt/events)" : undefined}
                     >
-                      {isBookingReminder ? "ОК" : isEmergency ? "Принято" : "ОТМЕНИТЬ"}
+                      {isEmergency ? "Принято" : "ОК"}
                     </button>
                   </li>
                 );
