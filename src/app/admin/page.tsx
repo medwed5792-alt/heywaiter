@@ -197,6 +197,8 @@ function AdminDashboardContent() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [tables, setTables] = useState<TableRow[]>([]);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tablesLoadedOnce, setTablesLoadedOnce] = useState(false);
   const [occupiedCount, setOccupiedCount] = useState(0);
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
   const [activeBookings, setActiveBookings] = useState<BookingOnTable[]>([]);
@@ -222,6 +224,8 @@ function AdminDashboardContent() {
   const [confirmEndOfDayOpen, setConfirmEndOfDayOpen] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
   const [forceOpenSaving, setForceOpenSaving] = useState(false);
+  const [migrationLoading, setMigrationLoading] = useState(false);
+  const [firestoreIndexError, setFirestoreIndexError] = useState<string | null>(null);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
   const migrationTablesDoneRef = useRef(false);
   const autoResetDoneRef = useRef(false);
@@ -325,31 +329,40 @@ function AdminDashboardContent() {
     if (!venueType || venueType !== "full_service") return;
     let cancelled = false;
     (async () => {
-      const [venueTablesSnap, rootTablesSnap] = await Promise.all([
-        getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables")),
-        getDocs(query(collection(db, "tables"), where("venueId", "==", DASHBOARD_VENUE_ID))),
-      ]);
-      if (cancelled) return;
-      const fromVenue = venueTablesSnap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          number: (data.number as number) ?? 0,
-          hallId: data.hallId as string | undefined,
-          name: data.name as string | undefined,
-        };
-      });
-      const fromRoot = rootTablesSnap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          number: (data.number as number) ?? 0,
-          hallId: data.hallId as string | undefined,
-          name: data.name as string | undefined,
-        };
-      });
-      const list = fromVenue.length ? fromVenue : fromRoot;
-      setTables(list);
+      setTablesLoading(true);
+      try {
+        const [venueTablesSnap, rootTablesSnap] = await Promise.all([
+          getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables")),
+          getDocs(query(collection(db, "tables"), where("venueId", "==", DASHBOARD_VENUE_ID))),
+        ]);
+        if (cancelled) return;
+        const fromVenue = venueTablesSnap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            number: (data.number as number) ?? 0,
+            hallId: data.hallId as string | undefined,
+            name: data.name as string | undefined,
+          };
+        });
+        const fromRoot = rootTablesSnap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            number: (data.number as number) ?? 0,
+            hallId: data.hallId as string | undefined,
+            name: data.name as string | undefined,
+          };
+        });
+        const list = fromVenue.length ? fromVenue : fromRoot;
+        setTables(list);
+        setTablesLoadedOnce(true);
+      } catch (e) {
+        console.error("[admin/dashboard] tables load error:", e);
+        setTablesLoadedOnce(true);
+      } finally {
+        if (!cancelled) setTablesLoading(false);
+      }
     })();
     return () => {
       cancelled = true;
@@ -381,28 +394,78 @@ function AdminDashboardContent() {
     return () => unsub();
   }, [venueType]);
 
-  // Миграция (один раз): столы с venueId === "current" переписать на venue_andrey_alt
+  // Миграция (одноразовая кнопка): перенести tables из venues/current/tables в venues/venue_andrey_alt/tables
   useEffect(() => {
-    if (migrationTablesDoneRef.current) return;
-    migrationTablesDoneRef.current = true;
-    let cancelled = false;
-    getDocs(query(collection(db, "tables"), where("venueId", "==", "current")))
-      .then((snap) => {
-        if (cancelled || snap.empty) return;
-        return Promise.all(
-          snap.docs.map((d) =>
-            updateDoc(doc(db, "tables", d.id), { venueId: DASHBOARD_VENUE_ID, updatedAt: serverTimestamp() }).catch(() => {})
-          )
-        );
-      })
-      .then(() => {
-        if (!cancelled) migrationTablesDoneRef.current = true;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    function chunk<T>(arr: T[], size: number): T[][] {
+      const res: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
+      return res;
+    }
+
+    async function migrateTablesOnce(): Promise<{ migrated: number }> {
+      const snap = await getDocs(collection(db, "venues", "current", "tables"));
+      if (snap.empty) return { migrated: 0 };
+      const docs = snap.docs;
+      // Firestore batch limit = 500 ops. Оставляем запас (set + update может быть 2), но делаем только set в новую папку.
+      const chunks = chunk(docs, 450);
+      let migrated = 0;
+      for (const part of chunks) {
+        const batch = writeBatch(db);
+        part.forEach((d) => {
+          const data = d.data() as Record<string, unknown>;
+          const targetRef = doc(db, "venues", DASHBOARD_VENUE_ID, "tables", d.id);
+          batch.set(
+            targetRef,
+            {
+              ...data,
+              venueId: DASHBOARD_VENUE_ID,
+              updatedAt: serverTimestamp(),
+              migratedFromVenueId: "current",
+            },
+            { merge: true }
+          );
+        });
+        await batch.commit();
+        migrated += part.length;
+      }
+      return { migrated };
+    }
+
+    // attach to component scope via ref: we store on useRef for stable access
+    (migrationTablesDoneRef as any).migrateTablesOnce = migrateTablesOnce;
   }, []);
+
+  const handleMigrateTables = useCallback(async () => {
+    if (migrationLoading) return;
+    setMigrationLoading(true);
+    try {
+      const fn = (migrationTablesDoneRef as any).migrateTablesOnce as
+        | (() => Promise<{ migrated: number }>)
+        | undefined;
+      if (!fn) throw new Error("Миграция не инициализирована");
+      const res = await fn();
+      toast.success(res.migrated > 0 ? `Перенесено столов: ${res.migrated}` : "Столы в старой папке не найдены");
+      // re-fetch tables after migration
+      setTablesLoading(true);
+      const venueTablesSnap = await getDocs(collection(db, "venues", DASHBOARD_VENUE_ID, "tables"));
+      const fromVenue = venueTablesSnap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          number: (data.number as number) ?? 0,
+          hallId: data.hallId as string | undefined,
+          name: data.name as string | undefined,
+        };
+      });
+      setTables(fromVenue);
+      setTablesLoadedOnce(true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка миграции");
+    } finally {
+      setTablesLoading(false);
+      setMigrationLoading(false);
+    }
+  }, [migrationLoading]);
 
   // Авто-сброс «забытых» смен: если сейчас рабочее время по графику, но есть сотрудники с onShift с вчера — сбросить
   useEffect(() => {
@@ -449,86 +512,91 @@ function AdminDashboardContent() {
       orderBy("startAt", "asc")
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      try {
-        const now = Date.now();
-        const windowEnd = now + BOOKING_WINDOW_MS;
-        const byTable: Record<string, BookingOnTable[]> = {};
-        const activeForToday: BookingOnTable[] = [];
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        try {
+          const now = Date.now();
+          const windowEnd = now + BOOKING_WINDOW_MS;
+          const byTable: Record<string, BookingOnTable[]> = {};
+          const activeForToday: BookingOnTable[] = [];
 
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const status = (data.status as string) ?? "pending";
-          if (status === "cancelled") return;
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            const status = (data.status as string) ?? "pending";
+            if (status === "cancelled") return;
 
-          const startAtSource =
-            (data.toStartAt as { toDate?: () => Date } | Date | undefined) ??
-            (data.startAt as { toDate?: () => Date } | Date | undefined);
-          const startAt =
-            startAtSource && typeof (startAtSource as any).toDate === "function"
-              ? (startAtSource as { toDate: () => Date }).toDate()
-              : startAtSource instanceof Date
-              ? startAtSource
-              : null;
-          if (!startAt) return;
-          const startMs = startAt.getTime();
-          if (Number.isNaN(startMs)) return;
+            const startAtSource =
+              (data.toStartAt as { toDate?: () => Date } | Date | undefined) ??
+              (data.startAt as { toDate?: () => Date } | Date | undefined);
+            const startAt =
+              startAtSource && typeof (startAtSource as any).toDate === "function"
+                ? (startAtSource as { toDate: () => Date }).toDate()
+                : startAtSource instanceof Date
+                ? startAtSource
+                : null;
+            if (!startAt) return;
+            const startMs = startAt.getTime();
+            if (Number.isNaN(startMs)) return;
 
-          const dateStr = startAt.toISOString().slice(0, 10);
+            const dateStr = startAt.toISOString().slice(0, 10);
 
-          if (startAt >= dayStart && startAt < dayEnd) {
-            const tableNumberToday = (data.tableNumber as number | string | undefined) ?? undefined;
-            const tableIdToday = String(
-              data.tableId ?? (tableNumberToday != null ? tableNumberToday : "")
-            ).trim();
-            const bookingToday: BookingOnTable = {
+            if (startAt >= dayStart && startAt < dayEnd) {
+              const tableNumberToday = (data.tableNumber as number | string | undefined) ?? undefined;
+              const tableIdToday = String(data.tableId ?? (tableNumberToday != null ? tableNumberToday : "")).trim();
+              const bookingToday: BookingOnTable = {
+                id: d.id,
+                date: dateStr,
+                startTime:
+                  (data.startTime as string) ??
+                  `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`,
+                startAt,
+                guestName: data.guestName as string | undefined,
+                isUrgent: data.isUrgent === true,
+                status,
+                tableNumber: tableNumberToday ?? tableIdToday,
+                isAlerted: data.isAlerted === true,
+              };
+              activeForToday.push(bookingToday);
+            }
+
+            if (startMs < now || startMs > windowEnd) return;
+
+            const tableNumber = (data.tableNumber as number | string | undefined) ?? undefined;
+            const tableId = String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
+            if (!tableId) return;
+
+            const b: BookingOnTable = {
               id: d.id,
               date: dateStr,
               startTime:
                 (data.startTime as string) ??
-                `${String(startAt.getHours()).padStart(2, "0")}:${String(
-                  startAt.getMinutes()
-                ).padStart(2, "0")}`,
+                `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`,
               startAt,
               guestName: data.guestName as string | undefined,
               isUrgent: data.isUrgent === true,
               status,
-              tableNumber: tableNumberToday ?? tableIdToday,
+              tableNumber: tableNumber ?? tableId,
               isAlerted: data.isAlerted === true,
             };
-            activeForToday.push(bookingToday);
-          }
+            if (!byTable[tableId]) byTable[tableId] = [];
+            byTable[tableId].push(b);
+          });
 
-          if (startMs < now || startMs > windowEnd) return;
-
-          const tableNumber = (data.tableNumber as number | string | undefined) ?? undefined;
-          const tableId = String(data.tableId ?? (tableNumber != null ? tableNumber : "")).trim();
-          if (!tableId) return;
-
-          const b: BookingOnTable = {
-            id: d.id,
-            date: dateStr,
-            startTime:
-              (data.startTime as string) ??
-              `${String(startAt.getHours()).padStart(2, "0")}:${String(startAt.getMinutes()).padStart(2, "0")}`,
-            startAt,
-            guestName: data.guestName as string | undefined,
-            isUrgent: data.isUrgent === true,
-            status,
-            tableNumber: tableNumber ?? tableId,
-            isAlerted: data.isAlerted === true,
-          };
-          if (!byTable[tableId]) byTable[tableId] = [];
-          byTable[tableId].push(b);
-        });
-
-        setActiveBookings(activeForToday);
-        setBookingsTodayCount(activeForToday.length);
-        setBookingsByTable(byTable);
-      } catch (e) {
-        console.error("[admin/dashboard] bookings snapshot error:", e);
+          setActiveBookings(activeForToday);
+          setBookingsTodayCount(activeForToday.length);
+          setBookingsByTable(byTable);
+          setFirestoreIndexError(null);
+        } catch (e) {
+          console.error("[admin/dashboard] bookings snapshot error:", e);
+        }
+      },
+      (err) => {
+        const msg = err?.message ? String(err.message) : "Firestore error";
+        // чаще всего сюда попадают ошибки индекса (FAILED_PRECONDITION)
+        setFirestoreIndexError(msg);
       }
-    });
+    );
     return () => unsub();
   }, [venueType]);
 
@@ -963,6 +1031,13 @@ function AdminDashboardContent() {
       <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
       <p className="mt-2 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
 
+      {firestoreIndexError && (
+        <div className="mt-4 rounded-xl border-2 border-red-400 bg-red-50 p-4 text-sm text-red-800">
+          <div className="font-semibold">Firestore ошибка (возможен индекс)</div>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-red-900">{firestoreIndexError}</pre>
+        </div>
+      )}
+
       {isVenueClosedBySchedule && !forceOpen && (
         <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 p-8">
           <p className="text-sm font-medium text-amber-900">Заведение по графику закрыто.</p>
@@ -1001,15 +1076,29 @@ function AdminDashboardContent() {
           </>
         ) : venueType === "full_service" && tables.length === 0 ? (
           <div className="col-span-full flex flex-col items-center justify-center gap-4 rounded-xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-600">
-            <p>Заведение пустое. Создайте столы и добавьте команду.</p>
-            <button
-              type="button"
-              disabled={forceOpenSaving}
-              onClick={handleForceOpenNow}
-              className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
-            >
-              {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ПРИНУДИТЕЛЬНО"}
-            </button>
+            {tablesLoadedOnce && !tablesLoading ? (
+              <p>Столы не найдены. Нажмите [Миграция], чтобы перенести данные.</p>
+            ) : (
+              <p>Заведение пустое. Создайте столы и добавьте команду.</p>
+            )}
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <button
+                type="button"
+                disabled={forceOpenSaving}
+                onClick={handleForceOpenNow}
+                className="rounded-xl bg-emerald-600 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-emerald-700 transition-colors disabled:opacity-60"
+              >
+                {forceOpenSaving ? "Сохранение…" : "ОТКРЫТЬ ПРИНУДИТЕЛЬНО"}
+              </button>
+              <button
+                type="button"
+                disabled={migrationLoading}
+                onClick={handleMigrateTables}
+                className="rounded-xl bg-gray-900 px-6 py-4 text-lg font-semibold text-white shadow hover:bg-gray-800 transition-colors disabled:opacity-60"
+              >
+                {migrationLoading ? "Перенос…" : "ПЕРЕНЕСТИ СТОЛЫ СО СТАРОЙ ВЕРСИИ"}
+              </button>
+            </div>
           </div>
         ) : venueType === "full_service" ? (
           <>
@@ -1244,7 +1333,23 @@ function AdminDashboardContent() {
           </p>
           {!safeTables || safeTables.length === 0 ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
-              Загрузка столов...
+              {tablesLoading ? (
+                "Загрузка столов..."
+              ) : tablesLoadedOnce ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div>Столы не найдены. Нажмите «Перенести», чтобы перенести данные.</div>
+                  <button
+                    type="button"
+                    disabled={migrationLoading}
+                    onClick={handleMigrateTables}
+                    className="rounded-xl bg-gray-900 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-gray-800 transition-colors disabled:opacity-60"
+                  >
+                    {migrationLoading ? "Перенос…" : "ПЕРЕНЕСТИ СТОЛЫ СО СТАРОЙ ВЕРСИИ"}
+                  </button>
+                </div>
+              ) : (
+                "Загрузка столов..."
+              )}
             </div>
           ) : (
             <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
