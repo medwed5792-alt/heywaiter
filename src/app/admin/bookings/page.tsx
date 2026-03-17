@@ -97,6 +97,59 @@ function phoneDigits(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
+type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+interface DayHours {
+  openTime: string;
+  closeTime: string;
+  working?: boolean;
+}
+type OperatingHours = Partial<Record<DayKey, DayHours>>;
+
+function getDayKeyFromDate(dateStr: string): DayKey {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  const keys: DayKey[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  return keys[day] ?? "mon";
+}
+
+const DEFAULT_SLOT_START = "10:00";
+const DEFAULT_SLOT_END = "23:00";
+const SLOT_STEP_MINUTES = 60;
+
+function addMinutesToTime(time: string, addMin: number): string {
+  const [h, m] = time.split(":").map(Number);
+  const total = (h ?? 0) * 60 + (m ?? 0) + addMin;
+  const nh = Math.floor(total / 60) % 24;
+  const nm = total % 60;
+  return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
+}
+
+function getTimeSlotsForDate(dateStr: string, operatingHours: OperatingHours | null): string[] {
+  const dayKey = getDayKeyFromDate(dateStr);
+  const day = operatingHours?.[dayKey];
+  const open = day?.working !== false && day?.openTime ? day.openTime : DEFAULT_SLOT_START;
+  const close = day?.working !== false && day?.closeTime ? day.closeTime : DEFAULT_SLOT_END;
+  const [oh, om] = open.split(":").map(Number);
+  const [ch, cm] = close.split(":").map(Number);
+  let startMins = (oh ?? 0) * 60 + (om ?? 0);
+  let endMins = (ch ?? 0) * 60 + (cm ?? 0);
+  if (endMins <= startMins) endMins += 24 * 60;
+  const slots: string[] = [];
+  for (let m = startMins; m < endMins; m += SLOT_STEP_MINUTES) {
+    const h = Math.floor(m / 60) % 24;
+    const min = m % 60;
+    slots.push(`${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`);
+  }
+  return slots;
+}
+
+function bookingCoversSlot(b: BookingWithMeta, slotTime: string, dateStr: string): boolean {
+  const slotAt = toStartAt(dateStr, slotTime).getTime();
+  const startAt = toStartAt(b.date, b.startTime ?? "00:00").getTime();
+  const endAt = toEndAt(b.date, b.startTime ?? "00:00", b.endTime ?? "00:00").getTime();
+  return slotAt >= startAt && slotAt < endAt;
+}
+
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<BookingWithMeta[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
@@ -112,11 +165,15 @@ export default function AdminBookingsPage() {
   const [gridDate, setGridDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [filterTableId, setFilterTableId] = useState<string>("");
   const [filterPhone, setFilterPhone] = useState("");
+  const [filterName, setFilterName] = useState("");
   const [filterTimeFrom, setFilterTimeFrom] = useState("");
   const [filterTimeTo, setFilterTimeTo] = useState("");
+  const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const phoneInputRef = useRef<HTMLInputElement>(null);
+
+  const selectedDate = gridDate;
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "guests"), (snap) => {
@@ -182,6 +239,16 @@ export default function AdminBookingsPage() {
       );
     });
     return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    getDoc(doc(db, "venues", VENUE_ID)).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        const oh = (data?.operatingHours ?? null) as OperatingHours | null;
+        if (oh) setOperatingHours(oh);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -425,13 +492,17 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
-  /** Список броней, отфильтрованный по дате (gridDate) и опционально по столу/телефону/времени. Контроль контекста: дата вверху страницы корректно фильтрует перед распределением по столам. */
+  /** Брони по venue_andrey_alt и выбранной дате (selectedDate/gridDate). Синхронизация: фильтр по дате вверху страницы. */
   const filteredBookingsForGrid = useMemo(() => {
-    let list = bookings.filter((b) => b.date === gridDate && b.status !== "cancelled");
+    let list = bookings.filter((b) => b.venueId === VENUE_ID && b.date === selectedDate && b.status !== "cancelled");
     if (filterTableId) list = list.filter((b) => b.tableId === filterTableId);
     if (filterPhone.trim()) {
       const digits = phoneDigits(filterPhone);
       list = list.filter((b) => phoneDigits(b.guestContact ?? "").includes(digits));
+    }
+    if (filterName.trim()) {
+      const q = filterName.trim().toLowerCase();
+      list = list.filter((b) => (b.guestName ?? "").toLowerCase().includes(q));
     }
     if (filterTimeFrom) {
       list = list.filter((b) => (b.startTime ?? "") >= filterTimeFrom);
@@ -440,7 +511,11 @@ export default function AdminBookingsPage() {
       list = list.filter((b) => (b.endTime ?? "") <= filterTimeTo || (b.startTime ?? "") <= filterTimeTo);
     }
     return list;
-  }, [bookings, gridDate, filterTableId, filterPhone, filterTimeFrom, filterTimeTo]);
+  }, [bookings, selectedDate, filterTableId, filterPhone, filterName, filterTimeFrom, filterTimeTo]);
+
+  const timeSlots = useMemo(() => getTimeSlotsForDate(selectedDate, operatingHours), [selectedDate, operatingHours]);
+
+  const hasSearchFilter = Boolean(filterPhone.trim() || filterName.trim());
 
   /** До начала брони осталось меньше 30 минут (и время ещё не прошло). */
   const isBookingUrgent = useCallback((b: BookingWithMeta): boolean => {
@@ -719,6 +794,10 @@ export default function AdminBookingsPage() {
             <span className="text-gray-600">Телефон</span>
             <input type="text" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-36" value={filterPhone} onChange={(e) => setFilterPhone(e.target.value)} placeholder="Поиск" />
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-gray-600">Имя</span>
+            <input type="text" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-36" value={filterName} onChange={(e) => setFilterName(e.target.value)} placeholder="Поиск" />
+          </label>
         </div>
         {loading ? (
           <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
@@ -733,37 +812,59 @@ export default function AdminBookingsPage() {
                   (typeof (b as BookingWithMeta & { tableNumber?: unknown }).tableNumber !== "undefined" &&
                     String((b as BookingWithMeta & { tableNumber?: unknown }).tableNumber) === String(table.id))
               );
+              const tableHasSearchMatch = !hasSearchFilter || tableBookings.length > 0;
               return (
-                <div key={table.id} className="rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm">
+                <div
+                  key={table.id}
+                  className={`rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm transition-opacity ${!tableHasSearchMatch ? "opacity-50" : ""}`}
+                >
                   <div className="text-xl font-bold text-gray-900">Стол №{table.number}</div>
                   <div className="mt-2 space-y-1.5">
-                    {tableBookings.length === 0 ? (
-                      <p className="text-xs text-gray-400">Нет броней</p>
-                    ) : (
-                      tableBookings.map((b) => {
-                        const urgent = isBookingUrgent(b);
+                    {timeSlots.map((slotTime) => {
+                      const bookingForSlot = tableBookings.find((b) => bookingCoversSlot(b, slotTime, selectedDate));
+                      const slotEnd = addMinutesToTime(slotTime, SLOT_STEP_MINUTES);
+                      if (bookingForSlot) {
+                        const urgent = isBookingUrgent(bookingForSlot);
                         return (
                           <button
-                            key={b.id}
+                            key={slotTime}
                             type="button"
-                            onClick={() => setEditing({ ...b, bookingNote: (b as BookingWithMeta).bookingNote })}
-                            className={`w-full text-left rounded-lg border px-2 py-2 text-sm hover:border-gray-300 ${
+                            onClick={() => setEditing({ ...bookingForSlot, bookingNote: (bookingForSlot as BookingWithMeta).bookingNote })}
+                            className={`w-full text-left rounded-lg border px-2 py-1.5 text-sm hover:border-orange-400 ${
                               urgent
-                                ? "border-orange-400 bg-orange-50 font-bold text-orange-700 hover:bg-orange-100"
-                                : "border-gray-200 bg-gray-50 hover:bg-gray-100"
+                                ? "border-orange-400 bg-orange-100 font-bold text-orange-800"
+                                : "border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100"
                             }`}
                           >
-                            <span className={urgent ? "font-bold text-orange-700" : "font-medium text-gray-800"}>
-                              {b.startTime} — {b.endTime}
-                            </span>
-                            <span className="block text-xs text-gray-600 truncate">{b.guestName || "—"}</span>
-                            {(b as BookingWithMeta).bookingNote?.trim() ? (
-                              <span className="block text-xs text-amber-700 truncate">📝 {(b as BookingWithMeta).bookingNote}</span>
-                            ) : null}
+                            <span className="font-medium">{slotTime}</span>
+                            <span className="block text-xs truncate">{bookingForSlot.guestName || "—"}</span>
                           </button>
                         );
-                      })
-                    )}
+                      }
+                      return (
+                        <button
+                          key={slotTime}
+                          type="button"
+                          onClick={() => {
+                            setConflictError(null);
+                            setEditing({
+                              venueId: VENUE_ID,
+                              tableId: table.id,
+                              guestName: "",
+                              guestContact: "",
+                              seats: 2,
+                              startTime: slotTime,
+                              endTime: slotEnd,
+                              date: selectedDate,
+                              status: "pending",
+                            });
+                          }}
+                          className="w-full rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-2 py-1.5 text-sm text-gray-400 hover:border-gray-300 hover:bg-gray-100"
+                        >
+                          —:—
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );
