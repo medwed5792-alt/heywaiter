@@ -152,8 +152,11 @@ function StaffOnboardingScreen({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
+const STAFF_VENUE_ID = "venue_andrey_alt";
+
 function StaffContentInner() {
   const router = useRouter();
+  const venueId = STAFF_VENUE_ID;
   const {
     currentVenueId,
     staffData,
@@ -187,10 +190,10 @@ function StaffContentInner() {
   const { userId, staffId, onShift } = staffData;
 
   const fetchNotifications = useCallback(async () => {
-    if (!staffId || !currentVenueId) return;
+    if (!staffId) return;
     try {
       const res = await fetch(
-        `/api/staff/notifications?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(currentVenueId)}&limit=30`
+        `/api/staff/notifications?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(venueId)}&limit=30`
       );
       const data = await res.json();
       if (res.ok && Array.isArray(data.notifications)) {
@@ -199,7 +202,7 @@ function StaffContentInner() {
     } catch (_e) {
       // ignore
     }
-  }, [staffId, currentVenueId]);
+  }, [staffId, venueId]);
 
   useEffect(() => {
     fetchNotifications();
@@ -209,11 +212,11 @@ function StaffContentInner() {
   }, [staffId, fetchNotifications]);
 
   const fetchSchedule = useCallback(async () => {
-    if (!staffId || !currentVenueId) return;
+    if (!staffId) return;
     setScheduleLoading(true);
     try {
       const res = await fetch(
-        `/api/staff/schedule?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(currentVenueId)}`
+        `/api/staff/schedule?staffId=${encodeURIComponent(staffId)}&venueId=${encodeURIComponent(venueId)}`
       );
       const data = await res.json();
       if (res.ok && Array.isArray(data.entries)) {
@@ -226,17 +229,17 @@ function StaffContentInner() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [staffId, currentVenueId]);
+  }, [staffId, venueId]);
 
   useEffect(() => {
-    if (tab === "cabinet" && staffId && currentVenueId) {
+    if (tab === "cabinet" && staffId) {
       fetchSchedule();
     }
-  }, [tab, staffId, currentVenueId, fetchSchedule]);
+  }, [tab, staffId, fetchSchedule]);
 
   // Гео-валидация: загрузка настроек заведения и проверка дистанции (haversineDistanceM из geo.ts)
   useEffect(() => {
-    if (!currentVenueId || onShift) {
+    if (onShift) {
       setVenueGeo(null);
       setGeoBlocked(false);
       setGeoMessage(null);
@@ -246,7 +249,7 @@ function StaffContentInner() {
     (async () => {
       setGeoLoading(true);
       try {
-        const res = await fetch(`/api/venues/${encodeURIComponent(currentVenueId)}/geo`);
+        const res = await fetch(`/api/venues/${encodeURIComponent(venueId)}/geo`);
         const data = await res.json();
         if (cancelled) return;
         if (!res.ok || !data?.configured) {
@@ -303,7 +306,7 @@ function StaffContentInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [currentVenueId, onShift]);
+  }, [venueId, onShift]);
 
   const handleVenueSelect = useCallback(
     (selectedId: string) => {
@@ -315,15 +318,11 @@ function StaffContentInner() {
 
   // Загрузка номеров столов для текущего заведения (валидация SOS)
   useEffect(() => {
-    if (!currentVenueId) {
-      setAvailableTableNumbers([]);
-      return;
-    }
     let cancelled = false;
     (async () => {
       try {
         const q = query(
-          collection(db, "venues", currentVenueId, "tables")
+          collection(db, "venues", venueId, "tables")
         );
         const snap = await getDocs(q);
         if (cancelled) return;
@@ -344,7 +343,7 @@ function StaffContentInner() {
     return () => {
       cancelled = true;
     };
-  }, [currentVenueId]);
+  }, [venueId]);
 
   const SOS_HOLD_MS = 1500;
 
@@ -427,7 +426,7 @@ function StaffContentInner() {
   }, []);
 
   const handleSendSos = async () => {
-    if (!staffId || !currentVenueId) return;
+    if (!staffId) return;
     const num = Number(sosTableNumber);
     if (!Number.isFinite(num) || num < 1) return;
     if (!availableTableNumbers.includes(num)) return;
@@ -438,7 +437,7 @@ function StaffContentInner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          venueId: currentVenueId,
+          venueId,
           tableNumber: num,
           staffId,
         }),
@@ -468,7 +467,7 @@ function StaffContentInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(staffId && { staffId }),
-          ...(userId && !staffId && { userId, venueId: currentVenueId }),
+          ...(userId && !staffId && { userId, venueId }),
           action: onShift ? "stop" : "start",
         }),
       });
