@@ -73,7 +73,7 @@ function bookingsOverlap(
   excludeId?: string
 ): boolean {
   if (other.id === excludeId) return false;
-  if (other.date !== date) return false;
+  if (normalizeDate(other.date) !== normalizeDate(date)) return false;
   const startA = toStartAt(date, startTime).getTime();
   const endA = toEndAt(date, startTime, endTime).getTime();
   const startB = toStartAt(other.date, other.startTime).getTime();
@@ -100,9 +100,29 @@ function phoneDigits(value: string): string {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-/** Для сравнения стола: убираем «Стол», оставляем только цифры. */
-function tableNumberDigits(value: string | number | undefined): string {
-  return String(value ?? "").replace(/\s/g, "").replace(/Стол/gi, "").replace(/\D/g, "");
+/** Только цифры номера стола для сравнения. */
+function tableDigits(value: string | number | undefined): string {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+/** Нормализация даты в YYYY-MM-DD для сохранения и сравнения. */
+function normalizeDate(dateStr: string): string {
+  const s = String(dateStr ?? "").trim();
+  if (!s) return "";
+  const iso = s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const ddmmyy = s.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
+  if (ddmmyy) {
+    const [, day, month, year] = ddmmyy;
+    return `${year}-${month!.padStart(2, "0")}-${day!.padStart(2, "0")}`;
+  }
+  try {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  } catch {
+    // ignore
+  }
+  return s.slice(0, 10);
 }
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -176,32 +196,34 @@ type TimelineSegment =
   | { type: "free"; startTime: string; endTime: string; durationMinutes: number }
   | { type: "booking"; booking: BookingWithMeta };
 
-/** Строит таймлайн: чередование «дырок» (свободно) и броней. После последней брони — всегда сегмент «дописать». */
+/** Строит таймлайн: чередование «дырок» (свободно) и броней. Использует YYYY-MM-DD для дат. */
 function buildTimelineSegments(
   tableBookings: BookingWithMeta[],
   dateStr: string,
   dayStart: string,
   dayEnd: string
 ): TimelineSegment[] {
+  const normDate = normalizeDate(dateStr);
   const sorted = [...tableBookings].sort((a, b) => {
-    const ta = toStartAt(a.date, a.startTime ?? "00:00").getTime();
-    const tb = toStartAt(b.date, b.startTime ?? "00:00").getTime();
+    const ta = toStartAt(normalizeDate(a.date), a.startTime ?? "00:00").getTime();
+    const tb = toStartAt(normalizeDate(b.date), b.startTime ?? "00:00").getTime();
     return ta - tb;
   });
   const segments: TimelineSegment[] = [];
-  const dayStartMs = toStartAt(dateStr, dayStart).getTime();
-  const dayEndMs = toEndAt(dateStr, dayStart, dayEnd).getTime();
+  const dayStartMs = toStartAt(normDate, dayStart).getTime();
+  const dayEndMs = toEndAt(normDate, dayStart, dayEnd).getTime();
 
   if (sorted.length === 0) {
-    const dur = durationMinutes(dateStr, dayStart, dayEnd);
+    const dur = durationMinutes(normDate, dayStart, dayEnd);
     segments.push({ type: "free", startTime: dayStart, endTime: dayEnd, durationMinutes: dur });
     return segments;
   }
 
   let prevEndMs = dayStartMs;
   for (const b of sorted) {
-    const startMs = toStartAt(b.date, b.startTime ?? "00:00").getTime();
-    const endMs = toEndAt(b.date, b.startTime ?? "00:00", b.endTime ?? "00:00").getTime();
+    const bDate = normalizeDate(b.date);
+    const startMs = toStartAt(bDate, b.startTime ?? "00:00").getTime();
+    const endMs = toEndAt(bDate, b.startTime ?? "00:00", b.endTime ?? "00:00").getTime();
     if (startMs > prevEndMs) {
       const gapStart = new Date(prevEndMs);
       const gapEnd = new Date(startMs);
@@ -244,13 +266,18 @@ export default function AdminBookingsPage() {
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [phoneDropdownOpen, setPhoneDropdownOpen] = useState(false);
   const phoneInputRef = useRef<HTMLInputElement>(null);
-  const [venueEvents, setVenueEvents] = useState<{ id: string; type?: string; message?: string; createdAt?: unknown }[]>([]);
+  const [venueEvents, setVenueEvents] = useState<{ id: string; type?: string; message?: string; createdAt?: unknown; collectionName?: "venue_events" }[]>([]);
 
   const selectedDate = gridDate;
 
-  const dismissVenueEvent = useCallback(async (eventId: string) => {
+  const dismissVenueEvent = useCallback(async (eventId: string, collectionName?: string) => {
+    const ref =
+      collectionName === "staffNotifications"
+        ? doc(db, "staffNotifications", eventId)
+        : doc(db, "venues", VENUE_ID, "events", eventId);
     try {
-      await deleteDoc(doc(db, "venues", VENUE_ID, "events", eventId));
+      await deleteDoc(ref);
+      setVenueEvents((prev) => prev.filter((e) => e.id !== eventId));
       toast.success("Уведомление удалено");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка удаления уведомления");
@@ -344,7 +371,13 @@ export default function AdminBookingsPage() {
       setVenueEvents(
         snap.docs.map((d) => {
           const data = d.data();
-          return { id: d.id, type: data.type as string, message: data.message as string, createdAt: data.createdAt };
+          return {
+            id: d.id,
+            type: data.type as string,
+            message: data.message as string,
+            createdAt: data.createdAt,
+            collectionName: "venue_events" as const,
+          };
         })
       );
     });
@@ -373,7 +406,8 @@ export default function AdminBookingsPage() {
       setConflictError(null);
       setSaving(true);
       try {
-        const date = payload.date ?? editing?.date ?? "";
+        const dateRaw = payload.date ?? editing?.date ?? "";
+        const date = normalizeDate(dateRaw);
         const startTime = payload.startTime ?? editing?.startTime ?? "12:00";
         const endTime = payload.endTime ?? editing?.endTime ?? "14:00";
         const tableIdStr = String(payload.tableId ?? editing?.tableId ?? "").trim();
@@ -446,7 +480,7 @@ export default function AdminBookingsPage() {
           seats: seatsNum,
           startTime: payload.startTime ?? "12:00",
           endTime: payload.endTime ?? "14:00",
-          date: payload.date ?? "",
+          date,
           status: payload.status ?? "pending",
           startAt,
           endAt,
@@ -592,23 +626,20 @@ export default function AdminBookingsPage() {
 
   const lateBookings = bookings.filter((b) => (b.status === "pending" || b.status === "confirmed") && !b.arrived && isLate(b));
 
-  /** Брони по venue_andrey_alt и выбранной дате. Фильтрация по столу — только по цифрам (без «Стол»). */
+  /** Брони по venue_andrey_alt и выбранной дате. Дата и стол — нормализованные (YYYY-MM-DD, только цифры). */
   const filteredBookingsForGrid = useMemo(() => {
-    let list = bookings.filter((b) => b.venueId === VENUE_ID && b.date === selectedDate && b.status !== "cancelled");
+    const normSelected = normalizeDate(selectedDate);
+    let list = bookings.filter(
+      (b) => b.venueId === VENUE_ID && normalizeDate(b.date) === normSelected && b.status !== "cancelled"
+    );
     if (filterTableId) {
+      const selTid = tableDigits(filterTableId);
       const selTable = venueTables.find((t) => t.id === filterTableId);
-      const selIdDigits = tableNumberDigits(filterTableId);
-      const selNumDigits = selTable ? tableNumberDigits(selTable.number) : "";
-      const tableIdStr = String(filterTableId).trim();
-      const tableNumStr = selTable ? String(selTable.number).trim() : "";
+      const selNum = selTable ? tableDigits(selTable.number) : "";
       list = list.filter((b) => {
-        const bTid = tableNumberDigits(b.tableId);
-        const bNum = tableNumberDigits((b as BookingWithMeta).tableNumber);
-        const rawTid = String(b.tableId ?? "").trim();
-        const rawTnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
-        const byDigits = (selIdDigits !== "" && (bTid === selIdDigits || bNum === selIdDigits)) || (selNumDigits !== "" && (bTid === selNumDigits || bNum === selNumDigits));
-        const byRaw = rawTid === tableIdStr || rawTnum === tableIdStr || (tableNumStr !== "" && rawTnum === tableNumStr);
-        return byDigits || byRaw;
+        const bTid = tableDigits(b.tableId);
+        const bNum = tableDigits((b as BookingWithMeta).tableNumber);
+        return (selTid && (bTid === selTid || bNum === selTid)) || (selNum && (bTid === selNum || bNum === selNum));
       });
     }
     if (filterPhone.trim()) {
@@ -747,9 +778,9 @@ export default function AdminBookingsPage() {
                     <span className="text-sm text-gray-800">{ev.message ?? ev.type ?? ev.id}</span>
                     <button
                       type="button"
-                      onClick={() => dismissVenueEvent(ev.id)}
+                      onClick={() => dismissVenueEvent(ev.id, ev.collectionName)}
                       className="rounded border border-red-400 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                      title="Удалить событие из Firestore (venues/venue_andrey_alt/events)"
+                      title="Удалить событие из Firestore"
                     >
                       ОТМЕНИТЬ ЛПР
                     </button>
@@ -949,18 +980,12 @@ export default function AdminBookingsPage() {
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {venueTables.map((table) => {
+              const tId = tableDigits(table.id);
+              const tNum = tableDigits(table.number);
               const tableBookings = filteredBookingsForGrid.filter((b) => {
-                const bTid = tableNumberDigits(b.tableId);
-                const bNum = tableNumberDigits((b as BookingWithMeta).tableNumber);
-                const tIdDigits = tableNumberDigits(table.id);
-                const tNumDigits = tableNumberDigits(table.number);
-                const byDigits = (tIdDigits !== "" && (bTid === tIdDigits || bNum === tIdDigits)) || (tNumDigits !== "" && (bTid === tNumDigits || bNum === tNumDigits));
-                const rawTid = String(b.tableId ?? "").trim();
-                const rawTnum = String((b as BookingWithMeta).tableNumber ?? "").trim();
-                const tableIdStr = String(table.id ?? "").trim();
-                const tableNumStr = String(table.number ?? "").trim();
-                const byRaw = rawTid === tableIdStr || rawTnum === tableIdStr || rawTnum === tableNumStr;
-                return byDigits || byRaw;
+                const bTid = tableDigits(b.tableId);
+                const bNum = tableDigits((b as BookingWithMeta).tableNumber);
+                return (tId && (bTid === tId || bNum === tId)) || (tNum && (bTid === tNum || bNum === tNum));
               });
               const tableHasSearchMatch = !hasSearchFilter || tableBookings.length > 0;
               return (

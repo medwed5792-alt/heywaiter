@@ -85,8 +85,9 @@ interface FeedEvent {
   tableId?: string;
   read: boolean;
   createdAt: unknown;
-  /** venueId из документа, если есть — для точного пути удаления */
   venueId?: string;
+  /** Откуда пришло событие: от этого зависит путь удаления */
+  collectionName?: "staffNotifications" | "venue_events";
 }
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
@@ -607,6 +608,7 @@ function AdminDashboardContent() {
             tableId: data.tableId,
             read: data.read === true,
             createdAt: data.createdAt,
+            collectionName: "staffNotifications" as const,
           };
         });
         setFeedEvents(list);
@@ -642,6 +644,7 @@ function AdminDashboardContent() {
             createdAt: data.createdAt,
             venueId: (data.venueId as string) || venueId,
             sender: data.sender as string | undefined,
+            collectionName: "venue_events" as const,
           } as FeedEvent & { sender?: string };
         });
         setShiftEvents(eventList);
@@ -660,15 +663,21 @@ function AdminDashboardContent() {
       toast.error("Ошибка: ID события не найден");
       return;
     }
-    const venuePath = doc(db, "venues", venueId, "events", eventId);
+    const isStaffNotif = event.collectionName === "staffNotifications";
+    const ref = isStaffNotif
+      ? doc(db, "staffNotifications", eventId)
+      : doc(db, "venues", venueId, "events", eventId);
     try {
-      await deleteDoc(venuePath);
-      setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
-      setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
+      await deleteDoc(ref);
+      if (isStaffNotif) {
+        setFeedEvents((prev) => prev.filter((e) => e.id !== eventId));
+      } else {
+        setShiftEvents((prev) => prev.filter((e) => e.id !== eventId));
+      }
       toast.success("Событие удалено", { id: "archive-event" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Ошибка";
-      console.error("[archiveEvent] удаление не прошло:", venuePath, e);
+      console.error("[archiveEvent] удаление не прошло:", ref.path, e);
       toast.error(msg);
     }
   }, []);
