@@ -292,9 +292,13 @@ function AdminDashboardContent() {
   const [closeTableModal, setCloseTableModal] = useState<{ tableId: string; sessionId: string } | null>(null);
   const [closeTableLoading, setCloseTableLoading] = useState(false);
   const [operatingHours, setOperatingHours] = useState<OperatingHours | null>(null);
+  const [manualStatus, setManualStatus] = useState<"open" | "closed" | null>(null);
   const [endOfDayLoading, setEndOfDayLoading] = useState(false);
+  const [closeVenueConfirm, setCloseVenueConfirm] = useState<boolean | null>(null);
+  const [toggleVenueLoading, setToggleVenueLoading] = useState(false);
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
   const autoResetDoneRef = useRef(false);
+  const lastClosingReminderAtRef = useRef<number>(0);
   const [staffInsideById, setStaffInsideById] = useState<Record<string, boolean>>({});
 
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -344,30 +348,21 @@ function AdminDashboardContent() {
   );
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const snap = await getDoc(doc(db, "venues", venueId));
-        if (cancelled) return;
-        if (snap.exists()) {
-          const data = snap.data();
-          setVenueType((data?.venueType as VenueType) || "full_service");
-          const name = (data?.name as string) ?? "";
-          setVenueName(name);
-          const oh = (data?.operatingHours ?? null) as OperatingHours | null;
-          if (oh) setOperatingHours(oh);
-        } else {
-          setVenueType("full_service");
-        }
-      } catch {
-        if (!cancelled) setVenueType("full_service");
-      } finally {
-        if (!cancelled) setVenueLoading(false);
+    const unsub = onSnapshot(doc(db, "venues", venueId), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setVenueType((data?.venueType as VenueType) || "full_service");
+        setVenueName((data?.name as string) ?? "");
+        setOperatingHours((data?.operatingHours ?? null) as OperatingHours | null);
+        const ms = (data?.manualStatus as string) ?? "open";
+        setManualStatus(ms === "closed" ? "closed" : "open");
+      } else {
+        setVenueType("full_service");
+        setManualStatus("open");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      setVenueLoading(false);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -840,6 +835,110 @@ function AdminDashboardContent() {
     }
   }, [closeTableModal]);
 
+  const closeAllTablesAndVenue = useCallback(async () => {
+    const sessions = Object.values(sessionsByTable ?? {});
+    const tableData: { ref: ReturnType<typeof doc>; assignments: Record<string, string> }[] = [];
+    for (const s of sessions) {
+      const tableRef = doc(db, "venues", venueId, "tables", s.tableId);
+      const snap = await getDoc(tableRef);
+      const existing = snap.exists() ? (snap.data() ?? {}) : {};
+      const assignments = (existing.assignments as Record<string, string> | undefined) ?? {};
+      tableData.push({ ref: tableRef, assignments });
+    }
+    const batch = writeBatch(db);
+    sessions.forEach((s, i) => {
+      batch.update(doc(db, "activeSessions", s.sessionId), {
+        status: "closed",
+        closedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      const { ref, assignments } = tableData[i];
+      batch.set(ref, {
+        status: "free",
+        currentGuest: null,
+        assignments,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    });
+    await batch.commit();
+  }, [sessionsByTable]);
+
+  const toggleVenueOpenClosed = useCallback(async () => {
+    setToggleVenueLoading(true);
+    setCloseVenueConfirm(null);
+    try {
+      if (manualStatus === "closed") {
+        await updateDoc(doc(db, "venues", venueId), {
+          manualStatus: "open",
+          updatedAt: serverTimestamp(),
+        });
+        toast.success("Заведение открыто");
+        return;
+      }
+
+      const occupied = occupiedCount > 0;
+      if (occupied) {
+        setCloseVenueConfirm(true);
+        setToggleVenueLoading(false);
+        return;
+      }
+
+      await updateDoc(doc(db, "venues", venueId), {
+        manualStatus: "closed",
+        updatedAt: serverTimestamp(),
+      });
+      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
+      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
+      if (targetUids.length > 0) {
+        await addDoc(collection(db, "staffNotifications"), {
+          venueId,
+          tableId: "",
+          type: "shift_end",
+          message: "✨ Смена завершена! Всем спасибо за работу!",
+          read: false,
+          targetUids,
+          createdAt: serverTimestamp(),
+        });
+      }
+      toast.success("Заведение закрыто. Смена завершена.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setToggleVenueLoading(false);
+    }
+  }, [manualStatus, occupiedCount]);
+
+  const confirmCloseVenueWithTables = useCallback(async () => {
+    if (closeVenueConfirm !== true) return;
+    setToggleVenueLoading(true);
+    try {
+      await closeAllTablesAndVenue();
+      await updateDoc(doc(db, "venues", venueId), {
+        manualStatus: "closed",
+        updatedAt: serverTimestamp(),
+      });
+      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
+      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
+      if (targetUids.length > 0) {
+        await addDoc(collection(db, "staffNotifications"), {
+          venueId,
+          tableId: "",
+          type: "shift_end",
+          message: "✨ Смена завершена! Всем спасибо за работу!",
+          read: false,
+          targetUids,
+          createdAt: serverTimestamp(),
+        });
+      }
+      setCloseVenueConfirm(null);
+      toast.success("Все столы закрыты. Заведение закрыто.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setToggleVenueLoading(false);
+    }
+  }, [closeVenueConfirm, closeAllTablesAndVenue]);
+
   useEffect(() => {
     const q = query(
       collection(db, "activeSessions"),
@@ -990,7 +1089,7 @@ function AdminDashboardContent() {
     return Object.values(byTable).flat();
   }, [bookingsByTable]);
 
-  /** Заведение закрыто, если по графику сейчас вне [openTime, closeTime) */
+  /** Заведение закрыто по графику: сейчас вне [openTime, closeTime) */
   const isVenueClosedBySchedule = useMemo(() => {
     const now = new Date();
     const dayKey = getTodayKey(now);
@@ -1011,6 +1110,54 @@ function AdminDashboardContent() {
     return t < openMs || t >= closeMs;
   }, [operatingHours]);
 
+  /** Закрыто вручную или по графику */
+  const isVenueClosed = manualStatus === "closed" || isVenueClosedBySchedule;
+
+  /** Время закрытия по графику сегодня и минут до закрытия (null если нет графика или уже после закрытия) */
+  const scheduleCloseTimeAndMins = useMemo(() => {
+    const now = new Date();
+    const dayKey = getTodayKey(now);
+    if (!operatingHours) return null;
+    const today = operatingHours[dayKey];
+    if (!today || !today.working) return null;
+    const close = parseTimeToToday(now, today.closeTime);
+    if (!close) return null;
+    let closeMs = close.getTime();
+    if (closeMs <= now.getTime()) {
+      const nextClose = new Date(close);
+      nextClose.setDate(nextClose.getDate() + 1);
+      closeMs = nextClose.getTime();
+    }
+    const mins = (closeMs - now.getTime()) / (60 * 1000);
+    return { closeTime: new Date(closeMs), minutesLeft: mins };
+  }, [operatingHours]);
+
+  /** Цикл 15 мин: если до закрытия по графику <= 15 мин и заведение не закрыто вручную — создаём событие в events для ЛПР */
+  useEffect(() => {
+    if (manualStatus === "closed" || !scheduleCloseTimeAndMins) return;
+    const { minutesLeft, closeTime } = scheduleCloseTimeAndMins;
+    if (minutesLeft > 15 || minutesLeft <= 0) return;
+
+    const maybeCreateReminder = () => {
+      const now = Date.now();
+      if (now - lastClosingReminderAtRef.current < 14 * 60 * 1000) return;
+      lastClosingReminderAtRef.current = now;
+      const timeStr = formatTimeSafe(closeTime);
+      addDoc(collection(db, "venues", venueId, "events"), {
+        type: "closing_reminder",
+        message: `⚠️ Пора закрываться (График: ${timeStr})`,
+        text: `⚠️ Пора закрываться (График: ${timeStr})`,
+        read: false,
+        venueId,
+        createdAt: serverTimestamp(),
+      }).catch(() => {});
+    };
+
+    maybeCreateReminder();
+    const interval = setInterval(maybeCreateReminder, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [manualStatus, scheduleCloseTimeAndMins]);
+
   if (venueLoading) {
     return (
       <div className="p-20 text-center text-gray-600">
@@ -1021,16 +1168,64 @@ function AdminDashboardContent() {
 
   return (
     <div className="relative">
-      {isVenueClosedBySchedule && (
+      {isVenueClosed && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/60 rounded-xl">
           <p className="text-lg font-medium text-white">Заведение закрыто</p>
         </div>
       )}
-      <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
-      <p className="mt-1 text-sm text-gray-700">
-        Заведение: {venueName.trim() ? venueName : venueId}
-      </p>
-      <p className="mt-1 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
+          <p className="mt-1 text-sm text-gray-700">
+            Заведение: {venueName.trim() ? venueName : venueId}
+          </p>
+          <p className="mt-1 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
+        </div>
+        <button
+          type="button"
+          disabled={toggleVenueLoading || manualStatus === null}
+          onClick={toggleVenueOpenClosed}
+          className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
+            manualStatus === "closed"
+              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+              : "bg-slate-800 text-white hover:bg-slate-700"
+          }`}
+        >
+          {toggleVenueLoading ? "…" : manualStatus === "closed" ? "ОТКРЫТЬ ЗАВЕДЕНИЕ" : "ЗАКРЫТЬ ЗАВЕДЕНИЕ"}
+        </button>
+      </div>
+
+      {closeVenueConfirm === true && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="font-semibold text-gray-900">Есть активные столы!</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Закрыть все столы сразу?
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCloseVenueConfirm(null)}
+                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                НЕТ
+              </button>
+              <button
+                type="button"
+                disabled={toggleVenueLoading}
+                onClick={() => confirmCloseVenueWithTables()}
+                className="flex-1 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                ДА
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {venueLoading ? (
@@ -1098,6 +1293,7 @@ function AdminDashboardContent() {
               {feedWithReminders.map((ev) => {
                 const isOrphan = ev.type === "orphan_call";
                 const isBookingReminder = ev.type === "booking_reminder";
+                const isClosingReminder = ev.type === "closing_reminder";
                 let createdAtLabel = "";
                 try {
                   const raw = ev.createdAt as { toDate?: () => Date } | Date | null | undefined;
@@ -1124,6 +1320,8 @@ function AdminDashboardContent() {
                     className={
                       isBookingReminder
                         ? "text-sm bg-orange-100 border-l-4 border-orange-500 text-orange-700 p-4 shadow-md flex justify-between items-center rounded-md"
+                        : isClosingReminder
+                        ? "flex items-center justify-between gap-3 rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900"
                         : isEmergency
                         ? `flex items-center justify-between gap-3 rounded-lg border-4 border-red-600 bg-red-200 p-4 text-sm font-bold text-red-900 ${ev.read ? "opacity-90" : "animate-pulse shadow-lg shadow-red-400/50"}`
                         : `flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${
@@ -1141,6 +1339,8 @@ function AdminDashboardContent() {
                   >
                     <span>
                       {isBookingReminder
+                        ? "⚠️ "
+                        : isClosingReminder
                         ? "⚠️ "
                         : isEmergency
                         ? "🚨 КРИТИЧЕСКИЙ ВЫЗОВ "
