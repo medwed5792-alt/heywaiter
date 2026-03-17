@@ -10,6 +10,8 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 
+const VENUE_ID = "venue_andrey_alt";
+
 /**
  * Транзитный шлюз для ГОСТЯ. По ссылке /check-in/panel?v=...&t=... принудительно
  * открывается гостевой интерфейс (2 кнопки: Вызов, Счёт), игнорируя рабочие статусы пользователя.
@@ -18,7 +20,8 @@ import type { Order } from "@/lib/types";
 function PanelContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const venueId = (searchParams.get("v") ?? "").trim();
+  // Жёсткая привязка гостевого интерфейса к одному заведению
+  const venueId = VENUE_ID;
   const tableId = (searchParams.get("t") ?? "").trim();
   const orderId = searchParams.get("orderId") ?? "";
   const chatId = searchParams.get("chatId") ?? "";
@@ -93,6 +96,42 @@ function FullServicePanel({
   const { visitorId } = useVisitor();
   const checkInDone = useRef(false);
   const effectiveVisitorId = visitorId || visitorIdFromUrl || null;
+  const [venueName, setVenueName] = useState<string>("");
+  const [tableNumber, setTableNumber] = useState<number | null>(null);
+  const [metaLoaded, setMetaLoaded] = useState(false);
+  const [tableNotFound, setTableNotFound] = useState(false);
+
+  // Жёсткая загрузка заведения и стола из venues/venue_andrey_alt/tables
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
+        if (!cancelled && venueSnap.exists()) {
+          const data = venueSnap.data();
+          setVenueName(((data?.name as string) || VENUE_ID) ?? VENUE_ID);
+        }
+        if (!tableId) {
+          if (!cancelled) setTableNotFound(true);
+          return;
+        }
+        const tableSnap = await getDoc(doc(db, "venues", VENUE_ID, "tables", tableId));
+        if (!cancelled) {
+          if (tableSnap.exists()) {
+            const t = tableSnap.data();
+            setTableNumber((t.tableNumber as number | undefined) ?? null);
+          } else {
+            setTableNotFound(true);
+          }
+        }
+      } finally {
+        if (!cancelled) setMetaLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tableId]);
   useEffect(() => {
     if (checkInDone.current || !venueId || !tableId) return;
     checkInDone.current = true;
@@ -132,9 +171,23 @@ function FullServicePanel({
             </h1>
           )}
         </DebugPanelTrigger>
+        {metaLoaded && !tableNotFound && (
+          <div className="mb-4 rounded-xl bg-white p-3 text-sm text-gray-800 shadow-sm">
+            <p>
+              Добро пожаловать в {venueName || "наш ресторан"}! Вы за столом №
+              {tableNumber != null ? tableNumber : tableId}
+            </p>
+          </div>
+        )}
+        {metaLoaded && tableNotFound && (
+          <div className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-200">
+            Стол не найден. Попросите персонал проверить QR-код.
+          </div>
+        )}
         <GuestModePanel
           venueId={venueId}
           tableId={tableId}
+          tableNumber={tableNumber != null ? tableNumber : undefined}
           visitorId={effectiveVisitorId}
         />
         {/* Гостевой режим (v+t): только 2 кнопки — Меню не показываем */}

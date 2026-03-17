@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { Bell, Receipt } from "lucide-react";
 import { IS_GEO_DEBUG } from "@/lib/geo";
+import { useGeoFencing } from "@/hooks/useGeoFencing";
+import { createGuestEvent } from "@/lib/guest-events";
 
 const COOLDOWN_SEC = 30;
 
@@ -10,39 +12,53 @@ interface GuestModePanelProps {
   venueId: string;
   tableId: string;
   visitorId?: string | null;
+  tableNumber?: number;
 }
 
 /**
  * Гостевой режим: строго 2 кнопки — «Вызвать официанта» и «Запросить счёт».
- * При IS_GEO_DEBUG кнопки активны везде (GPS-проверка не блокирует).
+ * Перед любым уведомлением проверяем геозону заведения venue_andrey_alt.
  */
-export function GuestModePanel({ venueId, tableId, visitorId }: GuestModePanelProps) {
+export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: GuestModePanelProps) {
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [lastAction, setLastAction] = useState<"call_waiter" | "request_bill" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [geoBlocked, setGeoBlocked] = useState(false);
+  const [geoMessage, setGeoMessage] = useState<string | null>(null);
 
-  // В Debug-режиме кнопки не блокируются геозоной; иначе можно добавить проверку checkGeoPosition
-  const disabled = cooldownLeft > 0 || loading;
+  const { ensureInsideVenue } = useGeoFencing({
+    mode: "guest",
+    venueId,
+    tableId,
+    sessionOpen: true,
+    startAfterUserAction: true,
+  });
+
+  const disabled = geoBlocked || cooldownLeft > 0 || loading;
 
   const runRequest = useCallback(
     async (type: "call_waiter" | "request_bill") => {
       if (disabled) return;
       setLoading(true);
       setError(null);
+      setGeoMessage(null);
       try {
-        const res = await fetch("/api/notifications/call-waiter", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            venueId,
-            tableId,
-            type,
-            visitorId: visitorId ?? undefined,
-          }),
+        if (!IS_GEO_DEBUG) {
+          const check = await ensureInsideVenue();
+          if (!check.allowed) {
+            setGeoBlocked(true);
+            setGeoMessage("Функции доступны только в ресторане");
+            return;
+          }
+        }
+
+        await createGuestEvent({
+          type,
+          tableId,
+          tableNumber,
+          visitorId: visitorId ?? undefined,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error((data as { error?: string }).error ?? "Ошибка вызова");
         setLastAction(type);
         setCooldownLeft(COOLDOWN_SEC);
       } catch (e) {

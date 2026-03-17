@@ -17,11 +17,13 @@ declare global {
 }
 
 const APP_URL = typeof window !== "undefined" ? window.location.origin : "";
+const VENUE_ID = "venue_andrey_alt";
 
-function parseQrPayload(text: string): { venueId: string; tableId: string } | null {
+function parseQrPayload(text: string): { tableId: string } | null {
   const match = text?.match(/v_([^_]+)_t_([^\s]+)/) ?? text?.match(/v=([^&]+)&t=([^&]+)/);
   if (!match) return null;
-  return { venueId: match[1], tableId: match[2] };
+  // Всегда игнорируем venueId из QR и привязываем к venue_andrey_alt
+  return { tableId: match[2] };
 }
 
 interface GuestMainMenuProps {
@@ -51,7 +53,8 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
       window.Telegram.WebApp.showScanQrPopup({ text: "Отсканируйте QR-код стола" }, (text) => {
         const parsed = parseQrPayload(text);
         if (parsed) {
-          window.location.href = `${APP_URL}/check-in/panel?v=${parsed.venueId}&t=${parsed.tableId}&chatId=${chatId ?? ""}&platform=${platform}`;
+          // После сканирования QR работаем только с venue_andrey_alt
+          window.location.href = `${APP_URL}/check-in/panel?v=${VENUE_ID}&t=${parsed.tableId}&chatId=${chatId ?? ""}&platform=${platform}`;
         }
       });
     } else {

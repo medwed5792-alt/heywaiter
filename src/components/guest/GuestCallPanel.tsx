@@ -10,6 +10,7 @@ import { getRoleLabel } from "@/lib/shift-aware-roles";
 import { VoiceTranslatorPro } from "./VoiceTranslatorPro";
 import type { ServiceRole } from "@/lib/types";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
+import { createGuestEvent } from "@/lib/guest-events";
 
 interface GuestCallPanelProps {
   venueId: string;
@@ -44,14 +45,16 @@ export function GuestCallPanel({
   const [geoPrompt, setGeoPrompt] = useState(false);
   const [callingRole, setCallingRole] = useState<ServiceRole | null>(null);
   const [cooldownLeft, setCooldownLeft] = useState(0);
+  const [geoBlocked, setGeoBlocked] = useState(false);
+  const [geoError, setGeoError] = useState<string | null>(null);
 
   const handleCallRole = useCallback(
     async (role: ServiceRole) => {
       const check = await ensureInsideVenue();
       if (!check.allowed) {
-        toast.error(
-          `Функция доступна только внутри ресторана. Подойдите ближе (радиус ${check.radius ?? 0} м).`
-        );
+        setGeoBlocked(true);
+        setGeoError("Функции доступны только в ресторане");
+        toast.error("Функции доступны только в ресторане");
         return;
       }
       if (!geoStartedRef.current) {
@@ -63,15 +66,11 @@ export function GuestCallPanel({
       setCallingRole(role);
       try {
         if (role === "waiter") {
-          const res = await fetch("/api/notifications/call-waiter", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ venueId, tableId, visitorId: visitorId ?? undefined }),
+          await createGuestEvent({
+            type: "call_waiter",
+            tableId,
+            visitorId: visitorId ?? undefined,
           });
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error((data as { error?: string }).error ?? "Ошибка вызова");
-          }
         } else {
           await createTargetedNotification(
             venueId,
@@ -94,9 +93,9 @@ export function GuestCallPanel({
   const handleRequestBill = useCallback(async () => {
     const check = await ensureInsideVenue();
     if (!check.allowed) {
-      toast.error(
-        `Функция доступна только внутри ресторана. Подойдите ближе (радиус ${check.radius ?? 0} м).`
-      );
+      setGeoBlocked(true);
+      setGeoError("Функции доступны только в ресторане");
+      toast.error("Функции доступны только в ресторане");
       return;
     }
     if (!geoStartedRef.current) {
@@ -107,13 +106,11 @@ export function GuestCallPanel({
     }
     setCallingRole("waiter");
     try {
-      await createTargetedNotification(
-        venueId,
+      await createGuestEvent({
+        type: "request_bill",
         tableId,
-        "waiter",
-        `Попросили счёт, стол №${tableId}`,
-        sessionId
-      );
+        visitorId: visitorId ?? undefined,
+      });
       setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
     } catch (e) {
       console.error("createTargetedNotification (счёт) error:", e);
@@ -180,6 +177,11 @@ export function GuestCallPanel({
       {cooldownLeft > 0 && (
         <p className="mt-2 text-xs text-gray-500">
           Следующий вызов через {cooldownLeft} сек
+        </p>
+      )}
+      {geoBlocked && geoError && (
+        <p className="mt-2 text-xs text-red-600">
+          {geoError}
         </p>
       )}
       {isPro && (
