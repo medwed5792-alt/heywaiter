@@ -39,14 +39,18 @@ export function SettingsGeoSection() {
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [staffGeos, setStaffGeos] = useState<StaffLiveGeo[]>([]);
+  const [geoConfigured, setGeoConfigured] = useState(false);
 
   useEffect(() => {
     (async () => {
       const snap = await getDoc(doc(db, "venues", VENUE_ID));
       if (snap.exists()) {
         const geo = snap.data().geo;
-        if (geo?.lat != null) setLat(geo.lat);
-        if (geo?.lng != null) setLng(geo.lng);
+        if (geo?.lat != null && geo?.lng != null) {
+          setLat(geo.lat);
+          setLng(geo.lng);
+          setGeoConfigured(true);
+        }
         if (geo?.radius != null) setRadius(Math.max(RADIUS_MIN, Math.min(RADIUS_MAX, geo.radius)));
       }
       setLoaded(true);
@@ -67,10 +71,14 @@ export function SettingsGeoSection() {
   const saveGeo = useCallback(async (next: { lat?: number; lng?: number; radius?: number }) => {
     setSaving(true);
     try {
+      const nextLat = next.lat ?? lat;
+      const nextLng = next.lng ?? lng;
+      const nextRadius = next.radius ?? radius;
       await updateDoc(doc(db, "venues", VENUE_ID), {
-        geo: { lat: next.lat ?? lat, lng: next.lng ?? lng, radius: next.radius ?? radius },
+        geo: { lat: nextLat, lng: nextLng, radius: nextRadius },
         updatedAt: serverTimestamp(),
       });
+      setGeoConfigured(nextLat != null && nextLng != null);
     } finally {
       setSaving(false);
     }
@@ -100,7 +108,12 @@ export function SettingsGeoSection() {
 
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6" style={{ zoom: 0.75 }}>
-      <p className="text-sm text-gray-600">Интерактивная карта: поиск по адресу, перетаскивание маркера, красная зона по радиусу.</p>
+      <p className="text-sm text-gray-600">
+        Интерактивная карта: поиск по адресу, перетаскивание маркера, красная зона по радиусу.
+      </p>
+      <p className="mt-1 text-xs text-gray-500">
+        Гео-проверка: {geoConfigured ? "Активна" : "Не настроена"}
+      </p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="flex-1 min-w-[200px]">
           <span className="block text-sm font-medium text-gray-700">Поиск по адресу</span>

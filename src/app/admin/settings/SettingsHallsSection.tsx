@@ -48,6 +48,18 @@ function buildCheckInUrl(tableId: string): string {
 function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void }) {
   const url = buildCheckInUrl(table.id);
   const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
+  const handleDownload = () => {
+    try {
+      const a = document.createElement("a");
+      a.href = qrSrc;
+      a.download = `table-${table.number}-${table.id}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      window.open(qrSrc, "_blank");
+    }
+  };
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
@@ -80,15 +92,36 @@ function QRModal({ table, onClose }: { table: VenueTable; onClose: () => void })
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
         <h3 className="font-semibold text-gray-900">QR-код стола {table.number}</h3>
-        <p className="mt-1 text-sm text-gray-500">Ссылка для гостевого входа</p>
+        <p className="mt-1 text-sm text-gray-500">
+          {table.name ? `«${table.name}» · ` : null}
+          {table.seats != null ? `Мест: ${table.seats}` : null}
+        </p>
         <div className="mt-4 flex justify-center">
           <img src={qrSrc} alt="QR" className="h-[200px] w-[200px]" />
         </div>
         <p className="mt-2 break-all text-xs text-gray-500">{url}</p>
         <div className="mt-4 flex gap-2">
-          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={onClose}>Закрыть</button>
-          <button type="button" className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800" onClick={handlePrint}>Печать</button>
-          <button type="button" className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={handleShare}>Поделиться</button>
+          <button
+            type="button"
+            className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={onClose}
+          >
+            Закрыть
+          </button>
+          <button
+            type="button"
+            className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800"
+            onClick={handlePrint}
+          >
+            Печать
+          </button>
+          <button
+            type="button"
+            className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            onClick={handleDownload}
+          >
+            Скачать QR
+          </button>
         </div>
       </div>
     </div>
@@ -185,17 +218,27 @@ export function SettingsHallsSection() {
     onConfirm: () => void | Promise<void>;
   } | null>(null);
 
-  // Жёсткая свая: работаем только с venues/venue_andrey_alt/halls и /tables
+  // Жёсткая свая: работаем только с venues/venue_andrey_alt/*
   const hallsRef = collection(db, "venues", VENUE_ID, "halls");
   const tablesRef = collection(db, "venues", VENUE_ID, "tables");
 
   useEffect(() => {
     (async () => {
-      const [venueSnap, hallsSnap, tablesSnap] = await Promise.all([
-        getDoc(doc(db, "venues", VENUE_ID)),
-        getDocs(hallsRef),
-        getDocs(tablesRef),
-      ]);
+      const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
+      let hallsSnap = await getDocs(hallsRef);
+      // Алиас: если halls пусты или коллекции нет, пробуем rooms (для старых данных)
+      if (hallsSnap.empty) {
+        try {
+          const roomsRef = collection(db, "venues", VENUE_ID, "rooms");
+          const roomsSnap = await getDocs(roomsRef);
+          if (!roomsSnap.empty) {
+            hallsSnap = roomsSnap;
+          }
+        } catch {
+          // ignore, работаем только с halls
+        }
+      }
+      const tablesSnap = await getDocs(tablesRef);
       if (venueSnap.exists() && venueSnap.data().venueType) setVenueType(venueSnap.data().venueType as VenueType);
       if (venueSnap.exists() && venueSnap.data().messages) {
         const m = venueSnap.data().messages as { checkIn?: string; booking?: string; thankYou?: string };
@@ -211,9 +254,10 @@ export function SettingsHallsSection() {
       setTables(
         tablesSnap.docs.map((d) => {
           const data = d.data();
+          const hallId = (data.hallId as string) || (data.roomId as string) || "";
           return {
             id: d.id,
-            hallId: (data.hallId as string) ?? "",
+            hallId,
             number: (data.number as number) ?? 0,
             name: data.name as string | undefined,
             description: data.description as string | undefined,
@@ -226,7 +270,19 @@ export function SettingsHallsSection() {
   }, []);
 
   const loadHallsAndTables = async () => {
-    const [hallsSnap, tablesSnap] = await Promise.all([getDocs(hallsRef), getDocs(tablesRef)]);
+    let hallsSnap = await getDocs(hallsRef);
+    if (hallsSnap.empty) {
+      try {
+        const roomsRef = collection(db, "venues", VENUE_ID, "rooms");
+        const roomsSnap = await getDocs(roomsRef);
+        if (!roomsSnap.empty) {
+          hallsSnap = roomsSnap;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    const tablesSnap = await getDocs(tablesRef);
     const hallList = hallsSnap.docs.map((d) => ({
       id: d.id,
       name: (d.data().name as string) ?? "",
@@ -237,9 +293,10 @@ export function SettingsHallsSection() {
     setTables(
       tablesSnap.docs.map((d) => {
         const data = d.data();
+        const hallId = (data.hallId as string) || (data.roomId as string) || "";
         return {
           id: d.id,
-          hallId: (data.hallId as string) ?? "",
+          hallId,
           number: (data.number as number) ?? 0,
           name: data.name as string | undefined,
           description: data.description as string | undefined,
@@ -266,10 +323,19 @@ export function SettingsHallsSection() {
     const name = editingHallName.trim();
     if (!name) return;
     try {
-      await updateDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id), {
-        name,
-        updatedAt: serverTimestamp(),
-      });
+      try {
+        // сначала пытаемся обновить в новой коллекции halls
+        await updateDoc(doc(db, "venues", VENUE_ID, "halls", hall.id), {
+          name,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        // алиас для старых данных: пробуем rooms
+        await updateDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id), {
+          name,
+          updatedAt: serverTimestamp(),
+        });
+      }
       setEditingHall(null);
       setEditingHallName("");
       await loadHallsAndTables();
@@ -290,7 +356,11 @@ export function SettingsHallsSection() {
           for (const t of tables.filter((x) => x.hallId === hall.id)) {
             await deleteDoc(doc(db, "venues", VENUE_ID, "tables", t.id));
           }
-          await deleteDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id));
+          try {
+            await deleteDoc(doc(db, "venues", VENUE_ID, "halls", hall.id));
+          } catch {
+            await deleteDoc(doc(db, "venues", VENUE_ID, "rooms", hall.id));
+          }
           await loadHallsAndTables();
           toast.success("Зал удалён");
         } catch (e) {
@@ -427,7 +497,17 @@ export function SettingsHallsSection() {
                   <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {hallTables.map((t) => (
                       <div key={t.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3">
-                        <div><p className="font-medium text-gray-900">Стол {t.number}{t.name ? ` · ${t.name}` : ""}</p>{t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}</div>
+                        <div
+                          className="cursor-pointer"
+                          onClick={() => setQrTable(t)}
+                          title="Открыть карточку стола и QR"
+                        >
+                          <p className="font-medium text-gray-900">
+                            Стол {t.number}
+                            {t.name ? ` · ${t.name}` : ""}
+                          </p>
+                          {t.seats != null && <p className="text-xs text-gray-500">Мест: {t.seats}</p>}
+                        </div>
                         <div className="flex gap-1">
                           <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setQrTable(t)} title="QR-код"><QrCode className="h-4 w-4" /></button>
                           <button type="button" className="rounded p-1 text-gray-500 hover:bg-gray-100" onClick={() => setEditingTable(t)} title="Редактировать"><Pencil className="h-3.5 w-3.5" /></button>
