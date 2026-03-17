@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import dynamic from "next/dynamic";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
@@ -10,6 +11,11 @@ const VENUE_ID = "venue_andrey_alt";
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+
+const MapLibreVenue = dynamic(
+  () => import("@/components/admin/geo/MapLibreVenue").then((m) => m.MapLibreVenue),
+  { ssr: false, loading: () => <div className="flex h-[400px] w-full items-center justify-center rounded-xl border border-gray-200 bg-slate-50 text-sm text-gray-500">Загрузка карты…</div> }
+);
 
 /** Геокодинг: адрес → lat, lng через Nominatim (OpenStreetMap) */
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
@@ -24,70 +30,6 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
   const lat = parseFloat(data[0].lat);
   const lng = parseFloat(data[0].lon);
   return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
-}
-
-// Refs for Leaflet map (typed as unknown to avoid pulling Leaflet into main bundle until map loads)
-type LeafletRef = React.MutableRefObject<unknown>;
-
-/** Интерактивная карта (Leaflet) — загружается только на клиенте */
-function GeoMap({
-  lat,
-  lng,
-  radius,
-  staffGeos,
-  onLatLngChange,
-  onRadiusChange,
-}: {
-  lat: number;
-  lng: number;
-  radius: number;
-  staffGeos: StaffLiveGeo[];
-  onLatLngChange: (lat: number, lng: number) => void;
-  onRadiusChange: (r: number) => void;
-}) {
-  const mapRef = useRef<unknown>(null);
-  const markerRef = useRef<unknown>(null);
-  const circleRef = useRef<unknown>(null);
-  const layerRef = useRef<unknown>(null);
-  const [MapComponent, setMapComponent] = useState<React.ComponentType<{
-    lat: number;
-    lng: number;
-    radius: number;
-    staffGeos: StaffLiveGeo[];
-    onLatLngChange: (lat: number, lng: number) => void;
-    onRadiusChange: (r: number) => void;
-    mapRef: LeafletRef;
-    markerRef: LeafletRef;
-    circleRef: LeafletRef;
-    layerRef: LeafletRef;
-  }> | null>(null);
-
-  useEffect(() => {
-    import("./GeoMapLeaflet").then((m) => setMapComponent(() => m.GeoMapLeaflet));
-  }, []);
-
-  if (!MapComponent) {
-    return (
-      <div className="flex h-[400px] w-full items-center justify-center rounded-xl border border-gray-200 bg-slate-50 text-sm text-gray-500">
-        Загрузка карты…
-      </div>
-    );
-  }
-
-  return (
-    <MapComponent
-      lat={lat}
-      lng={lng}
-      radius={radius}
-      staffGeos={staffGeos}
-      onLatLngChange={onLatLngChange}
-      onRadiusChange={onRadiusChange}
-      mapRef={mapRef}
-      markerRef={markerRef}
-      circleRef={circleRef}
-      layerRef={layerRef}
-    />
-  );
 }
 
 export default function AdminSettingsGeoPage() {
@@ -249,7 +191,7 @@ export default function AdminSettingsGeoPage() {
               <p className="text-sm text-red-600">{geocodeError}</p>
             )}
 
-            <GeoMap
+            <MapLibreVenue
               lat={lat}
               lng={lng}
               radius={radius}
@@ -258,7 +200,6 @@ export default function AdminSettingsGeoPage() {
                 setLat(newLat);
                 setLng(newLng);
               }}
-              onRadiusChange={setRadius}
             />
 
             <div className="rounded-xl border border-gray-200 bg-white p-4">

@@ -3,12 +3,40 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { StaffLiveGeo } from "@/lib/types";
 
-const DEMO_STYLE = "https://demotiles.maplibre.org/style.json";
+/** Детальный растровый стиль OSM (улицы и дома). */
+const OSM_RASTER_STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+    },
+  },
+  layers: [{ id: "osm", type: "raster", source: "osm" }],
+};
+
 const CIRCLE_COLOR = "#2563eb";
 const CIRCLE_OPACITY = 0.25;
 const SOURCE_ID = "venue-radius";
 const LAYER_ID = "venue-radius-fill";
+const STAFF_SOURCE_ID = "staff-geos";
+const STAFF_LAYER_ID = "staff-geos-circles";
+
+function createRedMarkerElement(): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "venue-marker-red";
+  el.style.width = "24px";
+  el.style.height = "24px";
+  el.style.borderRadius = "50%";
+  el.style.backgroundColor = "#dc2626";
+  el.style.border = "3px solid white";
+  el.style.boxShadow = "0 1px 4px rgba(0,0,0,0.4)";
+  el.style.cursor = "grab";
+  return el;
+}
 
 /** Генерирует полигон-круг в GeoJSON (WGS84) по центру и радиусу в метрах. */
 function circleToPolygon(lat: number, lng: number, radiusM: number, points = 64): GeoJSON.Polygon {
@@ -30,9 +58,10 @@ export interface MapLibreVenueProps {
   lng: number;
   radius: number;
   onLatLngChange: (lat: number, lng: number) => void;
+  staffGeos?: StaffLiveGeo[];
 }
 
-export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenueProps) {
+export function MapLibreVenue({ lat, lng, radius, onLatLngChange, staffGeos = [] }: MapLibreVenueProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
@@ -44,14 +73,15 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenu
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: DEMO_STYLE,
+      style: OSM_RASTER_STYLE,
       center: [lng, lat],
-      zoom: 15,
+      zoom: 16,
     });
 
     mapRef.current = map;
 
-    const marker = new maplibregl.Marker({ draggable: true })
+    const markerEl = createRedMarkerElement();
+    const marker = new maplibregl.Marker({ element: markerEl, draggable: true })
       .setLngLat([lng, lat])
       .addTo(map);
 
@@ -61,6 +91,11 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenu
     });
 
     markerRef.current = marker;
+
+    map.on("click", (e) => {
+      marker.setLngLat(e.lngLat);
+      onLatLngRef.current(e.lngLat.lat, e.lngLat.lng);
+    });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
@@ -84,12 +119,29 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenu
           "fill-opacity": CIRCLE_OPACITY,
         },
       });
+      m.addSource(STAFF_SOURCE_ID, {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      m.addLayer({
+        id: STAFF_LAYER_ID,
+        type: "circle",
+        source: STAFF_SOURCE_ID,
+        paint: {
+          "circle-radius": 6,
+          "circle-color": ["case", ["get", "isInside"], "#22c55e", "#ef4444"],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#fff",
+        },
+      });
     });
 
     return () => {
       marker.remove();
       const m = mapRef.current;
       if (m) {
+        if (m.getLayer(STAFF_LAYER_ID)) m.removeLayer(STAFF_LAYER_ID);
+        if (m.getSource(STAFF_SOURCE_ID)) m.removeSource(STAFF_SOURCE_ID);
         if (m.getLayer(LAYER_ID)) m.removeLayer(LAYER_ID);
         if (m.getSource(SOURCE_ID)) m.removeSource(SOURCE_ID);
         m.remove();
@@ -104,7 +156,6 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenu
     const marker = markerRef.current;
     if (!map || !marker) return;
     marker.setLngLat([lng, lat]);
-    map.setCenter([lng, lat]);
     const src = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (src) {
       src.setData({
@@ -114,6 +165,18 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange }: MapLibreVenu
       });
     }
   }, [lat, lng, radius]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map?.getSource(STAFF_SOURCE_ID)) return;
+    const src = map.getSource(STAFF_SOURCE_ID) as maplibregl.GeoJSONSource;
+    const features: GeoJSON.Feature<GeoJSON.Point>[] = staffGeos.map((s) => ({
+      type: "Feature",
+      properties: { isInside: s.isInside, staffId: s.staffId },
+      geometry: { type: "Point", coordinates: [s.lng, s.lat] },
+    }));
+    src.setData({ type: "FeatureCollection", features });
+  }, [staffGeos]);
 
   return (
     <div
