@@ -22,7 +22,7 @@ function PanelContent() {
   const router = useRouter();
   // Жёсткая привязка гостевого интерфейса к одному заведению
   const venueId = VENUE_ID;
-  const tableId = (searchParams.get("t") ?? "").trim();
+  const tableId = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
   const orderId = searchParams.get("orderId") ?? "";
   const chatId = searchParams.get("chatId") ?? "";
   const platform = searchParams.get("platform") ?? "telegram";
@@ -119,7 +119,8 @@ function FullServicePanel({
         if (!cancelled) {
           if (tableSnap.exists()) {
             const t = tableSnap.data();
-            setTableNumber((t.tableNumber as number | undefined) ?? null);
+            const num = (t.tableNumber as number | undefined) ?? (t.number as number | undefined);
+            setTableNumber(num != null ? num : null);
           } else {
             setTableNotFound(true);
           }
@@ -172,10 +173,10 @@ function FullServicePanel({
           )}
         </DebugPanelTrigger>
         {metaLoaded && !tableNotFound && (
-          <div className="mb-4 rounded-xl bg-white p-3 text-sm text-gray-800 shadow-sm">
-            <p>
-              Добро пожаловать в {venueName || "наш ресторан"}! Вы за столом №
-              {tableNumber != null ? tableNumber : tableId}
+          <div className="mb-4 rounded-xl bg-white p-4 text-center shadow-sm border border-slate-200">
+            <p className="text-xs text-slate-500 mb-1">{venueName || "Ресторан"}</p>
+            <p className="text-lg font-bold uppercase tracking-wide text-slate-900">
+              ВЫ ЗА СТОЛОМ №{tableNumber != null ? tableNumber : tableId}
             </p>
           </div>
         )}

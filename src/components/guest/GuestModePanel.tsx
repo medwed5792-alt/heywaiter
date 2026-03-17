@@ -35,7 +35,28 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
     startAfterUserAction: true,
   });
 
-  const disabled = geoBlocked || cooldownLeft > 0 || loading;
+  // Гео-проверка при загрузке: запрашиваем координаты и блокируем кнопки, если гость вне радиуса
+  const [geoChecked, setGeoChecked] = useState(false);
+  useEffect(() => {
+    if (IS_GEO_DEBUG) {
+      setGeoChecked(true);
+      return;
+    }
+    let cancelled = false;
+    ensureInsideVenue().then((check) => {
+      if (cancelled) return;
+      setGeoChecked(true);
+      if (!check.allowed) {
+        setGeoBlocked(true);
+        setGeoMessage("❌ Вы слишком далеко от ресторана");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureInsideVenue]);
+
+  const disabled = !geoChecked || geoBlocked || cooldownLeft > 0 || loading;
 
   const runRequest = useCallback(
     async (type: "call_waiter" | "request_bill") => {
@@ -67,7 +88,7 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
         setLoading(false);
       }
     },
-    [venueId, tableId, visitorId, disabled]
+    [venueId, tableId, tableNumber, visitorId, disabled]
   );
 
   useEffect(() => {
@@ -79,20 +100,27 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
   return (
     <div className="flex min-h-[50vh] flex-col gap-0 sm:min-h-[60vh] md:grid md:grid-cols-1 md:grid-rows-2 md:min-h-[70vh]">
       {/* Кнопка 1: Вызвать официанта */}
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => runRequest("call_waiter")}
-        className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl border-2 border-slate-200 bg-white p-6 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50/50 disabled:pointer-events-none disabled:opacity-60 md:rounded-3xl md:p-8"
-      >
-        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 md:h-20 md:w-20">
-          <Bell className="h-8 w-8 md:h-10 md:w-10" />
-        </span>
-        <span className="text-lg font-semibold text-slate-800 md:text-xl">Вызвать официанта</span>
-        {loading && lastAction === "call_waiter" && (
-          <span className="text-sm text-slate-500">Отправка…</span>
+      <div className="flex flex-1 flex-col items-center gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => runRequest("call_waiter")}
+          className="flex flex-1 w-full flex-col items-center justify-center gap-3 rounded-2xl border-2 border-slate-200 bg-white p-6 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50/50 disabled:pointer-events-none disabled:opacity-60 disabled:bg-slate-100 disabled:border-slate-200 md:rounded-3xl md:p-8"
+        >
+          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 md:h-20 md:w-20">
+            <Bell className="h-8 w-8 md:h-10 md:w-10" />
+          </span>
+          <span className="text-lg font-semibold text-slate-800 md:text-xl">Вызвать официанта</span>
+          {loading && lastAction === "call_waiter" && (
+            <span className="text-sm text-slate-500">Отправка…</span>
+          )}
+        </button>
+        {geoBlocked && geoMessage && (
+          <p className="text-center text-sm font-medium text-red-600">
+            {geoMessage}
+          </p>
         )}
-      </button>
+      </div>
 
       {/* Кнопка 2: Запросить счёт */}
       <button
@@ -125,8 +153,13 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
             </p>
           </>
         )}
-        {!error && cooldownLeft === 0 && !loading && (
-          <p className="text-sm text-slate-500">Стол №{tableId}</p>
+        {!error && cooldownLeft === 0 && !loading && !geoMessage && (
+          <p className="text-sm text-slate-500">
+            Стол №{tableNumber != null ? tableNumber : tableId}
+          </p>
+        )}
+        {geoBlocked && geoMessage && (
+          <p className="text-sm text-red-600">{geoMessage}</p>
         )}
         {IS_GEO_DEBUG && (
           <p className="mt-2 text-xs text-slate-400">🛠 Debug: GPS-проверка отключена</p>
