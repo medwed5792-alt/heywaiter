@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useGoogleMapsConfig } from "@/hooks/useGoogleMapsConfig";
 import type { StaffLiveGeo } from "@/lib/types";
 
 const VENUE_ID = "venue_andrey_alt";
@@ -12,8 +11,8 @@ const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 
-const GoogleMapVenue = dynamic(
-  () => import("@/components/admin/geo/GoogleMapVenue").then((m) => m.GoogleMapVenue),
+const MapLibreVenue = dynamic(
+  () => import("@/components/admin/geo/MapLibreVenue").then((m) => m.MapLibreVenue),
   { ssr: false }
 );
 
@@ -29,7 +28,6 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
 }
 
 export function SettingsGeoSection() {
-  const { apiKey, hasKey } = useGoogleMapsConfig();
   const [lat, setLat] = useState(55.75);
   const [lng, setLng] = useState(37.62);
   const [radius, setRadius] = useState(100);
@@ -155,24 +153,19 @@ export function SettingsGeoSection() {
         </button>
       </div>
       {geocodeError && <p className="mt-2 text-sm text-red-600">{geocodeError}</p>}
-      {hasKey ? (
-        <div className="mt-4">
-          <GoogleMapVenue
-            apiKey={apiKey}
-            lat={lat}
-            lng={lng}
-            radius={radius}
-            onLatLngChange={(a, b) => { setLat(a); setLng(b); }}
-            onRadiusChange={setRadius}
-          />
-        </div>
-      ) : (
-        <div className="mt-4 flex h-[280px] w-full items-center justify-center rounded-xl border border-dashed border-gray-300 bg-slate-50/80 text-center text-sm text-gray-500">
-          Карта ожидает активации в Кабинете Супер-Админа. Задайте координаты и радиус вручную ниже или используйте поиск по адресу (Nominatim).
-        </div>
-      )}
+      <div className="mt-4" id="map-container-wrapper">
+        <MapLibreVenue
+          lat={lat}
+          lng={lng}
+          radius={radius}
+          onLatLngChange={(newLat, newLng) => {
+            setLat(newLat);
+            setLng(newLng);
+          }}
+        />
+      </div>
       <div className="mt-4 rounded-xl border border-gray-200 p-4">
-        <label className="block text-sm font-medium text-gray-700">Радиус красной зоны, м</label>
+        <label className="block text-sm font-medium text-gray-700">Радиус приемной зоны, м</label>
         <input type="range" min={RADIUS_MIN} max={RADIUS_MAX} value={radius} onChange={(e) => setRadius(Number(e.target.value))} className="mt-1 w-full accent-red-600" />
         <p className="mt-1 text-sm text-gray-600">{radius} м</p>
       </div>
