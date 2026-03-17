@@ -529,6 +529,11 @@ export function SettingsHallsSection() {
           <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
         ) : (
           <div className="mt-6 space-y-6">
+            {halls.length === 0 && tables.length > 0 && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+                Залы не найдены. Все столы отображаются в блоке «Нераспределенные столы» ниже — откройте QR-коды по клику на стол.
+              </p>
+            )}
             {halls.map((hall) => {
               const hallTables = tables.filter((t) => t.hallId === hall.id);
               return (

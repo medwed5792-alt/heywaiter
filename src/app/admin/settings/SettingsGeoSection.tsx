@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
+import toast from "react-hot-toast";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { StaffLiveGeo } from "@/lib/types";
@@ -77,6 +78,9 @@ export function SettingsGeoSection() {
         updatedAt: serverTimestamp(),
       });
       setGeoConfigured(nextLat != null && nextLng != null);
+      toast.success("Гео-периметр обновлен");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения гео-периметра");
     } finally {
       setSaving(false);
     }
@@ -173,7 +177,7 @@ export function SettingsGeoSection() {
         <label className="block"><span className="block text-sm font-medium text-gray-700">Широта (Lat)</span><input type="number" step="any" className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={lat} onChange={(e) => setLat(Number(e.target.value))} /></label>
         <label className="block"><span className="block text-sm font-medium text-gray-700">Долгота (Lng)</span><input type="number" step="any" className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-sm" value={lng} onChange={(e) => setLng(Number(e.target.value))} /></label>
       </div>
-      <button type="button" onClick={() => saveGeo({ lat, lng, radius })} disabled={saving} className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
+      <button type="button" onClick={() => saveGeo({ lat, lng, radius })} disabled={saving} className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{saving ? "Сохранение…" : "СОХРАНИТЬ ГЕО-ПОЗИЦИЮ"}</button>
     </div>
   );
 }
