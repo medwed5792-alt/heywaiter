@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db, signInAnonymously } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
 
@@ -392,10 +392,15 @@ function StaffContentInner() {
     setActionLoading(true);
     setShiftError(null);
     try {
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+      const staffDocRef = doc(db, "venues", "venue_andrey_alt", "staff", auth.currentUser.uid);
       const res = await fetch("/api/staff/shift", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          staffId: staffDocRef.id,
           userId,
           venueId,
           action: onShift ? "stop" : "start",

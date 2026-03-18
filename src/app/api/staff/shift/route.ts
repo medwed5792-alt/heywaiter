@@ -121,8 +121,9 @@ export async function POST(request: NextRequest) {
         [firstName, lastName].filter(Boolean).join(" ") || legacyId.slice(-8);
 
       if (action === "start") {
-        const resolvedUserIdForVenue =
-          (snap.data()?.userId as string | undefined) ?? userId ?? legacyId;
+        // Для venues/{venue}/staff doc-id используем staffId (корневой staff doc id).
+        // Поле userId внутри документа оставляем глобальным userId.
+        const resolvedUserIdForVenue = legacyId;
         const venueStaffRef = firestore
           .collection("venues")
           .doc(venueId)
@@ -133,7 +134,7 @@ export async function POST(request: NextRequest) {
             onShift: true,
             shiftStartTime: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
-            userId: resolvedUserIdForVenue,
+            userId,
             active: true,
           },
           { merge: true }
@@ -179,8 +180,7 @@ export async function POST(request: NextRequest) {
             });
           }
         }
-        const resolvedUserIdForVenue =
-          (snap.data()?.userId as string | undefined) ?? userId ?? legacyId;
+        const resolvedUserIdForVenue = legacyId;
         const venueStaffRef = firestore
           .collection("venues")
           .doc(venueId)
@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
             onShift: false,
             shiftEndTime: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
-            userId: resolvedUserIdForVenue,
+            userId,
             active: true,
           },
           { merge: true }
@@ -220,7 +220,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "start") {
-      const resolvedUserIdForVenue = userId ?? (snap.data()?.userId as string | undefined) ?? staffDocId;
+      const resolvedUserIdForVenue = staffDocId;
+      const globalUserId = (snap.data()?.userId as string | undefined) ?? userId;
       const venueStaffRef = firestore
         .collection("venues")
         .doc(staffVenueId)
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
           onShift: true,
           shiftStartTime: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
-          userId: resolvedUserIdForVenue,
+          userId: globalUserId,
           active: true,
         },
         { merge: true }
@@ -296,7 +297,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const resolvedUserIdForVenue = userId ?? (snap.data()?.userId as string | undefined) ?? staffDocId;
+    const resolvedUserIdForVenue = staffDocId;
+    const globalUserId = (snap.data()?.userId as string | undefined) ?? userId;
     const venueStaffRef = firestore
       .collection("venues")
       .doc(staffVenueId)
@@ -307,7 +309,7 @@ export async function POST(request: NextRequest) {
         onShift: false,
         shiftEndTime: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-        userId: resolvedUserIdForVenue,
+        userId: globalUserId,
         active: true,
       },
       { merge: true }

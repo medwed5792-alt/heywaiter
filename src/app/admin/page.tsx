@@ -1672,14 +1672,14 @@ function AdminDashboardContent() {
                     if (venueStaffOnShift[s.id] !== true) return false;
                     const dt = s.defaultTables ?? [];
                     const dtDigits = dt.map((x) => String(x).replace(/\D/g, ""));
-                    return (tableNumberDigits && dtDigits.includes(tableNumberDigits)) || dt.includes(table.id);
+                    return tableNumberDigits ? dtDigits.includes(tableNumberDigits) : false;
                   });
                   const assignedStaff = assignedStaffId
                     ? safeStaffList.find((s) => s?.id === assignedStaffId)
                     : null;
+                  const effectiveWaiterId = defaultFromTeam?.id || (assignedStaffId || "");
                   const isGreenSelect =
-                    assignedStaffId !== "" && venueStaffOnShift[assignedStaffId] === true;
-                  const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id;
+                    effectiveWaiterId !== "" && venueStaffOnShift[effectiveWaiterId] === true;
                   const isWaiterOffShift =
                     effectiveWaiterId && venueStaffOnShift[effectiveWaiterId] !== true;
                   const isWaiterOutsideGeo =
@@ -1688,10 +1688,9 @@ function AdminDashboardContent() {
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
                   const selectValue =
+                    (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "") ||
                     assignedStaffId ||
-                    (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id)
-                      ? defaultFromTeam.id
-                      : "");
+                    "";
                   const isPlanSelection = Boolean(selectValue && !assignedStaffId);
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const sessionGuestId = session?.guestId;

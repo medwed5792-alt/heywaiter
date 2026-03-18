@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
-import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { UserPlus, User, Briefcase, Star, Phone, BookOpen } from "lucide-react";
 import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, MedicalCard } from "@/lib/types";
@@ -287,6 +287,7 @@ export default function TeamPage() {
   const [offerLoading, setOfferLoading] = useState(false);
   const [offerStatus, setOfferStatus] = useState<{ status: string | null; staffId: string | null } | null>(null);
   const [cancelOfferLoading, setCancelOfferLoading] = useState(false);
+  const [dupCleanupLoading, setDupCleanupLoading] = useState(false);
 
   useEffect(() => {
     setOfferLoading(false);
@@ -556,6 +557,191 @@ export default function TeamPage() {
     setLookupError(null);
     setLookupType("phone");
     setOfferStatus(null);
+  };
+
+  const normalizePhone = (value: unknown): string => {
+    const s = typeof value === "string" || typeof value === "number" ? String(value) : "";
+    return s.replace(/\D/g, "");
+  };
+
+  const normalizeName = (first?: unknown, last?: unknown): string => {
+    const f = typeof first === "string" ? first.trim() : "";
+    const l = typeof last === "string" ? last.trim() : "";
+    const full = [f, l].filter(Boolean).join(" ");
+    return full.replace(/\s+/g, " ").trim().toLowerCase();
+  };
+
+  // Временная кнопка: удаление дублей staff в venues/venue_andrey_alt/staff
+  const handleDeleteDuplicates = async () => {
+    if (dupCleanupLoading) return;
+    if (typeof window === "undefined") return;
+    const ok = window.confirm("УДАЛИТЬ ДУБЛИКАТЫ staff в venues/venue_andrey_alt/staff? Операция необратима.");
+    if (!ok) return;
+
+    setDupCleanupLoading(true);
+    const venueId = VENUE_ID;
+    try {
+      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
+      const staffDocs = staffSnap.docs;
+      if (staffDocs.length === 0) {
+        toast.error("staff коллекция пустая");
+        return;
+      }
+
+      const staffIdPrefix = `${venueId}_`;
+      const userIds = [
+        ...new Set(
+          staffDocs
+            .map((d) => {
+              const data = d.data() ?? {};
+              const explicit = data.userId as string | undefined;
+              const derived = d.id.startsWith(staffIdPrefix) ? d.id.slice(staffIdPrefix.length) : undefined;
+              return explicit || derived;
+            })
+            .filter(Boolean)
+        ),
+      ] as string[];
+
+      const globalUsers = new Map<string, GlobalUser>();
+      for (const uid of userIds) {
+        const ref = doc(db, "global_users", uid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          globalUsers.set(uid, { id: snap.id, ...(snap.data() as any) } as GlobalUser);
+        }
+      }
+
+      type StaffDocInfo = { docId: string; data: any; nameKey: string; phoneKey: string };
+      const infos: StaffDocInfo[] = staffDocs.map((d) => {
+        const data = d.data() ?? {};
+        const derivedUid = d.id.startsWith(staffIdPrefix) ? d.id.slice(staffIdPrefix.length) : undefined;
+        const uid = (data.userId as string | undefined) ?? derivedUid;
+        const g = uid ? globalUsers.get(uid) : undefined;
+        const firstName = (g?.firstName as string | undefined) ?? (data.firstName as string | undefined);
+        const lastName = (g?.lastName as string | undefined) ?? (data.lastName as string | undefined);
+        const phone = (g?.phone as string | undefined) ?? (data.phone as string | undefined);
+
+        return {
+          docId: d.id,
+          data,
+          nameKey: normalizeName(firstName, lastName),
+          phoneKey: normalizePhone(phone),
+        };
+      });
+
+      const groups = new Map<string, StaffDocInfo[]>();
+      for (const info of infos) {
+        const key = `${info.nameKey}__${info.phoneKey}`;
+        const arr = groups.get(key) ?? [];
+        arr.push(info);
+        groups.set(key, arr);
+      }
+
+      // oldDocId -> keepDocId
+      const duplicatesMap = new Map<string, string>();
+      // keepDocId -> merged defaultTables/assignedTableIds
+      const mergedDefaultsByKeep = new Map<string, Set<string>>();
+      const mergedAssignedByKeep = new Map<string, Set<string>>();
+
+      let duplicatesFound = 0;
+
+      for (const [_key, arr] of groups.entries()) {
+        if (arr.length <= 1) continue;
+        duplicatesFound++;
+
+        const onShiftDocs = arr.filter((x) => x.data?.onShift === true);
+        // Требование: удалять дубликаты только если среди них есть onShift:true.
+        if (onShiftDocs.length === 0) continue;
+        const keep = onShiftDocs[0];
+        const keepId = keep.docId;
+
+        // init sets
+        if (!mergedDefaultsByKeep.has(keepId)) mergedDefaultsByKeep.set(keepId, new Set());
+        if (!mergedAssignedByKeep.has(keepId)) mergedAssignedByKeep.set(keepId, new Set());
+
+        for (const item of arr) {
+          if (item.docId !== keepId) duplicatesMap.set(item.docId, keepId);
+
+          const dt = Array.isArray(item.data?.defaultTables) ? item.data.defaultTables : [];
+          dt.forEach((x: unknown) => mergedDefaultsByKeep.get(keepId)?.add(String(x)));
+
+          const at = Array.isArray(item.data?.assignedTableIds) ? item.data.assignedTableIds : [];
+          at.forEach((x: unknown) => mergedAssignedByKeep.get(keepId)?.add(String(x)));
+        }
+      }
+
+      if (duplicatesMap.size === 0) {
+        toast.success("Дубликаты не найдены");
+        return;
+      }
+
+      toast.success(`Найдены дубликаты: ${duplicatesMap.size} связей для перепривязки. Применяю...`);
+
+      // 1) Перепривязка таблиц: assignments.waiter -> keepDocId
+      const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
+      let batch = writeBatch(db);
+      let batchOps = 0;
+      const commitBatch = async () => {
+        if (batchOps <= 0) return;
+        await batch.commit();
+        batchOps = 0;
+        batch = writeBatch(db);
+      };
+
+      for (const t of tablesSnap.docs) {
+        const data = t.data() ?? {};
+        const assignments = (data.assignments as Record<string, unknown> | undefined) ?? {};
+        const waiter = typeof assignments.waiter === "string" ? assignments.waiter : (assignments.waiter as unknown as string | undefined);
+        if (waiter && duplicatesMap.has(waiter)) {
+          const nextWaiter = duplicatesMap.get(waiter)!;
+          batch.update(doc(db, "venues", venueId, "tables", t.id), {
+            "assignments.waiter": nextWaiter,
+            updatedAt: serverTimestamp(),
+          });
+          batchOps++;
+        }
+
+        // иногда waiter мог быть продублирован в assignedStaffId
+        const assignedStaffId = typeof data.assignedStaffId === "string" ? data.assignedStaffId : undefined;
+        if (assignedStaffId && duplicatesMap.has(assignedStaffId)) {
+          const nextWaiter = duplicatesMap.get(assignedStaffId)!;
+          batch.update(doc(db, "venues", venueId, "tables", t.id), {
+            assignedStaffId: nextWaiter,
+            updatedAt: serverTimestamp(),
+          });
+          batchOps++;
+        }
+
+        // commit by chunks (writeBatch limit 500)
+        if (batchOps >= 450) {
+          await commitBatch();
+        }
+      }
+      await commitBatch();
+
+      // 2) Обновление keep-docs (слияние defaultTables/assignedTableIds)
+      for (const [keepId, setDt] of mergedDefaultsByKeep.entries()) {
+        const setAt = mergedAssignedByKeep.get(keepId) ?? new Set<string>();
+        await updateDoc(doc(db, "venues", venueId, "staff", keepId), {
+          defaultTables: Array.from(setDt),
+          assignedTableIds: Array.from(setAt),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      // 3) Удаление duplicate staff docs
+      const deleteIds = [...duplicatesMap.keys()];
+      for (const dupId of deleteIds) {
+        await deleteDoc(doc(db, "venues", venueId, "staff", dupId));
+      }
+
+      toast.success(`Дубликаты удалены: групп=${duplicatesFound}, docs=${deleteIds.length}`);
+    } catch (e) {
+      console.error("[dupCleanup] error:", e);
+      toast.error(e instanceof Error ? e.message : "Ошибка зачистки дублей");
+    } finally {
+      setDupCleanupLoading(false);
+    }
   };
 
   const handleSendOffer = async () => {

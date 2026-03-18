@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
     const id = snap.id;
     const d = snap.data() ?? {};
     const userId = (d.userId as string) || (d.tgId as string) || telegramId;
-    // onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[userId]
+    // onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[staffDocId]
     const resolvedVenueId = venueId;
 
     // onShift только из venues/venueId/staff (единая точка с Дашбордом)
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
       .collection("venues")
       .doc(resolvedVenueId)
       .collection("staff")
-      .doc(userId)
+      .doc(id)
       .get();
     if (venueStaffSnap.exists) {
       const vd = venueStaffSnap.data() ?? {};
