@@ -75,6 +75,8 @@ interface StaffWithTables {
   id: string;
   displayName: string;
   assignedTableIds: string[];
+  /** defaultTables — массив номеров столов (или их строковых представлений) из профиля сотрудника */
+  defaultTables: string[];
   onShift: boolean;
 }
 
@@ -386,25 +388,30 @@ function AdminDashboardContent() {
 
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
-    let cancelled = false;
-    getDocs(collection(db, "venues", venueId, "tables"))
-      .then((snap) => {
-        if (cancelled) return;
-        const list = snap.docs.map((d) => {
+    const unsub = onSnapshot(collection(db, "venues", venueId, "tables"), (snap) => {
+      const list: TableRow[] = snap.docs
+        .map((d) => {
           const data = d.data();
+          const rawNumber = data.number as unknown;
+          const rawStr = typeof rawNumber === "string" ? rawNumber.trim() : String(rawNumber ?? "");
+          const num = typeof rawNumber === "string" ? Number(rawStr) : (rawNumber as number | undefined);
+
+          // Зачистка «нулей»: если number не задан / 0 / '0' — полностью скрываем стол.
+          if (!num || rawStr === "0") return null;
+
           return {
             id: d.id,
-            number: (data.number as number) ?? 0,
+            number: num,
             hallId: data.hallId as string | undefined,
             name: data.name as string | undefined,
           };
-        });
-        setTables(list);
-      })
-      .catch((e) => console.error("[admin/dashboard] tables load error:", e));
-    return () => {
-      cancelled = true;
-    };
+        })
+        .filter(Boolean) as TableRow[];
+
+      setTables(list);
+    });
+
+    return () => unsub();
   }, [venueType]);
 
   useEffect(() => {
@@ -616,10 +623,15 @@ function AdminDashboardContent() {
           const lastName = (data.lastName as string) ?? "";
           const displayName = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
           const assignedTableIds = (data.assignedTableIds as string[] | undefined) ?? [];
+          const defaultTablesRaw = (data.defaultTables as Array<string | number> | undefined) ?? [];
+          const defaultTables = (defaultTablesRaw.length ? defaultTablesRaw : (assignedTableIds as Array<string | number>)).map((x) =>
+            String(x)
+          );
           return {
             id: d.id,
             displayName,
             assignedTableIds,
+            defaultTables,
             onShift: data.onShift === true,
           };
         });
@@ -1101,6 +1113,20 @@ function AdminDashboardContent() {
   const safeStaffList = staffList ?? [];
   const safeBookingsByTable = bookingsByTable ?? {};
   const safeTables = tables ?? [];
+  const sortedTables = useMemo(() => {
+    const list = [...safeTables];
+    list.sort((a, b) => {
+      const na = Number(a.number);
+      const nb = Number(b.number);
+      const aOk = Number.isFinite(na);
+      const bOk = Number.isFinite(nb);
+      if (!aOk && !bOk) return (a.id ?? "").localeCompare(b.id ?? "");
+      if (!aOk) return 1;
+      if (!bOk) return -1;
+      return na - nb;
+    });
+    return list;
+  }, [safeTables]);
   const safeSessionsByTable = sessionsByTable ?? {};
   const safeAssignmentsByTable = assignmentsByTable ?? {};
   const safeOnShiftWaiters = onShiftWaitersFromVenue;
@@ -1608,7 +1634,7 @@ function AdminDashboardContent() {
             </div>
           ) : (
             <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {safeTables.map((table) => {
+              {sortedTables.map((table) => {
                 if (!table?.id) return null;
                 try {
                   const session = safeSessionsByTable[table.id];
@@ -1639,9 +1665,13 @@ function AdminDashboardContent() {
                     diffInMinutes <= 30 &&
                     diffInMinutes > -15;
                   const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
-                  const defaultFromTeam = safeStaffList.find((s) =>
-                    s?.assignedTableIds?.includes(table.id)
-                  );
+                  const tableNumberStr = String(table?.number ?? table.id ?? "");
+                  // assignedWaiter: берём waiterId из таблицы, если пусто — ищем среди onShift staff по defaultTables
+                  const defaultFromTeam = safeStaffList.find((s) => {
+                    if (venueStaffOnShift[s.id] !== true) return false;
+                    const dt = s.defaultTables ?? [];
+                    return dt.includes(tableNumberStr) || dt.includes(table.id);
+                  });
                   const assignedStaff = assignedStaffId
                     ? safeStaffList.find((s) => s?.id === assignedStaffId)
                     : null;
