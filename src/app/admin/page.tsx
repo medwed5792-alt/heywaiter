@@ -312,8 +312,22 @@ function AdminDashboardContent() {
         const batch = writeBatch(db);
 
         // onShift = false в venues/venue_andrey_alt/staff (единая точка с Mini App)
+        // ВАЖНО: сначала отправляем финальное уведомление активным сотрудникам, потом сбрасываем onShift.
         const venueStaffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
-        venueStaffSnap.docs.forEach((d) => {
+        const staffDocs = venueStaffSnap.docs;
+        for (const d of staffDocs) {
+          const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
+          if (data?.onShift !== true) continue;
+          const staffDisplayName =
+            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+          await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
+            type: "shift_end",
+            message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
+            read: false,
+            createdAt: serverTimestamp(),
+          });
+        }
+        staffDocs.forEach((d) => {
           batch.update(d.ref, { onShift: false });
         });
 
@@ -892,19 +906,25 @@ function AdminDashboardContent() {
         manualStatus: "closed",
         updatedAt: serverTimestamp(),
       });
+      // Финальное уведомление активным сотрудникам (venues/.../staff/[STAFF_ID]/notifications)
       const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
-      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
-      if (targetUids.length > 0) {
-        await addDoc(collection(db, "staffNotifications"), {
-          venueId,
-          tableId: "",
+      const staffDocs = staffSnap.docs;
+      for (const d of staffDocs) {
+        const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
+        if (data?.onShift !== true) continue;
+        const staffDisplayName =
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+        await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
-          message: "✨ Смена завершена! Всем спасибо за работу!",
+          message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
           read: false,
-          targetUids,
           createdAt: serverTimestamp(),
         });
       }
+
+      const batch = writeBatch(db);
+      staffDocs.forEach((d) => batch.update(d.ref, { onShift: false }));
+      await batch.commit();
       toast.success("Заведение закрыто. Смена завершена.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка");
@@ -923,18 +943,24 @@ function AdminDashboardContent() {
         updatedAt: serverTimestamp(),
       });
       const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
-      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
-      if (targetUids.length > 0) {
-        await addDoc(collection(db, "staffNotifications"), {
-          venueId,
-          tableId: "",
+      const staffDocs = staffSnap.docs;
+      for (const d of staffDocs) {
+        const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
+        if (data?.onShift !== true) continue;
+        const staffDisplayName =
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+        await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
-          message: "✨ Смена завершена! Всем спасибо за работу!",
+          message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
           read: false,
-          targetUids,
           createdAt: serverTimestamp(),
         });
       }
+
+      const batch = writeBatch(db);
+      staffDocs.forEach((d) => batch.update(d.ref, { onShift: false }));
+      await batch.commit();
+
       setCloseVenueConfirm(null);
       toast.success("Все столы закрыты. Заведение закрыто.");
     } catch (e) {
@@ -1155,19 +1181,27 @@ function AdminDashboardContent() {
         updatedAt: serverTimestamp(),
       });
 
+      // Финальное уведомление активным сотрудникам — в подколлекцию:
+      // venues/venue_andrey_alt/staff/[STAFF_ID]/notifications
       const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
-      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
-      if (targetUids.length > 0) {
-        await addDoc(collection(db, "staffNotifications"), {
-          venueId,
-          tableId: "",
+      const staffDocs = staffSnap.docs;
+      for (const d of staffDocs) {
+        const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
+        if (data?.onShift !== true) continue;
+        const staffDisplayName =
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+        await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
-          message: "✨ Смена завершена! Всем спасибо за работу!",
+          message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
           read: false,
-          targetUids,
           createdAt: serverTimestamp(),
         });
       }
+
+      // Заканчиваем смену: сбрасываем onShift у всех сотрудников
+      const batch = writeBatch(db);
+      staffDocs.forEach((d) => batch.update(d.ref, { onShift: false }));
+      await batch.commit();
 
       toast.success("Заведение закрыто. Смена завершена.");
     } catch (e) {

@@ -171,6 +171,9 @@ function StaffContentInner() {
   const [actionLoading, setActionLoading] = useState(false);
   const [shiftError, setShiftError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const playedShiftEndIdsRef = useRef<Set<string>>(new Set());
+  const prevNotificationIdsRef = useRef<Set<string>>(new Set());
+  const didInitNotificationsRef = useRef(false);
   const [venueGeo, setVenueGeo] = useState<VenueGeo | null>(null);
   const [geoBlocked, setGeoBlocked] = useState(false);
   const [geoMessage, setGeoMessage] = useState<string | null>(null);
@@ -214,6 +217,48 @@ function StaffContentInner() {
     const t = setInterval(fetchNotifications, NOTIFICATIONS_POLL_MS);
     return () => clearInterval(t);
   }, [staffId, fetchNotifications]);
+
+  // Звуковой сигнал на финальное уведомление смены
+  useEffect(() => {
+    const prev = prevNotificationIdsRef.current;
+    const next = new Set(notifications.map((n) => n.id));
+
+    if (!didInitNotificationsRef.current) {
+      prevNotificationIdsRef.current = next;
+      didInitNotificationsRef.current = true;
+      return;
+    }
+
+    const newlyReceived = notifications.filter((n) => !prev.has(n.id));
+    const shiftEnd = newlyReceived.find((n) => n.type === "shift_end");
+
+    if (shiftEnd && !playedShiftEndIdsRef.current.has(shiftEnd.id)) {
+      playedShiftEndIdsRef.current.add(shiftEnd.id);
+      try {
+        const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        ctx.resume?.().catch(() => {});
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const now = ctx.currentTime;
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(880, now);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+        osc.start(now);
+        osc.stop(now + 0.2);
+        setTimeout(() => ctx.close?.().catch(() => {}), 400);
+      } catch {
+        // ignore (audio may be blocked)
+      }
+    }
+
+    prevNotificationIdsRef.current = next;
+  }, [notifications]);
 
   const fetchSchedule = useCallback(async () => {
     if (!staffId) return;
