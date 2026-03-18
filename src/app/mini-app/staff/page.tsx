@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
@@ -182,17 +182,8 @@ function StaffContentInner() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [freeAgentProfileChecked, setFreeAgentProfileChecked] = useState(false);
   const [sosTableNumber, setSosTableNumber] = useState<string>("");
-  const [availableTableNumbers, setAvailableTableNumbers] = useState<number[]>([]);
   const [sosLoading, setSosLoading] = useState(false);
   const [sosError, setSosError] = useState<string | null>(null);
-  const [sosEmergencyLoading, setSosEmergencyLoading] = useState(false);
-  const [sosEmergencyHoldProgress, setSosEmergencyHoldProgress] = useState(0);
-  const sosHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sosHoldProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [sosCpLoading, setSosCpLoading] = useState(false);
-  const [sosCpHoldProgress, setSosCpHoldProgress] = useState(0);
-  const sosCpHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sosCpHoldProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { userId, staffId, onShift } = staffData;
 
@@ -365,205 +356,40 @@ function StaffContentInner() {
     [setCurrentVenue, router]
   );
 
-  // Загрузка номеров столов для текущего заведения (валидация SOS)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const q = query(
-          collection(db, "venues", venueId, "tables")
-        );
-        const snap = await getDocs(q);
-        if (cancelled) return;
-        const nums: number[] = [];
-        snap.docs.forEach((d) => {
-          const n = d.data()?.number as number | undefined;
-          if (typeof n === "number" && Number.isFinite(n)) {
-            nums.push(n);
-          }
-        });
-        setAvailableTableNumbers(nums);
-      } catch (_e) {
-        if (!cancelled) {
-          setAvailableTableNumbers([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [venueId]);
-
-  const SOS_HOLD_MS = 1500;
-  const SOS_CP_HOLD_MS = 3000;
-
-  const cancelSosHold = useCallback(() => {
-    if (sosHoldTimerRef.current) {
-      clearTimeout(sosHoldTimerRef.current);
-      sosHoldTimerRef.current = null;
-    }
-    if (sosHoldProgressRef.current) {
-      clearInterval(sosHoldProgressRef.current);
-      sosHoldProgressRef.current = null;
-    }
-    setSosEmergencyHoldProgress(0);
-  }, []);
-
-  const handleSosEmergencyStart = useCallback(() => {
-    if (sosEmergencyLoading) return;
-    cancelSosHold();
-    setSosEmergencyHoldProgress(0);
-    const start = Date.now();
-    sosHoldProgressRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const p = Math.min(100, (elapsed / SOS_HOLD_MS) * 100);
-      setSosEmergencyHoldProgress(p);
-      if (p >= 100 && sosHoldTimerRef.current === null) {
-        if (sosHoldProgressRef.current) {
-          clearInterval(sosHoldProgressRef.current);
-          sosHoldProgressRef.current = null;
-        }
-      }
-    }, 50);
-    sosHoldTimerRef.current = setTimeout(() => {
-      sosHoldTimerRef.current = null;
-      if (sosHoldProgressRef.current) {
-        clearInterval(sosHoldProgressRef.current);
-        sosHoldProgressRef.current = null;
-      }
-      setSosEmergencyHoldProgress(100);
-      (async () => {
-        setSosEmergencyLoading(true);
-        setSosError(null);
-        try {
-          const res = await fetch("/api/notify/emergency-call", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ staffId: staffId ?? undefined }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || data.ok === false) {
-            throw new Error(data.error || "Ошибка отправки SOS");
-          }
-          alert("Критический вызов (SOS) отправлен. ЛПР уведомлены.");
-        } catch (e) {
-          setSosError(e instanceof Error ? e.message : "Ошибка отправки SOS");
-        } finally {
-          setSosEmergencyLoading(false);
-          setSosEmergencyHoldProgress(0);
-        }
-      })();
-    }, SOS_HOLD_MS);
-  }, [sosEmergencyLoading, staffId, cancelSosHold]);
-
-  const handleSosEmergencyEnd = useCallback(() => {
-    if (sosHoldTimerRef.current) {
-      clearTimeout(sosHoldTimerRef.current);
-      sosHoldTimerRef.current = null;
-    }
-    if (sosHoldProgressRef.current) {
-      clearInterval(sosHoldProgressRef.current);
-      sosHoldProgressRef.current = null;
-    }
-    setSosEmergencyHoldProgress(0);
-  }, []);
-
-  const cancelSosCpHold = useCallback(() => {
-    if (sosCpHoldTimerRef.current) {
-      clearTimeout(sosCpHoldTimerRef.current);
-      sosCpHoldTimerRef.current = null;
-    }
-    if (sosCpHoldProgressRef.current) {
-      clearInterval(sosCpHoldProgressRef.current);
-      sosCpHoldProgressRef.current = null;
-    }
-    setSosCpHoldProgress(0);
-  }, []);
-
-  const handleSosCpStart = useCallback(() => {
-    if (sosCpLoading) return;
-    cancelSosCpHold();
-    setSosCpHoldProgress(0);
-    const start = Date.now();
-    sosCpHoldProgressRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const p = Math.min(100, (elapsed / SOS_CP_HOLD_MS) * 100);
-      setSosCpHoldProgress(p);
-    }, 50);
-    sosCpHoldTimerRef.current = setTimeout(() => {
-      sosCpHoldTimerRef.current = null;
-      if (sosCpHoldProgressRef.current) {
-        clearInterval(sosCpHoldProgressRef.current);
-        sosCpHoldProgressRef.current = null;
-      }
-      setSosCpHoldProgress(100);
-      (async () => {
-        setSosCpLoading(true);
-        setSosError(null);
-        try {
-          const res = await fetch("/api/notify/emergency-call", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ staffId: staffId ?? undefined }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || data.ok === false) {
-            throw new Error(data.error || "Ошибка отправки");
-          }
-          alert("Критический вызов (ЧП) отправлен. ЛПР уведомлены.");
-        } catch (e) {
-          setSosError(e instanceof Error ? e.message : "Ошибка отправки");
-        } finally {
-          setSosCpLoading(false);
-          setSosCpHoldProgress(0);
-        }
-      })();
-    }, SOS_CP_HOLD_MS);
-  }, [sosCpLoading, staffId, cancelSosCpHold]);
-
-  const handleSosCpEnd = useCallback(() => {
-    if (sosCpHoldTimerRef.current) {
-      clearTimeout(sosCpHoldTimerRef.current);
-      sosCpHoldTimerRef.current = null;
-    }
-    if (sosCpHoldProgressRef.current) {
-      clearInterval(sosCpHoldProgressRef.current);
-      sosCpHoldProgressRef.current = null;
-    }
-    setSosCpHoldProgress(0);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (sosHoldTimerRef.current) clearTimeout(sosHoldTimerRef.current);
-      if (sosHoldProgressRef.current) clearInterval(sosHoldProgressRef.current);
-      if (sosCpHoldTimerRef.current) clearTimeout(sosCpHoldTimerRef.current);
-      if (sosCpHoldProgressRef.current) clearInterval(sosCpHoldProgressRef.current);
-    };
-  }, []);
+  // Верхние кнопки SOS (без ввода номера стола) удалены, оставляем только «SOS по столу».
 
   const handleSendSos = async () => {
-    if (!staffId) return;
     const num = Number(sosTableNumber);
     if (!Number.isFinite(num) || num < 1) return;
-    if (!availableTableNumbers.includes(num)) return;
     setSosLoading(true);
     setSosError(null);
     try {
-      const res = await fetch("/api/notify/emergency", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          venueId,
-          tableNumber: num,
-          staffId,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok === false) {
-        throw new Error(data.error || "Ошибка отправки SOS");
+      const staffUserId = userId ?? staffId ?? "";
+      let staffName = staffUserId ? String(staffUserId).slice(-8) : "Официант";
+      if (userId) {
+        const globalSnap = await getDoc(doc(db, "global_users", userId));
+        if (globalSnap.exists()) {
+          const d = globalSnap.data() ?? {};
+          const first = (d.firstName as string | null | undefined) ?? "";
+          const last = (d.lastName as string | null | undefined) ?? "";
+          const identityName = (d?.identity as { displayName?: string } | undefined)?.displayName ?? "";
+          const resolved = [first, last].filter(Boolean).join(" ").trim() || identityName.trim() || staffName;
+          staffName = resolved;
+        }
       }
-      alert("Сигнал отправлен охране");
+
+      const msg = `🚨 SOS! СТОЛ №${num} ТРЕБУЕТ ВНИМАНИЯ! (Вызвал: ${staffName})`;
+      await addDoc(collection(db, "venues", venueId, "events"), {
+        type: "emergency",
+        message: msg,
+        text: msg,
+        tableId: String(num),
+        tableNumber: num,
+        read: false,
+        venueId,
+        createdAt: serverTimestamp(),
+      });
+
       setSosTableNumber("");
     } catch (e) {
       setSosError(e instanceof Error ? e.message : "Ошибка отправки SOS");
@@ -583,8 +409,8 @@ function StaffContentInner() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...(staffId && { staffId }),
-          ...(userId && !staffId && { userId, venueId }),
+          userId,
+          venueId,
           action: onShift ? "stop" : "start",
         }),
       });
@@ -731,89 +557,10 @@ function StaffContentInner() {
               </button>
             </section>
 
-            <section className="rounded-2xl border-2 border-red-400 bg-red-100/90 p-5 shadow-md">
-              <h2 className="text-sm font-semibold text-red-800">🚨 SOS (ТОЛЬКО ЧП)</h2>
-              <p className="mt-0.5 text-xs text-slate-600">
-                Долгое нажатие 3 сек — защита от случайного вызова.
-              </p>
-              <div className="mt-4">
-                <button
-                  type="button"
-                  disabled={sosCpLoading}
-                  onMouseDown={handleSosCpStart}
-                  onMouseUp={handleSosCpEnd}
-                  onMouseLeave={handleSosCpEnd}
-                  onTouchStart={(e) => { e.preventDefault(); handleSosCpStart(); }}
-                  onTouchEnd={(e) => { e.preventDefault(); handleSosCpEnd(); }}
-                  onTouchCancel={handleSosCpEnd}
-                  className={`w-full rounded-2xl py-5 text-lg font-bold text-white shadow-lg transition select-none touch-none ${
-                    sosCpLoading ? "bg-red-400" : sosCpHoldProgress > 0 ? "bg-red-700" : "bg-red-600 hover:bg-red-700"
-                  }`}
-                >
-                  {sosCpLoading ? "Отправка…" : sosCpHoldProgress > 0 && sosCpHoldProgress < 100 ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="inline-block h-5 w-40 rounded-full bg-red-400 overflow-hidden">
-                        <span className="block h-full bg-white/90 transition-all duration-75" style={{ width: `${sosCpHoldProgress}%` }} />
-                      </span>
-                      Удерживайте 3 сек…
-                    </span>
-                  ) : "🚨 SOS (ТОЛЬКО ЧП)"}
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border-2 border-red-300 bg-red-50 p-5 shadow-sm">
-              <h2 className="text-sm font-medium text-red-700">Вызов охраны / ЛПР</h2>
-              <p className="mt-0.5 text-xs text-slate-600">
-                Удерживайте кнопку 1,5 сек — защита от случайного нажатия.
-              </p>
-              <div className="mt-4">
-                <button
-                  type="button"
-                  disabled={sosEmergencyLoading}
-                  onMouseDown={handleSosEmergencyStart}
-                  onMouseUp={handleSosEmergencyEnd}
-                  onMouseLeave={handleSosEmergencyEnd}
-                  onTouchStart={(e) => {
-                    e.preventDefault();
-                    handleSosEmergencyStart();
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
-                    handleSosEmergencyEnd();
-                  }}
-                  onTouchCancel={handleSosEmergencyEnd}
-                  className={`w-full rounded-2xl py-6 text-lg font-bold text-white shadow-lg transition select-none touch-none ${
-                    sosEmergencyLoading
-                      ? "bg-red-400"
-                      : sosEmergencyHoldProgress > 0
-                        ? "bg-red-600"
-                        : "bg-red-600 hover:bg-red-700 active:bg-red-700"
-                  }`}
-                >
-                  {sosEmergencyLoading ? (
-                    "Отправка…"
-                  ) : sosEmergencyHoldProgress > 0 && sosEmergencyHoldProgress < 100 ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="inline-block h-5 w-32 rounded-full bg-red-400 overflow-hidden">
-                        <span
-                          className="block h-full bg-white/90 transition-all duration-75"
-                          style={{ width: `${sosEmergencyHoldProgress}%` }}
-                        />
-                      </span>
-                      Удерживайте…
-                    </span>
-                  ) : (
-                    "🚨 SOS / ВЫЗОВ ОХРАНЫ"
-                  )}
-                </button>
-              </div>
-            </section>
-
             <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm">
               <h2 className="text-sm font-medium text-red-600">SOS по столу</h2>
               <p className="mt-0.5 text-xs text-slate-600">
-                Введите номер стола и нажмите SOS. Кнопка активируется только для существующих столов.
+                Введите номер стола и нажмите SOS.
               </p>
               <div className="mt-3 flex items-center gap-3">
                 <input
@@ -833,13 +580,12 @@ function StaffContentInner() {
                   onClick={handleSendSos}
                   disabled={
                     sosLoading ||
-                    !sosTableNumber.trim() ||
-                    !availableTableNumbers.includes(Number(sosTableNumber))
+                    !sosTableNumber.trim()
                   }
                   className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-50 ${
                     sosLoading
                       ? "bg-red-500"
-                      : availableTableNumbers.includes(Number(sosTableNumber || ""))
+                      : sosTableNumber.trim()
                         ? "bg-red-600 animate-pulse"
                         : "bg-red-300"
                   }`}

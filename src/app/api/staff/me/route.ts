@@ -111,7 +111,13 @@ export async function GET(request: NextRequest) {
     let onShift = false;
     let shiftStartTime: string | null = null;
     let shiftEndTime: string | null = null;
-    const venueStaffSnap = await firestore.collection("venues").doc(resolvedVenueId).collection("staff").doc(id).get();
+    // onShift только из venues/venueId/staff/[userId]
+    const venueStaffSnap = await firestore
+      .collection("venues")
+      .doc(resolvedVenueId)
+      .collection("staff")
+      .doc(userId)
+      .get();
     if (venueStaffSnap.exists) {
       const vd = venueStaffSnap.data() ?? {};
       onShift = vd.onShift === true;

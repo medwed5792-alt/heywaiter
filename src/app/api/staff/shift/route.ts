@@ -119,12 +119,20 @@ export async function POST(request: NextRequest) {
         [firstName, lastName].filter(Boolean).join(" ") || legacyId.slice(-8);
 
       if (action === "start") {
-        const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(legacyId);
+        const resolvedUserIdForVenue =
+          (snap.data()?.userId as string | undefined) ?? userId ?? legacyId;
+        const venueStaffRef = firestore
+          .collection("venues")
+          .doc(venueId)
+          .collection("staff")
+          .doc(resolvedUserIdForVenue);
         await venueStaffRef.set(
           {
             onShift: true,
             shiftStartTime: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
+            userId: resolvedUserIdForVenue,
+            active: true,
           },
           { merge: true }
         );
@@ -169,12 +177,20 @@ export async function POST(request: NextRequest) {
             });
           }
         }
-        const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(legacyId);
+        const resolvedUserIdForVenue =
+          (snap.data()?.userId as string | undefined) ?? userId ?? legacyId;
+        const venueStaffRef = firestore
+          .collection("venues")
+          .doc(venueId)
+          .collection("staff")
+          .doc(resolvedUserIdForVenue);
         await venueStaffRef.set(
           {
             onShift: false,
             shiftEndTime: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
+            userId: resolvedUserIdForVenue,
+            active: true,
           },
           { merge: true }
         );
@@ -202,12 +218,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "start") {
-      const venueStaffRef = firestore.collection("venues").doc(staffVenueId).collection("staff").doc(staffDocId);
+      const resolvedUserIdForVenue = userId ?? (snap.data()?.userId as string | undefined) ?? staffDocId;
+      const venueStaffRef = firestore
+        .collection("venues")
+        .doc(staffVenueId)
+        .collection("staff")
+        .doc(resolvedUserIdForVenue);
       await venueStaffRef.set(
         {
           onShift: true,
           shiftStartTime: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
+          userId: resolvedUserIdForVenue,
+          active: true,
         },
         { merge: true }
       );
@@ -271,12 +294,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const venueStaffRef = firestore.collection("venues").doc(staffVenueId).collection("staff").doc(staffDocId);
+    const resolvedUserIdForVenue = userId ?? (snap.data()?.userId as string | undefined) ?? staffDocId;
+    const venueStaffRef = firestore
+      .collection("venues")
+      .doc(staffVenueId)
+      .collection("staff")
+      .doc(resolvedUserIdForVenue);
     await venueStaffRef.set(
       {
         onShift: false,
         shiftEndTime: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        userId: resolvedUserIdForVenue,
+        active: true,
       },
       { merge: true }
     );
