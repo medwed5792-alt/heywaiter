@@ -1678,12 +1678,10 @@ function AdminDashboardContent() {
                     ? safeStaffList.find((s) => s?.id === assignedStaffId)
                     : null;
                   const effectiveWaiterId = defaultFromTeam?.id || (assignedStaffId || "");
-                  const isGreenSelect =
-                    effectiveWaiterId !== "" && venueStaffOnShift[effectiveWaiterId] === true;
-                  const isWaiterOffShift =
-                    effectiveWaiterId && venueStaffOnShift[effectiveWaiterId] !== true;
-                  const isWaiterOutsideGeo =
-                    effectiveWaiterId && staffInsideById[effectiveWaiterId] === false;
+                  const waiterOnShift = effectiveWaiterId !== "" && venueStaffOnShift[effectiveWaiterId] === true;
+                  const waiterDisplayName =
+                    effectiveWaiterId ? safeStaffList.find((s) => s.id === effectiveWaiterId)?.displayName : undefined;
+                  const isGreenSelect = waiterOnShift;
                   const uniqueStaff = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
@@ -1699,13 +1697,15 @@ function AdminDashboardContent() {
                     ? "border-red-600 border-8 animate-bounce"
                     : isVipGuest && isOccupied
                     ? "border-violet-500 border-4 animate-pulse shadow-[0_0_15px_rgba(139,92,246,0.5)]"
-                    : hasTodayBookingForTable
-                    ? "border-orange-500 border-4 animate-pulse"
-                    : isUrgent
-                    ? "border-orange-500 border-4 animate-pulse"
                     : isOccupied
-                    ? "border-blue-700"
-                    : "border-emerald-400";
+                      ? "border-blue-700"
+                      : waiterOnShift
+                        ? "border-4 border-emerald-500"
+                        : hasTodayBookingForTable
+                          ? "border-orange-500 border-4 animate-pulse"
+                          : isUrgent
+                            ? "border-orange-500 border-4 animate-pulse"
+                            : "border-emerald-400";
                   const cardBg = isOccupied
                     ? "bg-blue-600"
                     : hasTodayBookingForTable || isUrgent
@@ -1723,15 +1723,10 @@ function AdminDashboardContent() {
                       </div>
                       {isOccupied && (
                         <>
-                          {isWaiterOffShift && (
-                            <p className="mt-1 text-xs font-medium text-blue-200">
-                              Официант не на смене
-                            </p>
-                          )}
-                          {!isWaiterOffShift && isWaiterOutsideGeo && (
-                            <p className="mt-1 text-xs font-medium text-blue-200">
-                              Официант вне зоны
-                            </p>
+                          {waiterOnShift ? (
+                            <p className="mt-1 text-xs font-medium text-white/90">{waiterDisplayName ?? "Официант"}</p>
+                          ) : (
+                            <p className="mt-1 text-xs font-medium text-white/70">Ожидает официанта</p>
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-blue-200">Официант</label>
@@ -1781,15 +1776,10 @@ function AdminDashboardContent() {
                       )}
                       {!isOccupied && (
                         <>
-                          {isWaiterOffShift && (
-                            <p className="mt-1 text-xs font-medium text-amber-700">
-                              Официант не на смене
-                            </p>
-                          )}
-                          {!isWaiterOffShift && isWaiterOutsideGeo && (
-                            <p className="mt-1 text-xs font-medium text-red-600">
-                              Официант вне зоны
-                            </p>
+                          {waiterOnShift ? (
+                            <p className="mt-1 text-xs font-medium text-emerald-700">{waiterDisplayName ?? "—"}</p>
+                          ) : (
+                            <p className="mt-1 text-xs font-medium text-gray-500">Ожидает официанта</p>
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-gray-500">Официант</label>

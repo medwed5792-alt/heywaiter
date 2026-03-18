@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -181,7 +181,8 @@ function StaffContentInner() {
   const [sosLoading, setSosLoading] = useState(false);
   const [sosError, setSosError] = useState<string | null>(null);
 
-  const { userId, staffId, onShift } = staffData;
+  const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
+  const { userId, staffId, onShift } = safeStaffData;
 
   const fetchNotifications = useCallback(async () => {
     if (!staffId) return;
@@ -472,12 +473,8 @@ function StaffContentInner() {
     );
   }
 
-  if (loading) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500">Загрузка…</p>
-      </main>
-    );
+  if (!staffData || loading) {
+    return <div className="p-8 text-center">Загрузка данных...</div>;
   }
 
   // Нет заведений и профиль не найден (или ещё не проверен) → онбординг
@@ -686,11 +683,8 @@ function StaffContentInner() {
 }
 
 function MiniAppStaffContent() {
-  const searchParams = useSearchParams();
-  const rawVenue = searchParams.get("v")?.trim() || searchParams.get("venueId")?.trim() || "current";
-
   return (
-    <StaffProvider initialVenueFromUrl={rawVenue}>
+    <StaffProvider initialVenueFromUrl={STAFF_VENUE_ID}>
       <StaffContentInner />
     </StaffProvider>
   );
