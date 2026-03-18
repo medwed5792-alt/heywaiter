@@ -59,7 +59,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const staffIdBody = (body.staffId as string)?.trim();
     const userId = (body.userId as string)?.trim();
-    const venueId = (body.venueId as string)?.trim();
+    // Для синхронизации с админкой используем строго один venue.
+    // Игнорируем переданный из клиента currentVenueId/venueId.
+    const venueId = "venue_andrey_alt";
     const action = (body.action as string)?.trim();
 
     if (action !== "start" && action !== "stop") {
@@ -76,12 +78,12 @@ export async function POST(request: NextRequest) {
     if (staffIdBody) {
       staffRef = firestore.collection("staff").doc(staffIdBody);
       staffDocId = staffIdBody;
-    } else if (userId && venueId) {
+    } else if (userId) {
       staffDocId = `${venueId}_${userId}`;
       staffRef = firestore.collection("staff").doc(staffDocId);
     } else {
       return NextResponse.json(
-        { error: "Укажите staffId либо userId и venueId" },
+        { error: "Укажите staffId либо userId" },
         { status: 400 }
       );
     }

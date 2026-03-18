@@ -13,13 +13,16 @@ import type { Affiliation } from "@/lib/types";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const venueId = searchParams.get("venueId")?.trim();
+    // Для синхронизации с админкой используем строго один venue.
+    const requestedVenueId = searchParams.get("venueId")?.trim();
+    const venueId = "venue_andrey_alt";
     const telegramId = searchParams.get("telegramId")?.trim();
     const channel = searchParams.get("channel")?.trim() || "tg";
 
-    if (!venueId || !telegramId) {
+    // requestedVenueId намеренно игнорируем.
+    if (!telegramId) {
       return NextResponse.json(
-        { error: "venueId и telegramId обязательны" },
+        { error: "telegramId обязателен" },
         { status: 400 }
       );
     }
@@ -105,7 +108,8 @@ export async function GET(request: NextRequest) {
     const id = snap.id;
     const d = snap.data() ?? {};
     const userId = (d.userId as string) || (d.tgId as string) || telegramId;
-    const resolvedVenueId = (d.venueId as string) ?? venueId;
+    // onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[userId]
+    const resolvedVenueId = venueId;
 
     // onShift только из venues/venueId/staff (единая точка с Дашбордом)
     let onShift = false;

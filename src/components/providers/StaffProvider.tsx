@@ -173,10 +173,15 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
           return;
         }
 
-        const urlVenue = (initialVenueFromUrl ?? "").trim() || DEFAULT_VENUE_ID;
+        // Для синхронизации смены с админкой всегда выбираем DEFAULT_VENUE_ID,
+        // чтобы UI не зависел от currentVenueId/сессионного выбора.
+        const preferredVenueId = DEFAULT_VENUE_ID;
+        const urlVenue = (initialVenueFromUrl ?? "").trim();
         let chosen: string | null = null;
 
-        if (urlVenue !== DEFAULT_VENUE_ID && list.some((v) => v.venueId === urlVenue)) {
+        if (list.some((v) => v.venueId === preferredVenueId)) {
+          chosen = preferredVenueId;
+        } else if (urlVenue && list.some((v) => v.venueId === urlVenue)) {
           chosen = urlVenue;
         } else {
           const fromSession = getStaffVenueFromSession();

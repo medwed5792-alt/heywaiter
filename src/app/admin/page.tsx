@@ -1665,12 +1665,14 @@ function AdminDashboardContent() {
                     diffInMinutes <= 30 &&
                     diffInMinutes > -15;
                   const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
-                  const tableNumberStr = String(table?.number ?? table.id ?? "");
+                  // Сопоставление defaultTables: сравниваем ТОЛЬКО цифры из номера стола.
+                  const tableNumberDigits = String(table?.number ?? "").replace(/\D/g, "");
                   // assignedWaiter: берём waiterId из таблицы, если пусто — ищем среди onShift staff по defaultTables
                   const defaultFromTeam = safeStaffList.find((s) => {
                     if (venueStaffOnShift[s.id] !== true) return false;
                     const dt = s.defaultTables ?? [];
-                    return dt.includes(tableNumberStr) || dt.includes(table.id);
+                    const dtDigits = dt.map((x) => String(x).replace(/\D/g, ""));
+                    return (tableNumberDigits && dtDigits.includes(tableNumberDigits)) || dt.includes(table.id);
                   });
                   const assignedStaff = assignedStaffId
                     ? safeStaffList.find((s) => s?.id === assignedStaffId)

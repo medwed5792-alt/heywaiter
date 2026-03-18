@@ -7,7 +7,6 @@ import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, where
 import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
-import { StaffVenuePicker } from "@/components/staff/StaffVenuePicker";
 
 const NOTIFICATIONS_POLL_MS = 5000;
 const GEO_OPTIONS: PositionOptions = {
@@ -155,15 +154,12 @@ function StaffOnboardingScreen({ onSuccess }: { onSuccess: () => void }) {
 const STAFF_VENUE_ID = "venue_andrey_alt";
 
 function StaffContentInner() {
-  const router = useRouter();
   const venueId = STAFF_VENUE_ID;
   const {
-    currentVenueId,
     staffData,
     venuesList,
     loading,
     error: staffError,
-    setCurrentVenue,
     refreshStaffData,
   } = useStaff();
 
@@ -348,19 +344,12 @@ function StaffContentInner() {
     return () => { cancelled = true; };
   }, [venueId, onShift]);
 
-  const handleVenueSelect = useCallback(
-    (selectedId: string) => {
-      setCurrentVenue(selectedId);
-      router.replace(`/mini-app/staff?${new URLSearchParams({ v: selectedId }).toString()}`);
-    },
-    [setCurrentVenue, router]
-  );
-
   // Верхние кнопки SOS (без ввода номера стола) удалены, оставляем только «SOS по столу».
 
   const handleSendSos = async () => {
     const num = Number(sosTableNumber);
     if (!Number.isFinite(num) || num < 1) return;
+    const tableId = String(sosTableNumber).trim();
     setSosLoading(true);
     setSosError(null);
     try {
@@ -378,15 +367,13 @@ function StaffContentInner() {
         }
       }
 
-      const msg = `🚨 SOS! СТОЛ №${num} ТРЕБУЕТ ВНИМАНИЯ! (Вызвал: ${staffName})`;
-      await addDoc(collection(db, "venues", venueId, "events"), {
-        type: "emergency",
-        message: msg,
-        text: msg,
-        tableId: String(num),
-        tableNumber: num,
+      const msg = `🚨 SOS: Стол №${tableId}. Требуется внимание! (Вызвал: ${staffName})`;
+      await addDoc(collection(db, "staffNotifications"), {
+        type: "sos",
+        venueId: STAFF_VENUE_ID,
+        tableId,
         read: false,
-        venueId,
+        message: msg,
         createdAt: serverTimestamp(),
       });
 
@@ -452,16 +439,6 @@ function StaffContentInner() {
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
         <p className="text-slate-500">Проверка профиля…</p>
       </main>
-    );
-  }
-
-  // Экран выбора заведения при нескольких привязках
-  if (venuesList.length > 1 && !currentVenueId && !loading) {
-    return (
-      <StaffVenuePicker
-        venues={venuesList}
-        onSelect={handleVenueSelect}
-      />
     );
   }
 
