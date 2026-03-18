@@ -249,7 +249,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
   const staffData = await getStaffByTgId(String(fromId));
   let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
   const baseUrl = getAppUrl();
-  const staffAppUrl = `${baseUrl}/mini-app?bot=staff&role=staff`;
+  const staffAppUrl = `${baseUrl}/mini-app?bot=staff&role=staff&v=1.1`;
   const inlineKeyboard: { text: string; callback_data?: string; web_app?: { url: string } }[][] = [
     [{ text: "🚨 SOS", callback_data: "sos" }, { text: "📱 Открыть пульт", web_app: { url: staffAppUrl } }],
   ];

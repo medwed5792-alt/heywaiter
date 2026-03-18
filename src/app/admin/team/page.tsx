@@ -744,6 +744,120 @@ export default function TeamPage() {
     }
   };
 
+  // Временная функция для зачистки дублей "Андрей Ковалев" + перепривязка столов.
+  const cleanupStaffDuplicates = async () => {
+    if (dupCleanupLoading) return;
+    if (typeof window === "undefined") return;
+    const ok = window.confirm("cleanupStaffDuplicates: удалить дубликаты 'Андрей Ковалев' в venues/venue_andrey_alt/staff и перепривязать столы 4/3/33/333. Операция необратима.");
+    if (!ok) return;
+
+    setDupCleanupLoading(true);
+    const venueId = VENUE_ID;
+    const targetNameNorm = "андрей ковалев";
+
+    try {
+      const normalizePersonName = (s: string | undefined | null): string => {
+        const raw = (s ?? "").toString();
+        return raw
+          .replace(/ё/g, "е")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
+      };
+
+      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
+      const staffDocs = staffSnap.docs;
+      if (staffDocs.length === 0) {
+        toast.error("staff коллекция пустая");
+        return;
+      }
+
+      const userIds = [...new Set(staffDocs.map((d) => (d.data()?.userId as string | undefined) ?? undefined).filter(Boolean))] as string[];
+
+      const globalUsers = new Map<string, GlobalUser>();
+      for (const uid of userIds) {
+        const ref = doc(db, "global_users", uid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) globalUsers.set(uid, { id: snap.id, ...(snap.data() as any) } as GlobalUser);
+      }
+
+      const toUpdatedAtMs = (v: unknown): number => {
+        try {
+          if (v && typeof v === "object" && "toDate" in (v as any) && typeof (v as any).toDate === "function") {
+            return (v as any).toDate().getTime();
+          }
+          if (v instanceof Date) return v.getTime();
+          if (typeof v === "number") return v;
+          if (typeof v === "string") {
+            const ms = new Date(v).getTime();
+            return Number.isFinite(ms) ? ms : 0;
+          }
+        } catch {
+          // ignore
+        }
+        return 0;
+      };
+
+      const candidates = staffDocs
+        .map((d) => {
+          const data = d.data() ?? {};
+          const uid = (data.userId as string | undefined) ?? undefined;
+          const g = uid ? globalUsers.get(uid) : undefined;
+          const first = (g?.firstName as string | undefined) ?? (data.firstName as string | undefined) ?? "";
+          const last = (g?.lastName as string | undefined) ?? (data.lastName as string | undefined) ?? "";
+          const fullName = [first, last].filter(Boolean).join(" ").trim();
+          const nameNorm = normalizePersonName(fullName);
+          const updatedAtMs = toUpdatedAtMs(data.updatedAt);
+          const onShift = data.onShift === true;
+          return { docId: d.id, nameNorm, updatedAtMs, onShift };
+        })
+        .filter((x) => x.nameNorm === targetNameNorm);
+
+      if (candidates.length <= 1) {
+        toast.success(`Дубликаты не найдены (found=${candidates.length}).`);
+        return;
+      }
+
+      const onShiftCandidates = candidates.filter((c) => c.onShift);
+      const pool = onShiftCandidates.length ? onShiftCandidates : candidates;
+
+      const keep = pool.sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0))[0];
+      const keepId = keep.docId;
+
+      const deleteIds = candidates.filter((c) => c.docId !== keepId).map((c) => c.docId);
+
+      // 1) Удаление duplicate docs
+      for (const dupId of deleteIds) {
+        await deleteDoc(doc(db, "venues", venueId, "staff", dupId));
+      }
+
+      toast.success(`Оставлен Андрея docId=${keepId}. Удалено dup=${deleteIds.length}. Перепривязываю столы...`);
+
+      // 2) Перепривязка столов 4/3/33/333
+      const targetTableNums = new Set(["4", "3", "33", "333"]);
+      const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
+      const batch = writeBatch(db);
+
+      for (const t of tablesSnap.docs) {
+        const data = t.data() ?? {};
+        const numDigits = String(data.number ?? "").replace(/\D/g, "");
+        if (!targetTableNums.has(numDigits)) continue;
+        batch.update(doc(db, "venues", venueId, "tables", t.id), {
+          "assignments.waiter": keepId,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+      toast.success("Перепривязка столов завершена.");
+    } catch (e) {
+      console.error("[cleanupStaffDuplicates] error:", e);
+      toast.error(e instanceof Error ? e.message : "Ошибка cleanupStaffDuplicates");
+    } finally {
+      setDupCleanupLoading(false);
+    }
+  };
+
   const handleSendOffer = async () => {
     const tgId = lookupResult?.tgId ?? lookupResult?.identities?.tg ?? "";
     if (!lookupResult?.userId || !tgId) return;
@@ -1098,6 +1212,14 @@ export default function TeamPage() {
             </button>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={cleanupStaffDuplicates}
+          disabled={dupCleanupLoading}
+          className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+        >
+          {dupCleanupLoading ? "…" : "УДАЛИТЬ КЛОНОВ Андрея"}
+        </button>
         <button
           type="button"
           className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"

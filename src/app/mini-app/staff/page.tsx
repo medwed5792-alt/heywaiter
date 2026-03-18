@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
-import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, where } from "firebase/firestore";
-import { auth, db, signInAnonymously } from "@/lib/firebase";
+import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
 
@@ -387,22 +387,47 @@ function StaffContentInner() {
 
   const handleShiftAction = async () => {
     if (actionLoading) return;
-    if (!staffId && !userId) return;
     if (!onShift && !IS_GEO_DEBUG && geoBlocked) return;
     setActionLoading(true);
     setShiftError(null);
     try {
-      if (!auth.currentUser) {
-        await signInAnonymously(auth);
+      const telegramId = getTelegramUserIdFromWindow();
+      if (!telegramId) throw new Error("Не удалось определить Telegram userId");
+
+      // Жёсткий поиск root staff doc по tgId/phone, чтобы не плодить новые IDs.
+      let resolvedStaffId: string | null = null;
+
+      // 1) По tgId
+      {
+        const snap = await getDocs(
+          query(
+            collection(db, "staff"),
+            where("venueId", "==", STAFF_VENUE_ID),
+            where("tgId", "==", telegramId),
+            limit(1)
+          )
+        );
+        if (!snap.empty) resolvedStaffId = snap.docs[0].id;
       }
-      const staffDocRef = doc(db, "venues", "venue_andrey_alt", "staff", auth.currentUser.uid);
+
+      // 2) По phone (если удалось достать phone из global_users)
+      if (!resolvedStaffId && userId) {
+        const globalSnap = await getDoc(doc(db, "global_users", userId));
+        const phoneClean = String(globalSnap.data()?.phone ?? "").replace(/\D/g, "");
+        if (phoneClean) {
+          const snap = await getDocs(
+            query(collection(db, "staff"), where("venueId", "==", STAFF_VENUE_ID), where("phone", "==", phoneClean), limit(1))
+          );
+          if (!snap.empty) resolvedStaffId = snap.docs[0].id;
+        }
+      }
+
+      if (!resolvedStaffId) throw new Error("Сотрудник не найден по tgId/phone. Обратитесь к администратору.");
       const res = await fetch("/api/staff/shift", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          staffId: staffDocRef.id,
-          userId,
-          venueId,
+          staffId: resolvedStaffId,
           action: onShift ? "stop" : "start",
         }),
       });

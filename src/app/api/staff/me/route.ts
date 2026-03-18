@@ -3,12 +3,12 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { findExistingUserIdByIdentities } from "@/lib/auth-utils";
-import type { Affiliation } from "@/lib/types";
 
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
  * Возвращает запись сотрудника для Mini App: userId, staffId, onShift.
- * Поиск: 1) staff по composite id или tgId/userId; 2) global_users по identities.tg (и др. ключам при входе из другого мессенджера); при нахождении — при необходимости создаётся staff и affiliation.
+ * Поиск: 1) staff по composite id или tgId/userId; 2) global_users по identities.tg (и др. ключам при входе из другого мессенджера).
+ * Если staff документа нет — не создаём новые записи (чтобы не плодить клонов).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -59,41 +59,33 @@ export async function GET(request: NextRequest) {
         identityKey === "tg" ? { tg: telegramId } : identityKey === "wa" ? { wa: telegramId } : { vk: telegramId }
       );
       if (foundUserId) {
-        const staffDocId = `${venueId}_${foundUserId}`;
-        const staffRef = firestore.collection("staff").doc(staffDocId);
-        let staffSnap = await staffRef.get();
-        if (!staffSnap.exists) {
+        // Ищем уже существующий root staff doc строго по userId/phone.
+        const byUser = await firestore
+          .collection("staff")
+          .where("venueId", "==", venueId)
+          .where("userId", "==", foundUserId)
+          .limit(1)
+          .get();
+
+        if (!byUser.empty) {
+          snap = byUser.docs[0];
+        } else {
+          // Если в global_users есть phone — ищем по phone (на случай регистрации только по телефону).
           const globalRef = firestore.collection("global_users").doc(foundUserId);
           const globalSnap = await globalRef.get();
           const globalData = globalSnap.data() ?? {};
-          const affiliations: Affiliation[] = Array.isArray(globalData.affiliations) ? [...globalData.affiliations] : [];
-          const hasAff = affiliations.some((a: { venueId: string }) => a.venueId === venueId);
-          if (!hasAff) {
-            affiliations.push({
-              venueId,
-              role: "waiter",
-              status: "active",
-              onShift: false,
-            });
-            await globalRef.update({ affiliations });
+          const phoneClean = String(globalData.phone ?? "").replace(/\D/g, "");
+          if (phoneClean) {
+            const byPhone = await firestore
+              .collection("staff")
+              .where("venueId", "==", venueId)
+              .where("phone", "==", phoneClean)
+              .limit(1)
+              .get();
+            if (!byPhone.empty) {
+              snap = byPhone.docs[0];
+            }
           }
-          await staffRef.set({
-            venueId,
-            userId: foundUserId,
-            role: "waiter",
-            primaryChannel: "telegram",
-            identity: globalData.identity ?? { channel: "telegram", externalId: telegramId, locale: "ru" },
-            onShift: false,
-            active: true,
-            tgId: telegramId,
-            firstName: globalData.firstName ?? null,
-            lastName: globalData.lastName ?? null,
-            updatedAt: new Date(),
-          });
-          staffSnap = await staffRef.get();
-        }
-        if (staffSnap.exists) {
-          snap = staffSnap;
         }
       }
     }
