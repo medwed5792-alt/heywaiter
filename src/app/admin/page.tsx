@@ -149,8 +149,10 @@ function getTodayKey(date: Date): DayKey {
 }
 
 function parseTimeToToday(date: Date, time: string): Date | null {
-  if (!time || !/^\d{2}:\d{2}$/.test(time)) return null;
-  const [h, m] = time.split(":").map((v) => Number(v));
+  const normalized = String(time ?? "").trim();
+  // HH:mm или HH:mm:ss
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(normalized)) return null;
+  const [h, m] = normalized.split(":").slice(0, 2).map((v) => Number(v));
   if (Number.isNaN(h) || Number.isNaN(m)) return null;
   const d = new Date(date);
   d.setHours(h, m, 0, 0);
@@ -354,11 +356,14 @@ function AdminDashboardContent() {
         setVenueType((data?.venueType as VenueType) || "full_service");
         setVenueName((data?.name as string) ?? "");
         setOperatingHours((data?.operatingHours ?? null) as OperatingHours | null);
-        const ms = (data?.manualStatus as string) ?? "open";
-        setManualStatus(ms === "closed" ? "closed" : "open");
+        const ms = data?.manualStatus as unknown;
+        // Если manualStatus не задан — строго следуем графику.
+        if (ms === "closed") setManualStatus("closed");
+        else if (ms === "open") setManualStatus("open");
+        else setManualStatus(null);
       } else {
         setVenueType("full_service");
-        setManualStatus("open");
+        setManualStatus(null);
       }
       setVenueLoading(false);
     });
@@ -1110,8 +1115,67 @@ function AdminDashboardContent() {
     return t < openMs || t >= closeMs;
   }, [operatingHours]);
 
-  /** Закрыто вручную или по графику */
-  const isVenueClosed = manualStatus === "closed" || isVenueClosedBySchedule;
+  /** Приоритет: manualStatus (если задан) > график */
+  const isVenueClosed =
+    manualStatus === "closed" ? true : manualStatus === "open" ? false : isVenueClosedBySchedule;
+
+  const handleToggleVenue = useCallback(async () => {
+    if (toggleVenueLoading) return;
+    if (isVenueClosed) {
+      // Открытие должно снять оверлей мгновенно (оптимистично).
+      setManualStatus("open");
+      setToggleVenueLoading(true);
+      setCloseVenueConfirm(null);
+      try {
+        await updateDoc(doc(db, "venues", venueId), {
+          manualStatus: "open",
+          updatedAt: serverTimestamp(),
+        });
+        toast.success("Заведение открыто");
+      } catch (e) {
+        setManualStatus(null);
+        toast.error(e instanceof Error ? e.message : "Ошибка");
+      } finally {
+        setToggleVenueLoading(false);
+      }
+      return;
+    }
+
+    // Закрытие
+    setToggleVenueLoading(true);
+    setCloseVenueConfirm(null);
+    try {
+      if (occupiedCount > 0) {
+        setCloseVenueConfirm(true);
+        return;
+      }
+
+      await updateDoc(doc(db, "venues", venueId), {
+        manualStatus: "closed",
+        updatedAt: serverTimestamp(),
+      });
+
+      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
+      const targetUids = staffSnap.docs.map((d) => d.id).filter(Boolean);
+      if (targetUids.length > 0) {
+        await addDoc(collection(db, "staffNotifications"), {
+          venueId,
+          tableId: "",
+          type: "shift_end",
+          message: "✨ Смена завершена! Всем спасибо за работу!",
+          read: false,
+          targetUids,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      toast.success("Заведение закрыто. Смена завершена.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setToggleVenueLoading(false);
+    }
+  }, [toggleVenueLoading, isVenueClosed, occupiedCount]);
 
   /** Время закрытия по графику сегодня и минут до закрытия (null если нет графика или уже после закрытия) */
   const scheduleCloseTimeAndMins = useMemo(() => {
@@ -1168,8 +1232,22 @@ function AdminDashboardContent() {
 
   return (
     <div className="relative">
+      <div className="fixed right-4 top-4 z-[9999] pointer-events-auto">
+        <button
+          type="button"
+          disabled={toggleVenueLoading}
+          onClick={handleToggleVenue}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
+            isVenueClosed
+              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+              : "bg-slate-800 text-white hover:bg-slate-700"
+          }`}
+        >
+          {toggleVenueLoading ? "…" : isVenueClosed ? "ОТКРЫТЬ ЗАВЕДЕНИЕ" : "ЗАКРЫТЬ ЗАВЕДЕНИЕ"}
+        </button>
+      </div>
       {isVenueClosed && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-900/60 rounded-xl">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 backdrop-blur-[2px] rounded-xl">
           <p className="text-lg font-medium text-white">Заведение закрыто</p>
         </div>
       )}
@@ -1181,18 +1259,6 @@ function AdminDashboardContent() {
           </p>
           <p className="mt-1 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
         </div>
-        <button
-          type="button"
-          disabled={toggleVenueLoading || manualStatus === null}
-          onClick={toggleVenueOpenClosed}
-          className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 ${
-            manualStatus === "closed"
-              ? "bg-emerald-600 text-white hover:bg-emerald-700"
-              : "bg-slate-800 text-white hover:bg-slate-700"
-          }`}
-        >
-          {toggleVenueLoading ? "…" : manualStatus === "closed" ? "ОТКРЫТЬ ЗАВЕДЕНИЕ" : "ЗАКРЫТЬ ЗАВЕДЕНИЕ"}
-        </button>
       </div>
 
       {closeVenueConfirm === true && (
