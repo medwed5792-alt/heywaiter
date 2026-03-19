@@ -27,8 +27,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    console.log(`DEBUG: TG User ID = ${telegramId}`);
+
     const firestore = getAdminFirestore();
     const byCompositeId = firestore.collection("staff").doc(`${venueId}_${telegramId}`);
+    console.log(`DEBUG: Looking in DB path = staff/${venueId}_${telegramId}`);
     let snap = await byCompositeId.get();
 
     if (!snap.exists) {
