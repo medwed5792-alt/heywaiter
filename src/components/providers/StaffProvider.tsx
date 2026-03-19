@@ -19,12 +19,56 @@ import {
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
 const DEFAULT_VENUE_ID = "venue_andrey_alt";
 
+function platformKeyFromUrl(raw: string | null): string | null {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return null;
+  switch (v) {
+    case "tg":
+    case "telegram":
+      return "tg";
+    case "wa":
+    case "whatsapp":
+      return "wa";
+    case "vk":
+    case "vkontakte":
+      return "vk";
+    case "viber":
+      return "viber";
+    case "wechat":
+      return "wechat";
+    case "inst":
+    case "instagram":
+      return "inst";
+    case "fb":
+    case "facebook":
+      return "fb";
+    case "line":
+      return "line";
+    default:
+      return v;
+  }
+}
+
 function getTelegramUserId(): string | null {
   if (typeof window === "undefined") return null;
   const tg = (window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } })
     .Telegram?.WebApp;
   const id = tg?.initDataUnsafe?.user?.id;
   return id != null ? String(id) : null;
+}
+
+function getPlatformIdentity(): { platformKey: string; platformId: string | null } {
+  if (typeof window === "undefined") return { platformKey: "tg", platformId: null };
+  const telegramId = getTelegramUserId();
+
+  const params = new URLSearchParams(window.location.search);
+  const urlPlatformKey = platformKeyFromUrl(params.get("platform") ?? params.get("channel")) ?? null;
+  const urlPlatformId = params.get("platformId") ?? params.get("chatId") ?? params.get("telegramId");
+
+  const platformKey = urlPlatformKey ?? (telegramId ? "tg" : "tg");
+  const platformId = (urlPlatformId ?? telegramId ?? null)?.trim() || null;
+
+  return { platformKey, platformId };
 }
 
 function getStaffVenueFromSession(): string | null {
@@ -104,18 +148,22 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
   const venuesFetched = useRef(false);
 
   const fetchVenues = useCallback(async (): Promise<VenueOption[]> => {
-    const telegramId = getTelegramUserId();
-    if (!telegramId) return [];
-    const res = await fetch(`/api/staff/venues?telegramId=${encodeURIComponent(telegramId)}`);
+    const { platformKey, platformId } = getPlatformIdentity();
+    // /api/staff/venues сейчас завязан на identities.tg.
+    // Для не-TG каналов возвращаем пустой список, но дальше всё равно делаем fetchMe с универсальными данными.
+    if (platformKey !== "tg" || !platformId) return [];
+    const res = await fetch(`/api/staff/venues?telegramId=${encodeURIComponent(platformId)}`);
     const data = await res.json().catch(() => ({}));
     return (data.venues ?? []) as VenueOption[];
   }, []);
 
   const fetchMe = useCallback(async (venueId: string): Promise<StaffData | null> => {
-    const telegramId = getTelegramUserId();
-    if (!telegramId) return null;
+    const { platformKey, platformId } = getPlatformIdentity();
+    if (!platformId) return null;
     const res = await fetch(
-      `/api/staff/me?venueId=${encodeURIComponent(venueId)}&telegramId=${encodeURIComponent(telegramId)}`
+      `/api/staff/me?venueId=${encodeURIComponent(venueId)}&channel=${encodeURIComponent(
+        platformKey
+      )}&platformId=${encodeURIComponent(platformId)}${platformKey === "tg" ? `&telegramId=${encodeURIComponent(platformId)}` : ""}`
     );
     const data = await res.json();
     if (!res.ok) {
@@ -151,9 +199,9 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
 
   // Инициализация: загрузка venues, затем выбор заведения и fetchMe
   useEffect(() => {
-    const telegramId = getTelegramUserId();
-    if (!telegramId) {
-      setError("Откройте приложение из Telegram");
+    const { platformId } = getPlatformIdentity();
+    if (!platformId) {
+      setError("Откройте приложение из нужного мессенджера");
       setLoading(false);
       return;
     }

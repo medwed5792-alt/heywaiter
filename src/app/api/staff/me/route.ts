@@ -2,42 +2,96 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { findExistingUserIdByIdentities } from "@/lib/auth-utils";
+import { FieldValue } from "firebase-admin/firestore";
+import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
  * Возвращает запись сотрудника для Mini App: userId, staffId, onShift.
- * Поиск: 1) staff по composite id или tgId/userId; 2) global_users по identities.tg (и др. ключам при входе из другого мессенджера).
+ * Универсальный поиск:
+ * 1) global_users по identities.<channelKey> (tg/wa/vk/viber/inst/wechat/fb/line)
+ * 2) Fallback: если по соц-ID нет — ищем global_users по identities.phone и привязываем текущий соц-ID в identities
+ * 3) staff на venue по userId
  * Если staff документа нет — не создаём новые записи (чтобы не плодить клонов).
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     // Для синхронизации с админкой используем строго один venue.
-    const requestedVenueId = searchParams.get("venueId")?.trim();
+    const _requestedVenueId = searchParams.get("venueId")?.trim();
     const venueId = "venue_andrey_alt";
-    const telegramId = searchParams.get("telegramId")?.trim();
-    const channel = searchParams.get("channel")?.trim() || "tg";
+    const channelParam = searchParams.get("channel")?.trim() || searchParams.get("platform")?.trim() || "tg";
+    const key = toIdentityKey(channelParam);
+    if (!key) {
+      return NextResponse.json({ error: "Неподдерживаемая платформа" }, { status: 400 });
+    }
 
-    // requestedVenueId намеренно игнорируем.
-    if (!telegramId) {
+    const telegramId = searchParams.get("telegramId")?.trim();
+    const platformIdParam = searchParams.get("platformId")?.trim();
+
+    const PLATFORM_ID_PARAM_BY_KEY: Record<string, string> = {
+      tg: "tgId",
+      wa: "waId",
+      vk: "vkId",
+      viber: "viberId",
+      wechat: "wechatId",
+      // В унифицированных identities ключ "inst" хранит Instagram ID
+      inst: "instagramId",
+      fb: "facebookId",
+      line: "lineId",
+    };
+
+    const platformId =
+      platformIdParam ||
+      (key === "tg" ? telegramId : undefined) ||
+      (PLATFORM_ID_PARAM_BY_KEY[key] ? searchParams.get(PLATFORM_ID_PARAM_BY_KEY[key])?.trim() : undefined);
+
+    const phoneRaw = searchParams.get("phone")?.trim() || "";
+    const phoneClean = phoneRaw.replace(/\D/g, "");
+
+    // Миграция: старый клиент мог передавать только telegramId.
+    if (!platformId) {
       return NextResponse.json(
-        { error: "telegramId обязателен" },
+        { error: "platformId обязателен" },
         { status: 400 }
       );
     }
 
     const firestore = getAdminFirestore();
 
-    // 1) Global Profile: ищем глобальный userId по Telegram ID в global_users.identities.tg
-    const foundGlobalUserId = await findExistingUserIdByIdentities({ tg: telegramId });
+    // 1) Global Profile: ищем global_user по конкретному identities.<key> только для текущего канала
+    let foundGlobalUserId: string | null = null;
+    const bySocialSnap = await firestore
+      .collection("global_users")
+      .where(`identities.${key}`, "==", platformId)
+      .limit(1)
+      .get();
+
+    if (!bySocialSnap.empty) {
+      foundGlobalUserId = bySocialSnap.docs[0].id;
+    } else if (phoneClean) {
+      // 2) Fallback по телефону: ищем global_users по identities.phone и привязываем текущий соц-ID
+      const byPhoneSnap = await firestore
+        .collection("global_users")
+        .where("identities.phone", "==", phoneClean)
+        .limit(1)
+        .get();
+
+      if (!byPhoneSnap.empty) {
+        foundGlobalUserId = byPhoneSnap.docs[0].id;
+        const globalRef = firestore.collection("global_users").doc(foundGlobalUserId);
+        const current = byPhoneSnap.docs[0].data() ?? {};
+        const currentIdentities = (current.identities ?? {}) as Record<string, unknown>;
+        await globalRef.update({
+          identities: { ...currentIdentities, [key]: platformId },
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    }
+
     if (!foundGlobalUserId) {
-      return NextResponse.json(
-        {
-          error: `Ваш Telegram ID [${telegramId}] не найден в системе SaaS. Обратитесь к супер-админу`,
-        },
-        { status: 404 }
-      );
+      // Survival Mode: ID соцсети не привязан, phone не помог — фронт должен показать форму привязки.
+      return NextResponse.json({ error: "ID_NOT_BOUND" }, { status: 404 });
     }
 
     const globalUserRef = firestore.collection("global_users").doc(foundGlobalUserId);
@@ -51,15 +105,15 @@ export async function GET(request: NextRequest) {
         a?.venueId === venueId && a?.status !== "former"
     );
 
-    // Дополнительно (совместимость): иногда может существовать документ venues/.../staff/{tgId}
-    const venueStaffByTgSnap = await firestore
+    // Дополнительно (совместимость): иногда может существовать документ venues/.../staff/{socialId}
+    const venueStaffBySocialSnap = await firestore
       .collection("venues")
       .doc(venueId)
       .collection("staff")
-      .doc(telegramId)
+      .doc(platformId)
       .get();
 
-    if (!hasVenueByAffiliation && !venueStaffByTgSnap.exists) {
+    if (!hasVenueByAffiliation && !venueStaffBySocialSnap.exists) {
       return NextResponse.json(
         { error: "Сотрудник не найден для этого заведения" },
         { status: 404 }
@@ -76,14 +130,38 @@ export async function GET(request: NextRequest) {
       .limit(1)
       .get();
 
-    // Фолбэк на совместимость со старым полем tgId
+    // Фолбэк на совместимость по внешнему ID в staff документе (tgId/waId/vkId/...)
     if (staffSnap.empty) {
-      staffSnap = await firestore
-        .collection("staff")
-        .where("venueId", "==", venueId)
-        .where("tgId", "==", telegramId)
-        .limit(1)
-        .get();
+      const PLATFORM_STAFF_FIELD: Partial<Record<typeof key, string>> = {
+        tg: "tgId",
+        wa: "waId",
+        vk: "vkId",
+        viber: "viberId",
+        wechat: "wechatId",
+        inst: "instagramId",
+        fb: "facebookId",
+        line: "lineId",
+      };
+
+      const field = PLATFORM_STAFF_FIELD[key];
+      if (field) {
+        staffSnap = await firestore
+          .collection("staff")
+          .where("venueId", "==", venueId)
+          .where(field, "==", platformId)
+          .limit(1)
+          .get();
+      }
+
+      // Ещё один совместимый вариант: external identities внутри staff
+      if (staffSnap.empty) {
+        staffSnap = await firestore
+          .collection("staff")
+          .where("venueId", "==", venueId)
+          .where(`identities.${key}`, "==", platformId)
+          .limit(1)
+          .get();
+      }
     }
 
     if (staffSnap.empty) {

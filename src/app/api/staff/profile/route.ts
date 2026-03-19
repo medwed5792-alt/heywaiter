@@ -3,23 +3,34 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 
 /**
- * GET /api/staff/profile?telegramId=...
+ * GET /api/staff/profile?channel=...&platformId=...
  * Личный кабинет: данные global_user по identities.tg (только для владельца по telegramId).
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const telegramId = searchParams.get("telegramId")?.trim();
-    if (!telegramId) {
-      return NextResponse.json({ error: "telegramId обязателен" }, { status: 400 });
+    const channelParam =
+      searchParams.get("channel")?.trim() || searchParams.get("platform")?.trim() || "tg";
+    const platformId =
+      searchParams.get("platformId")?.trim() ||
+      (toIdentityKey(channelParam) === "tg" ? searchParams.get("telegramId")?.trim() : undefined) ||
+      "";
+
+    const key = toIdentityKey(channelParam);
+    if (!key) {
+      return NextResponse.json({ error: "Неподдерживаемая платформа" }, { status: 400 });
+    }
+    if (!platformId) {
+      return NextResponse.json({ error: "platformId обязателен" }, { status: 400 });
     }
 
     const firestore = getAdminFirestore();
     const snap = await firestore
       .collection("global_users")
-      .where("identities.tg", "==", telegramId)
+      .where(`identities.${key}`, "==", platformId)
       .limit(1)
       .get();
 
@@ -53,21 +64,36 @@ export async function GET(request: NextRequest) {
 
 /**
  * PATCH /api/staff/profile
- * Обновление полей личного кабинета: phone, birthDate, photoUrl (только свои по telegramId).
- * Body: { telegramId: string, phone?: string, birthDate?: string, photoUrl?: string }
+ * Обновление полей личного кабинета: phone, birthDate, photoUrl + identities.<platformKey>.
+ * Body: { channel?: string, platformId?: string, telegramId?: string, phone?: string, birthDate?: string, photoUrl?: string, identities?: Record<string, string | null> }
  */
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const telegramId = typeof body.telegramId === "string" ? body.telegramId.trim() : "";
-    if (!telegramId) {
-      return NextResponse.json({ error: "telegramId обязателен" }, { status: 400 });
+
+    const channelParam =
+      typeof body.channel === "string" && body.channel.trim()
+        ? body.channel.trim()
+        : "tg";
+
+    const key = toIdentityKey(channelParam);
+    if (!key) {
+      return NextResponse.json({ error: "Неподдерживаемая платформа" }, { status: 400 });
+    }
+
+    const platformId =
+      (typeof body.platformId === "string" ? body.platformId.trim() : "") ||
+      (typeof body.telegramId === "string" && key === "tg" ? body.telegramId.trim() : "") ||
+      "";
+
+    if (!platformId) {
+      return NextResponse.json({ error: "platformId обязателен" }, { status: 400 });
     }
 
     const firestore = getAdminFirestore();
     const snap = await firestore
       .collection("global_users")
-      .where("identities.tg", "==", telegramId)
+      .where(`identities.${key}`, "==", platformId)
       .limit(1)
       .get();
 
@@ -78,19 +104,57 @@ export async function PATCH(request: NextRequest) {
     const ref = snap.docs[0].ref;
     const current = snap.docs[0].data();
     const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+    const nextIdentities = { ...(current.identities as Record<string, string | null> | undefined) };
+    let identitiesUpdated = false;
 
     if (body.phone !== undefined) {
       const phone = typeof body.phone === "string" ? body.phone.replace(/\D/g, "") : "";
       updates.phone = phone || null;
-      const identities = { ...(current.identities as Record<string, string>), ...(phone ? { phone } : {}) };
-      if (!phone && identities.phone) delete identities.phone;
-      updates.identities = identities;
+      if (phone) nextIdentities.phone = phone;
+      else delete nextIdentities.phone;
+      identitiesUpdated = true;
     }
     if (body.birthDate !== undefined) {
       updates.birthDate = typeof body.birthDate === "string" ? body.birthDate.trim() || null : null;
     }
     if (body.photoUrl !== undefined) {
       updates.photoUrl = typeof body.photoUrl === "string" ? body.photoUrl.trim() || null : null;
+    }
+
+    if (body.identities && typeof body.identities === "object") {
+      const inputIdentities = body.identities as Record<string, unknown>;
+
+      for (const [k, v] of Object.entries(inputIdentities)) {
+        // Обновляем только известные ключи identities (8 соцсетей + phone/email)
+        if (
+          k !== "tg" &&
+          k !== "wa" &&
+          k !== "vk" &&
+          k !== "viber" &&
+          k !== "wechat" &&
+          k !== "inst" &&
+          k !== "fb" &&
+          k !== "line" &&
+          k !== "phone" &&
+          k !== "email"
+        ) {
+          continue;
+        }
+
+        if (v === undefined) continue;
+        const nextVal = typeof v === "string" ? v.trim() : "";
+
+        if (!nextVal) {
+          delete nextIdentities[k];
+        } else {
+          nextIdentities[k] = nextVal;
+        }
+        identitiesUpdated = true;
+      }
+    }
+
+    if (identitiesUpdated) {
+      updates.identities = nextIdentities;
     }
 
     if (Object.keys(updates).length <= 1) {

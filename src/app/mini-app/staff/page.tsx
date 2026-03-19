@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -66,21 +66,83 @@ function getTelegramUserIdFromWindow(): string | null {
   return id != null ? String(id) : null;
 }
 
+function platformKeyToLabel(platformKey: string): string {
+  const k = platformKey.toLowerCase();
+  switch (k) {
+    case "tg":
+      return "Telegram";
+    case "wa":
+      return "WhatsApp";
+    case "vk":
+      return "VKontakte";
+    case "viber":
+      return "Viber";
+    case "wechat":
+      return "WeChat";
+    case "inst":
+      return "Instagram";
+    case "fb":
+      return "Facebook";
+    case "line":
+      return "Line";
+    default:
+      return platformKey;
+  }
+}
+
+function platformKeyFromUrl(raw: string | null): string | null {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return null;
+  switch (v) {
+    case "tg":
+    case "telegram":
+      return "tg";
+    case "wa":
+    case "whatsapp":
+      return "wa";
+    case "vk":
+    case "vkontakte":
+    case "vkontacte":
+      return "vk";
+    case "viber":
+      return "viber";
+    case "wechat":
+      return "wechat";
+    case "inst":
+    case "instagram":
+      return "inst";
+    case "fb":
+    case "facebook":
+      return "fb";
+    case "line":
+      return "line";
+    default:
+      return v;
+  }
+}
+
 /** Первая регистрация: только Имя и Фамилия → создаётся global_user, редирект в Личный кабинет. */
-function StaffOnboardingScreen({ onSuccess }: { onSuccess: () => void }) {
+function StaffOnboardingScreen({
+  onSuccess,
+  platformKey,
+  platformId,
+}: {
+  onSuccess: () => void;
+  platformKey: string;
+  platformId: string | null;
+}) {
   const router = useRouter();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const platformId = getTelegramUserIdFromWindow();
-  const platform = "tg";
+  const platform = platformKey;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!platformId) {
-      setError("Откройте приложение из Telegram");
+      setError("Откройте приложение из нужного мессенджера");
       return;
     }
     setError(null);
@@ -99,7 +161,11 @@ function StaffOnboardingScreen({ onSuccess }: { onSuccess: () => void }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка регистрации");
       onSuccess();
-      router.replace("/mini-app/staff/cabinet");
+      router.replace(
+        `/mini-app/staff/cabinet?platform=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(
+          platformId ?? ""
+        )}`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка");
     } finally {
@@ -155,6 +221,7 @@ const STAFF_VENUE_ID = "venue_andrey_alt";
 
 function StaffContentInner() {
   const venueId = STAFF_VENUE_ID;
+  const searchParams = useSearchParams();
   const {
     staffData,
     venuesList,
@@ -183,7 +250,18 @@ function StaffContentInner() {
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
   const { userId, staffId, onShift } = safeStaffData;
-  const tgIdForRender = getTelegramUserIdFromWindow();
+  const tgIdForDetect = getTelegramUserIdFromWindow();
+  const urlPlatformRaw = searchParams.get("platform") ?? searchParams.get("channel");
+  const urlPlatformId = searchParams.get("platformId") ?? searchParams.get("chatId") ?? searchParams.get("telegramId");
+  const platformKey = platformKeyFromUrl(urlPlatformRaw) ?? (tgIdForDetect ? "tg" : "tg");
+  const platformIdForDetect = (urlPlatformId ?? tgIdForDetect ?? null)?.trim() || null;
+  const platformLabelForRender = platformKeyToLabel(platformKey);
+
+  const isIdNotBound = staffError === "ID_NOT_BOUND";
+
+  const [bindPhone, setBindPhone] = useState("");
+  const [bindPhoneSaving, setBindPhoneSaving] = useState(false);
+  const [bindPhoneError, setBindPhoneError] = useState<string | null>(null);
 
   const fetchNotifications = useCallback(async () => {
     if (!staffId) return;
@@ -393,8 +471,7 @@ function StaffContentInner() {
     setActionLoading(true);
     setShiftError(null);
     try {
-      const telegramId = getTelegramUserIdFromWindow();
-      if (!telegramId) throw new Error("Не удалось определить Telegram userId");
+      if (!platformIdForDetect) throw new Error("Не удалось определить ID платформы");
 
       // Жёсткий поиск root staff doc по tgId/phone, чтобы не плодить новые IDs.
       let resolvedStaffId: string | null = staffId;
@@ -404,12 +481,12 @@ function StaffContentInner() {
       if (!resolvedStaffId) {
 
         // 1) По tgId
-        {
+        if (platformKey === "tg") {
           const snap = await getDocs(
             query(
               collection(db, "staff"),
               where("venueId", "==", STAFF_VENUE_ID),
-              where("tgId", "==", telegramId),
+              where("tgId", "==", platformIdForDetect),
               limit(1)
             )
           );
@@ -434,7 +511,7 @@ function StaffContentInner() {
         }
       }
 
-      if (!resolvedStaffId) throw new Error("Сотрудник не найден по tgId/phone. Обратитесь к администратору.");
+      if (!resolvedStaffId) throw new Error("Сотрудник не найден. Обратитесь к администратору.");
       const res = await fetch("/api/staff/shift", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -460,28 +537,38 @@ function StaffContentInner() {
   // Нет заведений: проверяем профиль → редирект в кабинет или онбординг
   useEffect(() => {
     if (loading || venuesList.length > 0) return;
-    if (typeof staffError === "string" && staffError.includes("не найден в системе SaaS")) return;
-    const tgId = getTelegramUserIdFromWindow();
-    if (!tgId) return;
+    // Если staff найден (даже при пустом venuesList из-за ограничений эндпойнта),
+    // не уводим в кабинет/онбординг.
+    if (userId || staffId) return;
+    if (isIdNotBound) return;
+    if (!platformIdForDetect) return;
     let cancelled = false;
     (async () => {
-      const res = await fetch(`/api/staff/profile?telegramId=${encodeURIComponent(tgId)}`);
+      const res = await fetch(
+        `/api/staff/profile?channel=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(platformIdForDetect)}`
+      );
       if (cancelled) return;
       if (res.ok) {
-        router.replace("/mini-app/staff/cabinet");
+        router.replace(
+          `/mini-app/staff/cabinet?platform=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(
+            platformIdForDetect ?? ""
+          )}`
+        );
       } else {
         setFreeAgentProfileChecked(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, venuesList.length, router, staffError]);
+  }, [loading, venuesList.length, router, isIdNotBound, platformIdForDetect, platformKey, userId, staffId]);
 
   // Пока проверяем профиль при отсутствии заведений — показываем ожидание
   if (
     venuesList.length === 0 &&
     !freeAgentProfileChecked &&
     !loading &&
-    !(typeof staffError === "string" && staffError.includes("не найден в системе SaaS"))
+    !userId &&
+    !staffId &&
+    !isIdNotBound
   ) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
@@ -494,22 +581,79 @@ function StaffContentInner() {
     return <div className="p-8 text-center">Загрузка данных...</div>;
   }
 
-  // Если Telegram ID не найден в SaaS — показываем сообщение и не уводим в онбординг.
-  if (typeof staffError === "string" && staffError.includes("не найден в системе SaaS")) {
+  // Survival Mode: платформенный ID не привязан — показываем форму привязки, а не Application Error.
+  if (isIdNotBound) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-center text-sm text-red-700">{staffError}</p>
-        {tgIdForRender ? (
-          <p className="mt-2 text-xs text-slate-500">Telegram: {tgIdForRender}</p>
-        ) : null}
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h1 className="text-lg font-semibold text-slate-900">Нужна привязка</h1>
+          <p className="mt-2 text-sm text-slate-700">
+            Ваш {platformLabelForRender} ID: <span className="font-mono">{platformIdForDetect ?? "—"}</span> не привязан.
+            Введите номер телефона для авторизации или свяжитесь с админом.
+          </p>
+
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBindPhoneError(null);
+              if (!platformIdForDetect) {
+                setBindPhoneError("Не удалось определить ID платформы");
+                return;
+              }
+              if (!bindPhone.trim()) {
+                setBindPhoneError("Введите номер телефона");
+                return;
+              }
+              setBindPhoneSaving(true);
+              try {
+                const res = await fetch(
+                  `/api/staff/me?venueId=${encodeURIComponent(STAFF_VENUE_ID)}&channel=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(platformIdForDetect)}&phone=${encodeURIComponent(
+                    bindPhone.trim()
+                  )}`
+                );
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || "Ошибка привязки");
+                await refreshStaffData();
+              } catch (err) {
+                setBindPhoneError(err instanceof Error ? err.message : "Ошибка привязки");
+              } finally {
+                setBindPhoneSaving(false);
+              }
+            }}
+            className="mt-5 space-y-4"
+          >
+            <label className="block">
+              <span className="block text-xs font-medium text-slate-600">Телефон</span>
+              <input
+                type="tel"
+                value={bindPhone}
+                onChange={(e) => setBindPhone(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="+7 900 123-45-67"
+              />
+            </label>
+
+            {bindPhoneError && <p className="text-sm text-red-600">{bindPhoneError}</p>}
+
+            <button
+              type="submit"
+              disabled={bindPhoneSaving}
+              className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {bindPhoneSaving ? "Привязка…" : "Авторизоваться"}
+            </button>
+          </form>
+        </div>
       </main>
     );
   }
 
   // Нет заведений и профиль не найден (или ещё не проверен) → онбординг
-  if (venuesList.length === 0 && (freeAgentProfileChecked || !staffError)) {
+  if (venuesList.length === 0 && !userId && !staffId && (freeAgentProfileChecked || !staffError)) {
     return (
       <StaffOnboardingScreen
+        platformKey={platformKey}
+        platformId={platformIdForDetect}
         onSuccess={() => {
           setFreeAgentProfileChecked(false);
           refreshStaffData();
@@ -518,9 +662,11 @@ function StaffContentInner() {
     );
   }
 
-  if (staffError && !userId && !staffId) {
+  if (staffError && !userId && !staffId && !isIdNotBound) {
     return (
       <StaffOnboardingScreen
+        platformKey={platformKey}
+        platformId={platformIdForDetect}
         onSuccess={() => {
           setFreeAgentProfileChecked(false);
           refreshStaffData();
