@@ -244,6 +244,8 @@ function StaffContentInner() {
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryItem[]>([]);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [freeAgentProfileChecked, setFreeAgentProfileChecked] = useState(false);
+  const [profileCheckTimedOut, setProfileCheckTimedOut] = useState(false);
+  const [profileCheckRetryNonce, setProfileCheckRetryNonce] = useState(0);
   const [sosTableNumber, setSosTableNumber] = useState<string>("");
   const [sosLoading, setSosLoading] = useState(false);
   const [sosError, setSosError] = useState<string | null>(null);
@@ -530,9 +532,18 @@ function StaffContentInner() {
     }
   };
 
-  if (typeof window !== "undefined" && (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp) {
-    (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp?.ready?.();
-  }
+  // Telegram SDK иногда может "глюкануть" на старте; не допускаем падение компонента.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tg = (window as unknown as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
+    if (!tg) return;
+    try {
+      tg.ready?.();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[mini-app/staff] WebApp.ready error:", e);
+    }
+  }, []);
 
   // Нет заведений: проверяем профиль → редирект в кабинет или онбординг
   useEffect(() => {
@@ -559,7 +570,24 @@ function StaffContentInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, venuesList.length, router, isIdNotBound, platformIdForDetect, platformKey, userId, staffId]);
+  }, [loading, venuesList.length, router, isIdNotBound, platformIdForDetect, platformKey, userId, staffId, profileCheckRetryNonce]);
+
+  // Таймаут, чтобы не держать пользователя бесконечно на "Проверка профиля…"
+  useEffect(() => {
+    const shouldWait =
+      venuesList.length === 0 &&
+      !freeAgentProfileChecked &&
+      !loading &&
+      !userId &&
+      !staffId &&
+      !isIdNotBound;
+
+    if (!shouldWait) return;
+
+    setProfileCheckTimedOut(false);
+    const t = setTimeout(() => setProfileCheckTimedOut(true), 5000);
+    return () => clearTimeout(t);
+  }, [venuesList.length, freeAgentProfileChecked, loading, userId, staffId, isIdNotBound]);
 
   // Пока проверяем профиль при отсутствии заведений — показываем ожидание
   if (
@@ -572,7 +600,24 @@ function StaffContentInner() {
   ) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500">Проверка профиля…</p>
+        {!profileCheckTimedOut ? (
+          <p className="text-slate-500">Проверка профиля…</p>
+        ) : (
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-slate-900">Не удалось проверить профиль</h2>
+            <p className="mt-2 text-sm text-slate-600">Попробуйте ещё раз через 5 секунд или откройте приложение заново.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setProfileCheckTimedOut(false);
+                setProfileCheckRetryNonce((n) => n + 1);
+              }}
+              className="mt-4 w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Попробовать снова
+            </button>
+          </div>
+        )}
       </main>
     );
   }

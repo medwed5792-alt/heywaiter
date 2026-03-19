@@ -165,15 +165,21 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
         platformKey
       )}&platformId=${encodeURIComponent(platformId)}${platformKey === "tg" ? `&telegramId=${encodeURIComponent(platformId)}` : ""}`
     );
-    const data = await res.json();
+    let data: any;
+    try {
+      data = await res.json();
+    } catch {
+      setError("Некорректный ответ сервера");
+      return null;
+    }
     if (!res.ok) {
-      setError(data.error || "Не удалось загрузить данные");
+      setError(data?.error || "Не удалось загрузить данные");
       return null;
     }
     setError(null);
     const next: StaffData = {
-      userId: data.userId ?? null,
-      staffId: data.staffId ?? null,
+      userId: data?.userId ?? null,
+      staffId: data?.staffId ?? null,
       onShift: data.onShift === true,
     };
     setStaffData(next);
