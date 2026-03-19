@@ -246,7 +246,6 @@ export function SettingsHallsSection() {
   const [halls, setHalls] = useState<Hall[]>([]);
   const [tables, setTables] = useState<VenueTable[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [cleanupLoading, setCleanupLoading] = useState(false);
   const [newHallName, setNewHallName] = useState("");
   const [editingHall, setEditingHall] = useState<Hall | null>(null);
   const [editingHallName, setEditingHallName] = useState("");
@@ -263,29 +262,37 @@ export function SettingsHallsSection() {
     onConfirm: () => void | Promise<void>;
   } | null>(null);
 
-  const cleanupPhantomTables = async () => {
-    setCleanupLoading(true);
-    try {
-      const res = await fetch("/api/admin/cleanup-phantom-tables", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ venueId: VENUE_ID }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data?.error || "Ошибка очистки");
-      }
-      const data = (await res.json()) as { deleted?: number };
-      const deleted = Number(data.deleted ?? 0);
-      toast.success(`Очистка завершена: удалено ${deleted} фантомных столов`);
-      // Таблицы пересчитаются заново по fetch/load (мы их не трогаем локально).
-      // Быстрей всего — просто перезагрузить страницу данных секции.
-      void loadHallsAndTables();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка очистки");
-    } finally {
-      setCleanupLoading(false);
+  const normalizeTableNumber = (value: unknown): number | null => {
+    if (value === undefined || value === null) return null;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value === 0) return null;
+      return value;
     }
+    if (typeof value === "string") {
+      const s = value.trim();
+      if (!s || s === "0") return null;
+      const n = Number(s);
+      if (!Number.isFinite(n) || n === 0) return null;
+      return n;
+    }
+    return null;
+  };
+
+  const parseVenueTableDoc = (d: { id: string; data: () => any }): VenueTable | null => {
+    const id = d?.id;
+    if (!id) return null;
+    const data = d?.data?.() ?? {};
+    const number = normalizeTableNumber(data.number);
+    if (number == null) return null;
+    const hallId = (data.hallId as string) || (data.roomId as string) || "";
+    return {
+      id,
+      hallId,
+      number,
+      name: data.name as string | undefined,
+      description: data.description as string | undefined,
+      seats: data.seats as number | undefined,
+    };
   };
 
   // Жёсткая свая: работаем только с venues/venue_andrey_alt/*
@@ -329,18 +336,7 @@ export function SettingsHallsSection() {
       }
       try {
         const tablesSnap = await getDocs(tablesRef);
-        tableList = tablesSnap.docs.map((d) => {
-          const data = d.data();
-          const hallId = (data.hallId as string) || (data.roomId as string) || "";
-          return {
-            id: d.id,
-            hallId,
-            number: (data.number as number) ?? 0,
-            name: data.name as string | undefined,
-            description: data.description as string | undefined,
-            seats: data.seats as number | undefined,
-          };
-        });
+        tableList = tablesSnap.docs.map(parseVenueTableDoc).filter((t): t is VenueTable => Boolean(t));
       } catch {
         // столы не загрузились — оставляем пустой список
       }
@@ -370,20 +366,7 @@ export function SettingsHallsSection() {
     }));
     hallList.sort((a, b) => a.order - b.order);
     setHalls(hallList);
-    setTables(
-      tablesSnap.docs.map((d) => {
-        const data = d.data();
-        const hallId = (data.hallId as string) || (data.roomId as string) || "";
-        return {
-          id: d.id,
-          hallId,
-          number: (data.number as number) ?? 0,
-          name: data.name as string | undefined,
-          description: data.description as string | undefined,
-          seats: data.seats as number | undefined,
-        };
-      })
-    );
+    setTables(tablesSnap.docs.map(parseVenueTableDoc).filter((t): t is VenueTable => Boolean(t)));
   };
 
   const addHall = async () => {
@@ -547,20 +530,6 @@ export function SettingsHallsSection() {
           {" "}
           https://heywaiter.vercel.app/check-in?v=venue_andrey_alt&t=ID_СТОЛА.
         </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={cleanupLoading}
-            onClick={async () => {
-              const ok = window.confirm("Очистить коллекцию venues/venue_andrey_alt/tables от фантомных столов (number=0/'0'/пусто)? Операция необратима.");
-              if (!ok) return;
-              await cleanupPhantomTables();
-            }}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
-          >
-            {cleanupLoading ? "Очистка…" : "Очистить фантомные столы"}
-          </button>
-        </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 min-h-[40px]">
           <input type="text" placeholder="Название зала" value={newHallName} onChange={(e) => setNewHallName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addHall()} className="rounded border border-gray-300 px-3 py-1.5 text-sm w-48 flex-shrink-0" />
           <button type="button" className="inline-flex flex-shrink-0 items-center gap-1 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800" onClick={addHall}><Plus className="h-4 w-4" /> Добавить зал</button>
