@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { User } from "lucide-react";
 
@@ -58,7 +58,15 @@ interface PendingOffer {
   venueName: string;
 }
 
-export default function StaffCabinetPage() {
+function Loading() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+      <p className="text-slate-500">Загрузка…</p>
+    </main>
+  );
+}
+
+function StaffCabinetPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -478,5 +486,13 @@ export default function StaffCabinetPage() {
         Имя и фамилия задаются при регистрации. Когда заведение отправит вам предложение о работе, вы сможете принять его в боте и получить доступ к сменам.
       </p>
     </main>
+  );
+}
+
+export default function StaffCabinetPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <StaffCabinetPageInner />
+    </Suspense>
   );
 }

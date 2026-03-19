@@ -2,6 +2,40 @@ export const IS_GEO_DEBUG = false;
 
 const R_EARTH_M = 6_371_000;
 
+/**
+ * Проверка: сотрудник/гость вне радиуса заведения.
+ * Возвращает `true`, если точка находится за пределами зоны.
+ */
+export const isOutsideVenue = (
+  lat: number,
+  lng: number,
+  venueLat: number,
+  venueLng: number,
+  radius: number
+): boolean => {
+  // В режиме debug гео-запретов нет.
+  if (IS_GEO_DEBUG) return false;
+  const distance = haversineDistanceM(lat, lng, venueLat, venueLng);
+  return distance > radius;
+};
+
+/**
+ * Сдвигает координаты на заданное число метров по север-юг и восток-запад.
+ * Используется как простая аппроксимация (достаточно для "simulate out of zone").
+ */
+export const offsetLatLngByMeters = (
+  lat: number,
+  lng: number,
+  offsetNorthMeters: number,
+  offsetEastMeters: number
+): { lat: number; lng: number } => {
+  // 1 градус широты ~ 111_320 м
+  const latDelta = offsetNorthMeters / 111_320;
+  // 1 градус долготы меняется с широтой
+  const lngDelta = offsetEastMeters / (111_320 * Math.cos((lat * Math.PI) / 180));
+  return { lat: lat + latDelta, lng: lng + lngDelta };
+};
+
 /** Расстояние между двумя точками (lat/lng) в метрах по формуле Haversine. */
 export function haversineDistanceM(
   lat1: number,
