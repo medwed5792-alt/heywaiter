@@ -221,6 +221,7 @@ const STAFF_VENUE_ID = "venue_andrey_alt";
 
 function StaffContentInner() {
   const venueId = STAFF_VENUE_ID;
+  const router = useRouter();
   const searchParams = useSearchParams();
   const {
     staffData,
