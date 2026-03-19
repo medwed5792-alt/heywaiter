@@ -167,12 +167,6 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
         venuesFetched.current = true;
         setVenuesList(list);
 
-        if (list.length === 0) {
-          setError("Нет привязанных заведений");
-          setLoading(false);
-          return;
-        }
-
         // Для синхронизации смены с админкой всегда выбираем DEFAULT_VENUE_ID,
         // чтобы UI не зависел от currentVenueId/сессионного выбора.
         const preferredVenueId = DEFAULT_VENUE_ID;
@@ -193,11 +187,12 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
           }
         }
 
-        if (chosen) {
-          setStaffVenueInSession(chosen);
-          setCurrentVenueIdState(chosen);
-          await fetchMe(chosen);
-        }
+        // Если заведений в списке нет, но Telegram ID есть, всё равно пытаемся загрузить staff/me
+        // для диагностики (и показа "ID не найден в SaaS" при отсутствии глобального профиля).
+        const venueToUse = chosen ?? preferredVenueId;
+        setStaffVenueInSession(venueToUse);
+        setCurrentVenueIdState(venueToUse);
+        await fetchMe(venueToUse);
       }
       if (!cancelled) setLoading(false);
     })();

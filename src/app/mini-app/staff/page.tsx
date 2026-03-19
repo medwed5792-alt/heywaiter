@@ -183,6 +183,7 @@ function StaffContentInner() {
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
   const { userId, staffId, onShift } = safeStaffData;
+  const tgIdForRender = getTelegramUserIdFromWindow();
 
   const fetchNotifications = useCallback(async () => {
     if (!staffId) return;
@@ -396,30 +397,40 @@ function StaffContentInner() {
       if (!telegramId) throw new Error("Не удалось определить Telegram userId");
 
       // Жёсткий поиск root staff doc по tgId/phone, чтобы не плодить новые IDs.
-      let resolvedStaffId: string | null = null;
+      let resolvedStaffId: string | null = staffId;
 
-      // 1) По tgId
-      {
-        const snap = await getDocs(
-          query(
-            collection(db, "staff"),
-            where("venueId", "==", STAFF_VENUE_ID),
-            where("tgId", "==", telegramId),
-            limit(1)
-          )
-        );
-        if (!snap.empty) resolvedStaffId = snap.docs[0].id;
-      }
+      // Если staffId уже получен через StaffProvider — используем его как основной.
+      // Иначе делаем поиск по tgId/phone (fallback совместимости).
+      if (!resolvedStaffId) {
 
-      // 2) По phone (если удалось достать phone из global_users)
-      if (!resolvedStaffId && userId) {
-        const globalSnap = await getDoc(doc(db, "global_users", userId));
-        const phoneClean = String(globalSnap.data()?.phone ?? "").replace(/\D/g, "");
-        if (phoneClean) {
+        // 1) По tgId
+        {
           const snap = await getDocs(
-            query(collection(db, "staff"), where("venueId", "==", STAFF_VENUE_ID), where("phone", "==", phoneClean), limit(1))
+            query(
+              collection(db, "staff"),
+              where("venueId", "==", STAFF_VENUE_ID),
+              where("tgId", "==", telegramId),
+              limit(1)
+            )
           );
           if (!snap.empty) resolvedStaffId = snap.docs[0].id;
+        }
+
+        // 2) По phone (если удалось достать phone из global_users)
+        if (!resolvedStaffId && userId) {
+          const globalSnap = await getDoc(doc(db, "global_users", userId));
+          const phoneClean = String(globalSnap.data()?.phone ?? "").replace(/\D/g, "");
+          if (phoneClean) {
+            const snap = await getDocs(
+              query(
+                collection(db, "staff"),
+                where("venueId", "==", STAFF_VENUE_ID),
+                where("phone", "==", phoneClean),
+                limit(1)
+              )
+            );
+            if (!snap.empty) resolvedStaffId = snap.docs[0].id;
+          }
         }
       }
 
@@ -449,6 +460,7 @@ function StaffContentInner() {
   // Нет заведений: проверяем профиль → редирект в кабинет или онбординг
   useEffect(() => {
     if (loading || venuesList.length > 0) return;
+    if (typeof staffError === "string" && staffError.includes("не найден в системе SaaS")) return;
     const tgId = getTelegramUserIdFromWindow();
     if (!tgId) return;
     let cancelled = false;
@@ -462,10 +474,15 @@ function StaffContentInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, venuesList.length, router]);
+  }, [loading, venuesList.length, router, staffError]);
 
   // Пока проверяем профиль при отсутствии заведений — показываем ожидание
-  if (venuesList.length === 0 && !freeAgentProfileChecked && !loading) {
+  if (
+    venuesList.length === 0 &&
+    !freeAgentProfileChecked &&
+    !loading &&
+    !(typeof staffError === "string" && staffError.includes("не найден в системе SaaS"))
+  ) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
         <p className="text-slate-500">Проверка профиля…</p>
@@ -475,6 +492,18 @@ function StaffContentInner() {
 
   if (!staffData || loading) {
     return <div className="p-8 text-center">Загрузка данных...</div>;
+  }
+
+  // Если Telegram ID не найден в SaaS — показываем сообщение и не уводим в онбординг.
+  if (typeof staffError === "string" && staffError.includes("не найден в системе SaaS")) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-center text-sm text-red-700">{staffError}</p>
+        {tgIdForRender ? (
+          <p className="mt-2 text-xs text-slate-500">Telegram: {tgIdForRender}</p>
+        ) : null}
+      </main>
+    );
   }
 
   // Нет заведений и профиль не найден (или ещё не проверен) → онбординг

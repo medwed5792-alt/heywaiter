@@ -27,96 +27,90 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`DEBUG: TG User ID = ${telegramId}`);
-
     const firestore = getAdminFirestore();
-    const byCompositeId = firestore.collection("staff").doc(`${venueId}_${telegramId}`);
-    console.log(`DEBUG: Looking in DB path = staff/${venueId}_${telegramId}`);
-    let snap = await byCompositeId.get();
 
-    if (!snap.exists) {
-      const byTg = await firestore
-        .collection("staff")
-        .where("venueId", "==", venueId)
-        .where("tgId", "==", telegramId)
-        .limit(1)
-        .get();
-      if (!byTg.empty) {
-        snap = byTg.docs[0];
-      } else {
-        const byUserId = await firestore
-          .collection("staff")
-          .where("venueId", "==", venueId)
-          .where("userId", "==", telegramId)
-          .limit(1)
-          .get();
-        if (!byUserId.empty) {
-          snap = byUserId.docs[0];
-        }
-      }
-    }
-
-    if (!snap.exists) {
-      const identityKey = channel === "wa" ? "wa" : channel === "vk" ? "vk" : "tg";
-      const foundUserId = await findExistingUserIdByIdentities(
-        identityKey === "tg" ? { tg: telegramId } : identityKey === "wa" ? { wa: telegramId } : { vk: telegramId }
+    // 1) Global Profile: ищем глобальный userId по Telegram ID в global_users.identities.tg
+    const foundGlobalUserId = await findExistingUserIdByIdentities({ tg: telegramId });
+    if (!foundGlobalUserId) {
+      return NextResponse.json(
+        {
+          error: `Ваш Telegram ID [${telegramId}] не найден в системе SaaS. Обратитесь к супер-админу`,
+        },
+        { status: 404 }
       );
-      if (foundUserId) {
-        // Ищем уже существующий root staff doc строго по userId/phone.
-        const byUser = await firestore
-          .collection("staff")
-          .where("venueId", "==", venueId)
-          .where("userId", "==", foundUserId)
-          .limit(1)
-          .get();
-
-        if (!byUser.empty) {
-          snap = byUser.docs[0];
-        } else {
-          // Если в global_users есть phone — ищем по phone (на случай регистрации только по телефону).
-          const globalRef = firestore.collection("global_users").doc(foundUserId);
-          const globalSnap = await globalRef.get();
-          const globalData = globalSnap.data() ?? {};
-          const phoneClean = String(globalData.phone ?? "").replace(/\D/g, "");
-          if (phoneClean) {
-            const byPhone = await firestore
-              .collection("staff")
-              .where("venueId", "==", venueId)
-              .where("phone", "==", phoneClean)
-              .limit(1)
-              .get();
-            if (!byPhone.empty) {
-              snap = byPhone.docs[0];
-            }
-          }
-        }
-      }
     }
 
-    if (!snap.exists) {
+    const globalUserRef = firestore.collection("global_users").doc(foundGlobalUserId);
+    const globalUserSnap = await globalUserRef.get();
+    const globalData = globalUserSnap.data() ?? {};
+
+    // 2) Venue Access: проверяем наличие привязки к venue_andrey_alt в профиле (affiliations)
+    const affiliations = Array.isArray(globalData.affiliations) ? globalData.affiliations : [];
+    const hasVenueByAffiliation = affiliations.some(
+      (a: { venueId?: string; status?: string }) =>
+        a?.venueId === venueId && a?.status !== "former"
+    );
+
+    // Дополнительно (совместимость): иногда может существовать документ venues/.../staff/{tgId}
+    const venueStaffByTgSnap = await firestore
+      .collection("venues")
+      .doc(venueId)
+      .collection("staff")
+      .doc(telegramId)
+      .get();
+
+    if (!hasVenueByAffiliation && !venueStaffByTgSnap.exists) {
       return NextResponse.json(
         { error: "Сотрудник не найден для этого заведения" },
         { status: 404 }
       );
     }
 
-    const id = snap.id;
-    const d = snap.data() ?? {};
-    const userId = (d.userId as string) || (d.tgId as string) || telegramId;
-    // onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[staffDocId]
-    const resolvedVenueId = venueId;
+    // 3) Локальная запись сотрудника (root staff doc для этого venue)
+    // Ищем staff в корневой коллекции по venueId + userId (global user id),
+    // т.к. именно этот staffId дальше используется для onShift в venues/.../staff/{staffId}.
+    let staffSnap = await firestore
+      .collection("staff")
+      .where("venueId", "==", venueId)
+      .where("userId", "==", foundGlobalUserId)
+      .limit(1)
+      .get();
 
-    // onShift только из venues/venueId/staff (единая точка с Дашбордом)
+    // Фолбэк на совместимость со старым полем tgId
+    if (staffSnap.empty) {
+      staffSnap = await firestore
+        .collection("staff")
+        .where("venueId", "==", venueId)
+        .where("tgId", "==", telegramId)
+        .limit(1)
+        .get();
+    }
+
+    if (staffSnap.empty) {
+      return NextResponse.json(
+        { error: "Сотрудник не найден для этого заведения" },
+        { status: 404 }
+      );
+    }
+
+    const staffDoc = staffSnap.docs[0];
+    const staffDocId = staffDoc.id;
+    const staffData = staffDoc.data() ?? {};
+    const userId = (staffData.userId as string | undefined) ?? foundGlobalUserId;
+
+    // 4) onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[staffDocId]
+    const resolvedVenueId = venueId;
     let onShift = false;
     let shiftStartTime: string | null = null;
     let shiftEndTime: string | null = null;
-    // onShift только из venues/venueId/staff/[userId]
+
     const venueStaffSnap = await firestore
       .collection("venues")
       .doc(resolvedVenueId)
       .collection("staff")
-      .doc(id)
+      .doc(staffDocId)
       .get();
+
     if (venueStaffSnap.exists) {
       const vd = venueStaffSnap.data() ?? {};
       onShift = vd.onShift === true;
@@ -126,7 +120,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       userId,
-      staffId: id,
+      staffId: staffDocId,
       venueId: resolvedVenueId,
       onShift,
       shiftStartTime,
