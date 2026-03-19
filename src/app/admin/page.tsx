@@ -647,7 +647,7 @@ function AdminDashboardContent() {
       snap.docs.forEach((d) => {
         const data = d.data();
         const a = data.assignments as Record<string, string> | undefined;
-        const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
+        const staffId = a?.waiter as string | undefined;
         if (staffId) next[d.id] = staffId;
       });
       setAssignmentsByTable((prev) => ({ ...prev, ...next }));
@@ -667,7 +667,7 @@ function AdminDashboardContent() {
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const a = data.assignments as Record<string, string> | undefined;
-          const staffId = a?.waiter ?? (data.assignedStaffId as string | undefined);
+          const staffId = a?.waiter as string | undefined;
           if (staffId) next[t.id] = staffId;
         }
       }
@@ -893,57 +893,6 @@ function AdminDashboardContent() {
     });
     await batch.commit();
   }, [sessionsByTable]);
-
-  const toggleVenueOpenClosed = useCallback(async () => {
-    setToggleVenueLoading(true);
-    setCloseVenueConfirm(null);
-    try {
-      if (manualStatus === "closed") {
-        await updateDoc(doc(db, "venues", venueId), {
-          manualStatus: "open",
-          updatedAt: serverTimestamp(),
-        });
-        toast.success("Заведение открыто");
-        return;
-      }
-
-      const occupied = occupiedCount > 0;
-      if (occupied) {
-        setCloseVenueConfirm(true);
-        setToggleVenueLoading(false);
-        return;
-      }
-
-      await updateDoc(doc(db, "venues", venueId), {
-        manualStatus: "closed",
-        updatedAt: serverTimestamp(),
-      });
-      // Финальное уведомление активным сотрудникам (venues/.../staff/[STAFF_ID]/notifications)
-      const staffSnap = await getDocs(collection(db, "venues", venueId, "staff"));
-      const staffDocs = staffSnap.docs;
-      for (const d of staffDocs) {
-        const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
-        if (data?.onShift !== true) continue;
-        const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
-        await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
-          type: "shift_end",
-          message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      const batch = writeBatch(db);
-      staffDocs.forEach((d) => batch.update(d.ref, { onShift: false }));
-      await batch.commit();
-      toast.success("Заведение закрыто. Смена завершена.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка");
-    } finally {
-      setToggleVenueLoading(false);
-    }
-  }, [manualStatus, occupiedCount]);
 
   const confirmCloseVenueWithTables = useCallback(async () => {
     if (closeVenueConfirm !== true) return;
@@ -1674,10 +1623,9 @@ function AdminDashboardContent() {
                     const dtDigits = dt.map((x) => String(x).replace(/\D/g, ""));
                     return tableNumberDigits ? dtDigits.includes(tableNumberDigits) : false;
                   });
-                  const assignedStaff = assignedStaffId
-                    ? safeStaffList.find((s) => s?.id === assignedStaffId)
-                    : null;
-                  const effectiveWaiterId = defaultFromTeam?.id || (assignedStaffId || "");
+                  // 1) Истина: tables/{tableId}.assignments.waiter
+                  // 2) Только если там пусто — defaultTables из «Команды»
+                  const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id || "";
                   const waiterOnShift = effectiveWaiterId !== "" && venueStaffOnShift[effectiveWaiterId] === true;
                   const waiterDisplayName =
                     effectiveWaiterId ? safeStaffList.find((s) => s.id === effectiveWaiterId)?.displayName : undefined;
@@ -1685,11 +1633,10 @@ function AdminDashboardContent() {
                   const uniqueStaff = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
-                  const selectValue =
-                    (defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "") ||
-                    assignedStaffId ||
-                    "";
-                  const isPlanSelection = Boolean(selectValue && !assignedStaffId);
+                  const defaultSelectValue =
+                    defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "";
+                  const selectValue = assignedStaffId || defaultSelectValue || "";
+                  const isPlanSelection = Boolean(defaultSelectValue && !assignedStaffId);
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const sessionGuestId = session?.guestId;
                   const isVipGuest = Boolean(sessionGuestId && guestTypeByGuestId[sessionGuestId] === "vip");
@@ -1708,9 +1655,7 @@ function AdminDashboardContent() {
                             : "border-emerald-400";
                   const cardBg = isOccupied
                     ? "bg-blue-600"
-                    : hasTodayBookingForTable || isUrgent
-                    ? "bg-orange-50"
-                    : "bg-white";
+                    : "bg-emerald-500";
                   const cardText = isOccupied ? "text-white" : "";
 
                   return (
@@ -1718,7 +1663,7 @@ function AdminDashboardContent() {
                       key={table.id}
                       className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg} ${cardText}`}
                     >
-                      <div className={`text-2xl font-bold ${cardText || "text-gray-900"}`}>
+                      <div className="text-2xl font-bold text-white">
                         {table?.number ?? table.id ?? "—"}
                       </div>
                       {isOccupied && (
@@ -1729,7 +1674,7 @@ function AdminDashboardContent() {
                             <p className="mt-1 text-xs font-medium text-white/70">Ожидает официанта</p>
                           )}
                           <div className="mt-2">
-                            <label className="block text-xs text-blue-200">Официант</label>
+                            <label className="block text-xs text-white/90">Официант</label>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1757,11 +1702,11 @@ function AdminDashboardContent() {
                               className="mt-2 w-full text-left rounded-lg border border-blue-400/50 bg-white/10 px-2 py-1.5 text-sm text-white hover:bg-white/20"
                             >
                               <span className="font-medium">{guestNames[session.guestId] ?? "Гость"}</span>
-                              <span className="ml-1.5 text-blue-200">
+                              <span className="ml-1.5 text-white/90">
                                 Статус: {GUEST_TYPE_LABEL[guestTypeByGuestId[session.guestId] ?? "regular"] ?? "Новый"}
                               </span>
                               {guestRatings[session.guestId] != null && (
-                                <span className="ml-1.5 text-amber-300">⭐ {guestRatings[session.guestId]}</span>
+                                <span className="ml-1.5 text-white/90">⭐ {guestRatings[session.guestId]}</span>
                               )}
                             </button>
                           )}
@@ -1777,12 +1722,12 @@ function AdminDashboardContent() {
                       {!isOccupied && (
                         <>
                           {waiterOnShift ? (
-                            <p className="mt-1 text-xs font-medium text-emerald-700">{waiterDisplayName ?? "—"}</p>
+                            <p className="mt-1 text-xs font-medium text-white/90">{waiterDisplayName ?? "—"}</p>
                           ) : (
-                            <p className="mt-1 text-xs font-medium text-gray-500">Ожидает официанта</p>
+                            <p className="mt-1 text-xs font-medium text-white/70">Ожидает официанта</p>
                           )}
                           <div className="mt-2">
-                            <label className="block text-xs text-gray-500">Официант</label>
+                            <label className="block text-xs text-white/90">Официант</label>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1806,7 +1751,7 @@ function AdminDashboardContent() {
                             </select>
                           </div>
                           {isPlanSelection && (
-                            <p className="mt-1 text-xs italic text-gray-500">
+                            <p className="mt-1 text-xs italic text-white/70">
                               По плану из Команды
                             </p>
                           )}
@@ -1815,20 +1760,20 @@ function AdminDashboardContent() {
                               <span
                                 className={
                                   isUrgent
-                                    ? "font-extrabold text-orange-600 animate-pulse"
-                                    : "text-blue-700"
+                                    ? "font-extrabold text-white animate-pulse"
+                                    : "text-white/90"
                                 }
                               >
                                 🕒 {formatTimeSafe(startTimeDate)}
                               </span>
                               {activeBooking.guestName ? (
-                                <span className="text-blue-700">
+                                <span className="text-white/90">
                                   {` · ${activeBooking.guestName}`}
                                 </span>
                               ) : null}
                             </div>
                           )}
-                          <div className="mt-2 text-xs text-emerald-700 font-medium">Свободен</div>
+                          <div className="mt-2 text-xs text-white/90 font-medium">Свободен</div>
                         </>
                       )}
                     </div>

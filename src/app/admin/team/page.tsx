@@ -288,6 +288,7 @@ export default function TeamPage() {
   const [offerStatus, setOfferStatus] = useState<{ status: string | null; staffId: string | null } | null>(null);
   const [cancelOfferLoading, setCancelOfferLoading] = useState(false);
   const [dupCleanupLoading, setDupCleanupLoading] = useState(false);
+  const [teamLoadError, setTeamLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setOfferLoading(false);
@@ -327,80 +328,86 @@ export default function TeamPage() {
   useEffect(() => {
     const staffColRef = collection(db, "venues", VENUE_ID, "staff");
     const unsubscribe = onSnapshot(staffColRef, async (snap) => {
-      const staffDocs = snap.docs;
-      const userIds = [...new Set(staffDocs.map((d) => d.data().userId as string).filter(Boolean))];
-      const globalUsers = new Map<string, GlobalUser>();
-      for (const uid of userIds) {
-        const ref = doc(db, "global_users", uid);
-        const globalSnap = await getDoc(ref);
-        if (globalSnap.exists()) {
-          globalUsers.set(uid, { id: globalSnap.id, ...globalSnap.data() } as GlobalUser);
+      try {
+        setTeamLoadError(null);
+        const staffDocs = snap.docs;
+        const userIds = [...new Set(staffDocs.map((d) => d.data().userId as string).filter(Boolean))];
+        const globalUsers = new Map<string, GlobalUser>();
+        for (const uid of userIds) {
+          const ref = doc(db, "global_users", uid);
+          const globalSnap = await getDoc(ref);
+          if (globalSnap.exists()) {
+            globalUsers.set(uid, { id: globalSnap.id, ...globalSnap.data() } as GlobalUser);
+          }
         }
-      }
-      const list: Staff[] = [];
-      for (const d of staffDocs) {
-        const data = d.data();
-        const userId = data.userId as string | undefined;
-        const global = userId ? globalUsers.get(userId) : null;
-        const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
-        const isActive = data.active === true;
-        if (!isActive) continue;
-        if (global) {
-          list.push({
-            id: d.id,
-            userId: global.id,
-            venueId: VENUE_ID,
-            role: (data.role as Staff["role"]) ?? "waiter",
-            primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
-            identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
-            onShift: data.onShift ?? aff?.onShift ?? false,
-            active: true,
-            firstName: global.firstName ?? data.firstName,
-            lastName: global.lastName ?? data.lastName,
-            position: aff?.position ?? data.position,
-            group: data.group ?? undefined,
-            call_category: data.call_category ?? undefined,
-            assignedTableIds: aff?.assignedTableIds ?? data.assignedTableIds ?? [],
-            globalScore: global.globalScore ?? data.globalScore,
-            guestRating: global.guestRating ?? data.guestRating,
-            venueRating: global.venueRating ?? data.venueRating,
-            photoUrl: global.photoUrl ?? data.photoUrl,
-            phone: global.phone ?? data.phone,
-            tgId: global.tgId ?? data.tgId,
-            identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
-            medicalCard: global.medicalCard ?? data.medicalCard,
-            careerHistory: global.careerHistory,
-            updatedAt: global.updatedAt ?? data.updatedAt,
-          } as Staff);
-        } else {
-          list.push({
-            id: d.id,
-            venueId: VENUE_ID,
-            role: (data.role as Staff["role"]) ?? "waiter",
-            primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
-            identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
-            onShift: data.onShift ?? false,
-            active: true,
-            firstName: data.firstName,
-            lastName: data.lastName,
-            position: data.position,
-            group: data.group,
-            call_category: data.call_category,
-            assignedTableIds: data.assignedTableIds ?? [],
-            globalScore: data.globalScore,
-            guestRating: data.guestRating,
-            venueRating: data.venueRating,
-            photoUrl: data.photoUrl,
-            phone: data.phone,
-            tgId: data.tgId,
-            identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
-            medicalCard: data.medicalCard,
-            careerHistory: data.careerHistory,
-            updatedAt: data.updatedAt,
-          } as Staff);
+        const list: Staff[] = [];
+        for (const d of staffDocs) {
+          const data = d.data();
+          const userId = data.userId as string | undefined;
+          const global = userId ? globalUsers.get(userId) : null;
+          const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
+          const isActive = data.active === true;
+          if (!isActive) continue;
+          if (global) {
+            list.push({
+              id: d.id,
+              userId: global.id,
+              venueId: VENUE_ID,
+              role: (data.role as Staff["role"]) ?? "waiter",
+              primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+              identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
+              onShift: data.onShift === true,
+              active: true,
+              firstName: global.firstName ?? data.firstName,
+              lastName: global.lastName ?? data.lastName,
+              position: aff?.position ?? data.position,
+              group: data.group ?? undefined,
+              call_category: data.call_category ?? undefined,
+              assignedTableIds: aff?.assignedTableIds ?? data.assignedTableIds ?? [],
+              globalScore: global.globalScore ?? data.globalScore,
+              guestRating: global.guestRating ?? data.guestRating,
+              venueRating: global.venueRating ?? data.venueRating,
+              photoUrl: global.photoUrl ?? data.photoUrl,
+              phone: global.phone ?? data.phone,
+              tgId: global.tgId ?? data.tgId,
+              identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+              medicalCard: global.medicalCard ?? data.medicalCard,
+              careerHistory: global.careerHistory,
+              updatedAt: global.updatedAt ?? data.updatedAt,
+            } as Staff);
+          } else {
+            list.push({
+              id: d.id,
+              venueId: VENUE_ID,
+              role: (data.role as Staff["role"]) ?? "waiter",
+              primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+              identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
+              onShift: data.onShift === true,
+              active: true,
+              firstName: data.firstName,
+              lastName: data.lastName,
+              position: data.position,
+              group: data.group,
+              call_category: data.call_category,
+              assignedTableIds: data.assignedTableIds ?? [],
+              globalScore: data.globalScore,
+              guestRating: data.guestRating,
+              venueRating: data.venueRating,
+              photoUrl: data.photoUrl,
+              phone: data.phone,
+              tgId: data.tgId,
+              identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
+              medicalCard: data.medicalCard,
+              careerHistory: data.careerHistory,
+              updatedAt: data.updatedAt,
+            } as Staff);
+          }
         }
+        setStaffList(list);
+      } catch (e) {
+        console.error("[admin/team] Ошибка загрузки команды:", e);
+        setTeamLoadError("Ошибка загрузки команды");
       }
-      setStaffList(list);
     });
     return () => unsubscribe();
   }, []);
@@ -1232,6 +1239,8 @@ export default function TeamPage() {
 
       {!loaded ? (
         <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
+      ) : teamLoadError ? (
+        <p className="mt-4 text-sm text-red-600">{teamLoadError}</p>
       ) : (
         <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[500px]">
