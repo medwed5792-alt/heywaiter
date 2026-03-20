@@ -646,9 +646,16 @@ function AdminDashboardContent() {
       const next: Record<string, string> = {};
       snap.docs.forEach((d) => {
         const data = d.data();
-        const a = data.assignments as Record<string, string> | undefined;
-        const staffId = a?.waiter as string | undefined;
-        if (staffId) next[d.id] = staffId;
+        // Поддерживаем несколько исторических схем поля «закреплённый официант»:
+        // 1) assignments.waiter
+        // 2) waiterId (legacy/альтернатива)
+        // 3) assignedStaffId (альтернатива)
+        const assignments = data.assignments as { waiter?: unknown } | undefined;
+        const waiterId =
+          (typeof data.waiterId === "string" ? data.waiterId : undefined) ??
+          (typeof assignments?.waiter === "string" ? assignments.waiter : undefined) ??
+          (typeof data.assignedStaffId === "string" ? data.assignedStaffId : undefined);
+        if (waiterId) next[d.id] = waiterId;
       });
       setAssignmentsByTable((prev) => ({ ...prev, ...next }));
     });
@@ -666,9 +673,12 @@ function AdminDashboardContent() {
         const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
-          const a = data.assignments as Record<string, string> | undefined;
-          const staffId = a?.waiter as string | undefined;
-          if (staffId) next[t.id] = staffId;
+          const assignments = data.assignments as { waiter?: unknown } | undefined;
+          const waiterId =
+            (typeof data.waiterId === "string" ? data.waiterId : undefined) ??
+            (typeof assignments?.waiter === "string" ? assignments.waiter : undefined) ??
+            (typeof data.assignedStaffId === "string" ? data.assignedStaffId : undefined);
+          if (waiterId) next[t.id] = waiterId;
         }
       }
       if (!cancelled) setAssignmentsByTable((prev) => ({ ...prev, ...next }));
@@ -1613,7 +1623,11 @@ function AdminDashboardContent() {
                     Number.isFinite(diffInMinutes) &&
                     diffInMinutes <= 30 &&
                     diffInMinutes > -15;
-                  const assignedStaffId = safeAssignmentsByTable[table.id] ?? "";
+                  // waiterId со стола (единый ключ для визуализации)
+                  const waiterId = safeAssignmentsByTable[table.id] ?? "";
+                  const isOnShift = waiterId !== "" && venueStaffOnShift[waiterId] === true;
+                  // Временная диагностика: приходят ли данные о закреплении и onShift вообще.
+                  console.log("Table:", table.id, "Waiter:", waiterId, "IsOnShift:", isOnShift);
                   // Сопоставление defaultTables: сравниваем ТОЛЬКО цифры из номера стола.
                   const tableNumberDigits = String(table?.number ?? "").replace(/\D/g, "");
                   // assignedWaiter: берём waiterId из таблицы, если пусто — ищем среди onShift staff по defaultTables
@@ -1623,20 +1637,18 @@ function AdminDashboardContent() {
                     const dtDigits = dt.map((x) => String(x).replace(/\D/g, ""));
                     return tableNumberDigits ? dtDigits.includes(tableNumberDigits) : false;
                   });
-                  // 1) Истина: tables/{tableId}.assignments.waiter
-                  // 2) Только если там пусто — defaultTables из «Команды»
-                  const effectiveWaiterId = assignedStaffId || defaultFromTeam?.id || "";
-                  const waiterOnShift = effectiveWaiterId !== "" && venueStaffOnShift[effectiveWaiterId] === true;
-                  const waiterDisplayName =
-                    effectiveWaiterId ? safeStaffList.find((s) => s.id === effectiveWaiterId)?.displayName : undefined;
+                  // Для «светофора» (рамка + имя) учитываем ТОЛЬКО реальный waiterId со стола.
+                  // defaultFromTeam оставляем только для select/подсказки.
+                  const waiterOnShift = isOnShift;
+                  const waiterDisplayName = waiterId ? safeStaffList.find((s) => s.id === waiterId)?.displayName : undefined;
                   const isGreenSelect = waiterOnShift;
                   const uniqueStaff = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
                   const defaultSelectValue =
                     defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "";
-                  const selectValue = assignedStaffId || defaultSelectValue || "";
-                  const isPlanSelection = Boolean(defaultSelectValue && !assignedStaffId);
+                  const selectValue = waiterId || defaultSelectValue || "";
+                  const isPlanSelection = Boolean(defaultSelectValue && !waiterId);
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const sessionGuestId = session?.guestId;
                   const isVipGuest = Boolean(sessionGuestId && guestTypeByGuestId[sessionGuestId] === "vip");
@@ -1646,7 +1658,7 @@ function AdminDashboardContent() {
                     ? "border-violet-500 border-4 animate-pulse shadow-[0_0_15px_rgba(139,92,246,0.5)]"
                     : isOccupied
                       ? "border-blue-700"
-                      : waiterOnShift
+                        : waiterOnShift
                         ? "border-4 border-emerald-500"
                         : hasTodayBookingForTable
                           ? "border-orange-500 border-4 animate-pulse"
@@ -1687,9 +1699,9 @@ function AdminDashboardContent() {
                                 isGreenSelect ? "border-emerald-300 bg-emerald-900/30" : ""
                               }`}
                             >
-                              <option value="" className="text-gray-900">—</option>
+                              <option value="">—</option>
                               {uniqueStaff.map((w) => (
-                                <option key={w.id} value={w.id} className="text-gray-900">
+                                <option key={w.id} value={w.id}>
                                   {w.displayName}
                                 </option>
                               ))}
