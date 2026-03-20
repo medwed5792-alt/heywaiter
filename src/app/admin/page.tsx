@@ -1660,7 +1660,15 @@ function AdminDashboardContent() {
                       ? undefined
                       : safeStaffList.find((s) => s.id === targetWaiterId || s.userId === targetWaiterId);
                   const resolvedStaffId = staffMember?.id ?? "";
-                  const isOnShift = resolvedStaffId !== "" && venueStaffOnShift[resolvedStaffId] === true;
+                  // Проверяем onShift по нескольким кандидатам на doc-id: иногда tables.assignments.waiter содержит userId без префикса venue
+                  const staffDocCandidates = new Set<string>();
+                  if (resolvedStaffId) staffDocCandidates.add(resolvedStaffId);
+                  if (targetWaiterId) {
+                    staffDocCandidates.add(String(targetWaiterId).trim());
+                    const prefixed = targetWaiterId.startsWith(`${venueId}_`) ? targetWaiterId : `${venueId}_${targetWaiterId}`;
+                    staffDocCandidates.add(prefixed);
+                  }
+                  const isOnShift = Array.from(staffDocCandidates).some((sid) => venueStaffOnShift[sid] === true);
                   // Временная диагностика (важно для “почему имя не подтягивается”)
                   console.log(
                     "Table:",
@@ -1685,8 +1693,9 @@ function AdminDashboardContent() {
                   });
                   // Для «светофора» (рамка + имя) учитываем ТОЛЬКО реальный waiterId со стола.
                   // defaultFromTeam оставляем только для select/подсказки.
-                  const waiterOnShift = isOnShift;
+                  const waiterOnShift = Boolean(staffMember && staffMember.onShift === true && isOnShift);
                   const waiterDisplayName = staffMember?.displayName;
+                  // Зеленое свечение селектора включаем только когда имя найдено и onShift=true
                   const isGreenSelect = waiterOnShift;
                   const uniqueStaffBase = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
@@ -1694,7 +1703,7 @@ function AdminDashboardContent() {
                   // Если закреплённый официант найден в staffList и он на смене,
                   // гарантируем, что его option есть в списке — даже если он был отфильтрован по роли выше.
                   const uniqueStaff =
-                    staffMember && isOnShift
+                    staffMember && waiterOnShift
                       ? Array.from(
                           new Map(
                             [...uniqueStaffBase, staffMember].map((w) => [w.id, w])
@@ -1745,9 +1754,6 @@ function AdminDashboardContent() {
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-white/90">Официант</label>
-                            <p className="mt-1 text-[10px] text-white/70 font-mono">
-                              ID_in_DB: {String(assignmentsWaiterRawByTable[table.id] ?? "—")}
-                            </p>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1756,13 +1762,19 @@ function AdminDashboardContent() {
                                 if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
                                 if (v && tid) saveTableWaiter(tid, v);
                               }}
-                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm bg-white/10 border-blue-400 text-white ${
-                                isGreenSelect ? "border-emerald-300 ring-2 ring-emerald-400" : ""
+                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
+                                isGreenSelect
+                                  ? "bg-emerald-50 border-emerald-300 ring-2 ring-emerald-400 text-black"
+                                  : "bg-white/10 border-blue-400 text-white"
                               }`}
                             >
                               <option value="">—</option>
                               {uniqueStaff.map((w) => (
-                                <option key={w.id} value={w.id}>
+                                <option
+                                  key={w.id}
+                                  value={w.id}
+                                  className={isGreenSelect && resolvedStaffId && w.id === resolvedStaffId ? "text-black font-semibold" : ""}
+                                >
                                   {w.displayName}
                                 </option>
                               ))}
@@ -1801,9 +1813,6 @@ function AdminDashboardContent() {
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-slate-900/90">Официант</label>
-                            <p className="mt-1 text-[10px] text-slate-600/90 font-mono">
-                              ID_in_DB: {String(assignmentsWaiterRawByTable[table.id] ?? "—")}
-                            </p>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1814,13 +1823,17 @@ function AdminDashboardContent() {
                               }}
                               className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm text-slate-900 ${
                                 isGreenSelect
-                                  ? "border-emerald-300 bg-emerald-50 ring-2 ring-emerald-200"
+                                  ? "border-emerald-300 bg-emerald-50 ring-2 ring-emerald-400 text-black font-semibold"
                                   : "border-gray-300 bg-white"
                               }`}
                             >
                               <option value="">—</option>
                               {uniqueStaff.map((w) => (
-                                <option key={w.id} value={w.id}>
+                                <option
+                                  key={w.id}
+                                  value={w.id}
+                                  className={isGreenSelect && resolvedStaffId && w.id === resolvedStaffId ? "text-black font-semibold" : ""}
+                                >
                                   {w.displayName}
                                 </option>
                               ))}
