@@ -25,7 +25,7 @@ import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
 
-const BOOKING_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 часа для "ближайшие 2 часа"
+const BOOKING_WINDOW_MS = 30 * 60 * 1000; // ближайшие 30 минут для статуса столов
 const BLINK_IF_LESS_MS = 30 * 60 * 1000; // мерцание если до брони < 30 мин
 const BOOKING_REMINDER_MINS = 15; // уведомление в ленту за 15 мин до брони
 
@@ -1335,8 +1335,8 @@ function AdminDashboardContent() {
           </div>
         ) : venueType === "full_service" ? (
           <>
-            <div className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-violet-700">Живой зал</h3>
+            <div className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm">
+              <h3 className="text-sm font-medium text-violet-900">Живой зал</h3>
               <p className="mt-1 text-2xl font-bold text-violet-900">
                 {occupiedCount} <span className="text-gray-400 font-normal">/ {totalTables || "—"}</span>
               </p>
@@ -1344,9 +1344,9 @@ function AdminDashboardContent() {
             </div>
             <Link
               href="/admin/bookings"
-              className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm hover:bg-violet-50 transition-colors block"
+              className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm hover:bg-violet-200 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-violet-700">Брони сегодня</h3>
+              <h3 className="text-sm font-medium text-violet-900">Брони сегодня</h3>
               <p className="mt-1 text-2xl font-bold text-violet-900">{bookingsTodayCount}</p>
               <p className="mt-0.5 text-xs text-violet-600">{todayStr}</p>
               {nextBookingInMinutes != null && nextBookingInMinutes > 0 && (
@@ -1357,9 +1357,9 @@ function AdminDashboardContent() {
             </Link>
             <Link
               href="/admin/team"
-              className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm hover:bg-violet-50 transition-colors block"
+              className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm hover:bg-violet-200 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-violet-700">На смене</h3>
+              <h3 className="text-sm font-medium text-violet-900">На смене</h3>
               <p className="mt-1 text-2xl font-bold text-violet-900">{onShiftCount}</p>
               <p className="mt-0.5 text-xs text-violet-600">сотрудников</p>
             </Link>
@@ -1631,8 +1631,8 @@ function AdminDashboardContent() {
                   const isUrgent =
                     diffInMinutes != null &&
                     Number.isFinite(diffInMinutes) &&
-                    diffInMinutes <= 30 &&
-                    diffInMinutes > -15;
+                    diffInMinutes >= 0 &&
+                    diffInMinutes <= 30;
                   // waiterId со стола (единый ключ для визуализации)
                   const waiterId = safeAssignmentsByTable[table.id] ?? "";
                   const isOnShift = waiterId !== "" && venueStaffOnShift[waiterId] === true;
@@ -1666,31 +1666,28 @@ function AdminDashboardContent() {
                   const isPlanSelection = Boolean(defaultSelectValue && !waiterId);
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const isBookingSoon = isUrgent;
-                  // Физическая доступность стола: зелёная рамка НЕ зависит от onShift сотрудника.
-                  const shouldShowGreenReady =
-                    !isOccupied &&
-                    (!hasTodayBookingForTable ||
-                      (diffInMinutes != null && Number.isFinite(diffInMinutes) && diffInMinutes > 30));
+                  // Физическая доступность стола: зелёная рамка зависит только от времени до брони.
+                  const shouldShowGreenReady = !isOccupied && !isBookingSoon;
                   const cardBorder = hasEmergency
-                    ? "border-red-600 border-4 animate-pulse shadow-[0_0_14px_rgba(239,68,68,0.35)]"
+                    ? "border-red-600 border-4 animate-pulse"
                     : isOccupied
-                      ? "border-4 border-blue-700"
+                      ? "border-4 border-blue-600"
                       : isBookingSoon
-                        ? "border-orange-500 border-4 animate-pulse shadow-[0_0_14px_rgba(249,115,22,0.25)]"
+                        ? "border-orange-500 border-4 animate-pulse"
                         : shouldShowGreenReady
-                          ? "border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.35)]"
-                          : "border-emerald-200";
+                          ? "border-2 border-emerald-500"
+                          : "border-slate-200";
                   const cardBg = isOccupied
                     ? "bg-blue-600"
-                    : "bg-emerald-500";
-                  const cardText = isOccupied ? "text-white" : "";
+                    : "bg-white";
+                  const cardText = isOccupied ? "text-white" : "text-slate-900";
 
                   return (
                     <div
                       key={table.id}
                       className={`rounded-xl border p-4 shadow-sm ${cardBorder} ${cardBg} ${cardText}`}
                     >
-                      <div className="text-2xl font-bold text-white">
+                      <div className={`text-2xl font-bold ${cardText}`}>
                         {table?.number ?? table.id ?? "—"}
                       </div>
                       {isOccupied && (
@@ -1749,12 +1746,12 @@ function AdminDashboardContent() {
                       {!isOccupied && (
                         <>
                           {waiterOnShift ? (
-                            <p className="mt-1 text-xs font-medium text-white/90">{waiterDisplayName ?? "—"}</p>
+                            <p className="mt-1 text-xs font-medium text-slate-900/90">{waiterDisplayName ?? "—"}</p>
                           ) : (
-                            <p className="mt-1 text-xs font-medium text-white/70">Ожидает официанта</p>
+                            <p className="mt-1 text-xs font-medium text-slate-900/70">Ожидает официанта</p>
                           )}
                           <div className="mt-2">
-                            <label className="block text-xs text-white/90">Официант</label>
+                            <label className="block text-xs text-slate-900/90">Официант</label>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1763,9 +1760,9 @@ function AdminDashboardContent() {
                                 if (tid) setAssignmentsByTable((prev) => ({ ...prev, [tid]: v }));
                                 if (v && tid) saveTableWaiter(tid, v);
                               }}
-                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
+                              className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm text-slate-900 ${
                                 isGreenSelect
-                                  ? "border-emerald-400 bg-white/90 ring-2 ring-emerald-400"
+                                  ? "border-emerald-300 bg-emerald-50 ring-2 ring-emerald-200"
                                   : "border-gray-300 bg-white"
                               }`}
                             >
@@ -1778,7 +1775,7 @@ function AdminDashboardContent() {
                             </select>
                           </div>
                           {isPlanSelection && (
-                            <p className="mt-1 text-xs italic text-white/70">
+                            <p className="mt-1 text-xs italic text-slate-700/70">
                               По плану из Команды
                             </p>
                           )}
@@ -1787,20 +1784,20 @@ function AdminDashboardContent() {
                               <span
                                 className={
                                   isUrgent
-                                    ? "font-extrabold text-white animate-pulse"
-                                    : "text-white/90"
+                                    ? "font-extrabold text-slate-900 animate-pulse"
+                                    : "text-slate-900/70"
                                 }
                               >
                                 🕒 {formatTimeSafe(startTimeDate)}
                               </span>
                               {activeBooking.guestName ? (
-                                <span className="text-white/90">
+                                <span className="text-slate-900/80">
                                   {` · ${activeBooking.guestName}`}
                                 </span>
                               ) : null}
                             </div>
                           )}
-                          <div className="mt-2 text-xs text-white/90 font-medium">Свободен</div>
+                          <div className="mt-2 text-xs text-slate-900/90 font-medium">Свободен</div>
                         </>
                       )}
                     </div>
