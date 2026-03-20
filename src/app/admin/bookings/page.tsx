@@ -347,10 +347,27 @@ export default function AdminBookingsPage() {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "venues", VENUE_ID, "tables"), (snap) => {
       setVenueTables(
-        snap.docs.map((d) => {
-          const data = d.data();
-          return { id: d.id, number: (data.number as number) ?? 0 };
-        })
+        snap.docs
+          .map((d) => {
+            const data = d.data() as { number?: unknown };
+            const raw = data?.number;
+
+            // Важно: без любых fallback'ов. Если `number` отсутствует/невалиден — стол НЕ попадает в шахматку.
+            let parsed: number | null = null;
+            if (typeof raw === "number" && Number.isFinite(raw)) parsed = raw;
+            else if (typeof raw === "string") {
+              const s = raw.trim();
+              if (s) {
+                const n = Number(s);
+                if (Number.isFinite(n)) parsed = n;
+              }
+            }
+
+            // Редактор залов отфильтровывает `0` (и строку "0") как невалидный номер.
+            if (parsed == null || parsed === 0) return null;
+            return { id: d.id, number: parsed } satisfies TableRow;
+          })
+          .filter((t): t is TableRow => Boolean(t))
       );
     });
     return () => unsub();
@@ -710,9 +727,9 @@ export default function AdminBookingsPage() {
   }, [bookings]);
 
   return (
-    <div style={{ zoom: 0.75 }}>
-      <h2 className="text-lg font-semibold text-gray-900">Брони</h2>
-      <p className="mt-2 text-sm text-gray-600">
+    <div className="bg-white text-black font-sans">
+      <h2 className="text-lg font-semibold">Брони</h2>
+      <p className="mt-2 text-sm">
         Создание, редактирование, удаление. Мастер-выключатель онлайн-бронирования. Контроль опозданий.
       </p>
 
@@ -720,12 +737,12 @@ export default function AdminBookingsPage() {
         <button
           type="button"
           onClick={toggleBookingMaster}
-          className={`rounded-lg px-4 py-2 text-sm font-medium ${bookingSwitch.enabled ? "bg-green-600 text-white" : "bg-gray-400 text-white"}`}
+          className={`rounded-lg px-4 py-2 text-sm font-medium ${bookingSwitch.enabled ? "bg-green-600 text-white" : "bg-neutral-300 text-white"}`}
         >
           {bookingSwitch.enabled ? "Онлайн-бронирование вкл" : "Онлайн-бронирование выкл"}
         </button>
         {bookingSwitch.until && (
-          <span className="text-sm text-gray-500">До: {bookingSwitch.until}</span>
+          <span className="text-sm">До: {bookingSwitch.until}</span>
         )}
         <button
           type="button"
@@ -743,7 +760,7 @@ export default function AdminBookingsPage() {
               status: "pending",
             });
           }}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-black/80"
         >
           + Новая бронь
         </button>
@@ -757,7 +774,7 @@ export default function AdminBookingsPage() {
               <ul className="mt-2 space-y-2">
                 {lateBookings.map((b) => (
                   <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2">
-                    <span className="text-sm text-gray-800">{b.guestName} · {b.date} {b.startTime} · Стол {b.tableId}</span>
+                    <span className="text-sm">{b.guestName} · {b.date} {b.startTime} · Стол {b.tableId}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -780,7 +797,7 @@ export default function AdminBookingsPage() {
               <ul className="mt-2 space-y-2">
                 {venueEvents.map((ev) => (
                   <li key={ev.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2">
-                    <span className="text-sm text-gray-800">{ev.message ?? ev.type ?? ev.id}</span>
+                    <span className="text-sm">{ev.message ?? ev.type ?? ev.id}</span>
                     <button
                       type="button"
                       onClick={() => dismissVenueEvent(ev.id, ev.collectionName)}
@@ -815,7 +832,7 @@ export default function AdminBookingsPage() {
             : [];
         const hasConflict = Boolean(conflictError);
         return (
-        <div className={`mt-4 rounded-xl border p-4 ${hasRisk || hasConflict ? "border-red-500 bg-red-50/80" : "border-gray-200 bg-white"}`}>
+        <div className={`mt-4 rounded-xl border p-4 ${hasRisk || hasConflict ? "border-red-500 bg-red-50/80" : "border-neutral-200 bg-white"}`}>
           {hasRisk && (
             <div className="mb-3 rounded-lg border-2 border-red-500 bg-red-100 p-3">
               <p className="text-sm font-bold text-red-800">
@@ -835,17 +852,17 @@ export default function AdminBookingsPage() {
           {hasConflict && (
             <p className="mb-3 text-sm font-medium text-red-800">{conflictError}</p>
           )}
-          <h3 className="text-sm font-medium text-gray-700">{editing.id ? "Редактирование брони" : "Новая бронь"}</h3>
+          <h3 className="text-sm font-medium">{editing.id ? "Редактирование брони" : "Новая бронь"}</h3>
           <form
             className="mt-3 grid gap-3 sm:grid-cols-2"
             onSubmit={(e) => { e.preventDefault(); saveBooking(editing); }}
           >
             <label className="block sm:col-span-2 relative">
-              <span className="block text-xs text-gray-600">Телефон (поиск гостя)</span>
+              <span className="block text-xs">Телефон (поиск гостя)</span>
               <input
                 ref={phoneInputRef}
                 type="tel"
-                className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500" : "border-gray-300"}`}
+                className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500" : "border-neutral-300"}`}
                 value={editing.guestContact ?? ""}
                 onChange={(e) => {
                   setEditing((p) => ({ ...p, guestContact: e.target.value }));
@@ -856,12 +873,12 @@ export default function AdminBookingsPage() {
                 placeholder="Введите цифры телефона"
               />
               {phoneDropdownOpen && phoneSuggestions.length > 0 && (
-                <ul className="absolute z-10 mt-0.5 w-full rounded border border-gray-200 bg-white shadow-lg py-1 max-h-48 overflow-auto">
+                <ul className="absolute z-10 mt-0.5 w-full rounded border border-neutral-200 bg-white shadow-lg py-1 max-h-48 overflow-auto">
                   {phoneSuggestions.map((g) => (
                     <li key={g.id}>
                       <button
                         type="button"
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100"
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-neutral-100"
                         onClick={() => {
                           setEditing((p) => ({ ...p, guestId: g.id, guestName: g.name ?? "", guestContact: g.phone ?? "" }));
                           setPhoneDropdownOpen(false);
@@ -875,9 +892,9 @@ export default function AdminBookingsPage() {
               )}
             </label>
             <label className="block sm:col-span-2">
-              <span className="block text-xs text-gray-600">Гость из базы</span>
+              <span className="block text-xs">Гость из базы</span>
               <select
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm"
                 value={editing.guestId ?? ""}
                 onChange={(e) => {
                   const id = e.target.value;
@@ -904,57 +921,57 @@ export default function AdminBookingsPage() {
               </div>
             )}
             <label className="block">
-              <span className="block text-xs text-gray-600">ФИО</span>
-              <input className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.guestName ?? ""} onChange={(e) => setEditing((p) => ({ ...p, guestName: e.target.value }))} required />
+              <span className="block text-xs">ФИО</span>
+              <input className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm" value={editing.guestName ?? ""} onChange={(e) => setEditing((p) => ({ ...p, guestName: e.target.value }))} required />
             </label>
             <label className="block sm:col-span-2">
-              <span className="block text-xs text-gray-600">Примечание к данной брони</span>
-              <textarea className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm min-h-[60px]" value={(editing as { bookingNote?: string }).bookingNote ?? ""} onChange={(e) => setEditing((p) => ({ ...p, bookingNote: e.target.value }))} placeholder="Например: свой торт" />
+              <span className="block text-xs">Примечание к данной брони</span>
+              <textarea className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm min-h-[60px]" value={(editing as { bookingNote?: string }).bookingNote ?? ""} onChange={(e) => setEditing((p) => ({ ...p, bookingNote: e.target.value }))} placeholder="Например: свой торт" />
             </label>
             <label className="block">
-              <span className="block text-xs text-gray-600">Стол (tableId)</span>
-              <input className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.tableId ?? ""} onChange={(e) => setEditing((p) => ({ ...p, tableId: e.target.value }))} />
+              <span className="block text-xs">Стол (tableId)</span>
+              <input className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-neutral-300"}`} value={editing.tableId ?? ""} onChange={(e) => setEditing((p) => ({ ...p, tableId: e.target.value }))} />
             </label>
             <label className="block">
-              <span className="block text-xs text-gray-600">Места</span>
-              <input type="number" min={1} className="mt-1 w-full rounded border border-gray-300 px-2 py-1.5 text-sm" value={editing.seats ?? 2} onChange={(e) => setEditing((p) => ({ ...p, seats: Number(e.target.value) }))} />
+              <span className="block text-xs">Места</span>
+              <input type="number" min={1} className="mt-1 w-full rounded border border-neutral-300 px-2 py-1.5 text-sm" value={editing.seats ?? 2} onChange={(e) => setEditing((p) => ({ ...p, seats: Number(e.target.value) }))} />
             </label>
             <label className="block">
-              <span className="block text-xs text-gray-600">Дата</span>
-              <input type="date" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.date ?? ""} onChange={(e) => setEditing((p) => ({ ...p, date: e.target.value }))} required />
+              <span className="block text-xs">Дата</span>
+              <input type="date" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-neutral-300"}`} value={editing.date ?? ""} onChange={(e) => setEditing((p) => ({ ...p, date: e.target.value }))} required />
             </label>
             <label className="block">
-              <span className="block text-xs text-gray-600">Время с</span>
-              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.startTime ?? "12:00"} onChange={(e) => setEditing((p) => ({ ...p, startTime: e.target.value }))} />
+              <span className="block text-xs">Время с</span>
+              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-neutral-300"}`} value={editing.startTime ?? "12:00"} onChange={(e) => setEditing((p) => ({ ...p, startTime: e.target.value }))} />
             </label>
             <label className="block">
-              <span className="block text-xs text-gray-600">Время по</span>
-              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-gray-300"}`} value={editing.endTime ?? "14:00"} onChange={(e) => setEditing((p) => ({ ...p, endTime: e.target.value }))} />
+              <span className="block text-xs">Время по</span>
+              <input type="time" className={`mt-1 w-full rounded border px-2 py-1.5 text-sm ${hasConflict ? "border-red-500 bg-red-50" : "border-neutral-300"}`} value={editing.endTime ?? "14:00"} onChange={(e) => setEditing((p) => ({ ...p, endTime: e.target.value }))} />
             </label>
-            <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
+            <label className="flex items-center gap-2 sm:col-span-2 text-xs">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-neutral-300"
                 checked={Boolean((editing as any).notifyWaiter)}
                 onChange={(e) => setEditing((p) => ({ ...p, notifyWaiter: e.target.checked }))}
               />
               <span>Уведомить официанта о брони</span>
             </label>
-            <label className="flex items-center gap-2 sm:col-span-2 text-xs text-gray-700">
+            <label className="flex items-center gap-2 sm:col-span-2 text-xs">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-300"
+                className="h-4 w-4 rounded border-neutral-300"
                 checked={Boolean((editing as any).flashDashboard)}
                 onChange={(e) => setEditing((p) => ({ ...p, flashDashboard: e.target.checked }))}
               />
               <span>Подсветить стол на дашборде (flashDashboard)</span>
             </label>
             <div className="flex gap-2 sm:col-span-2">
-              <button type="submit" disabled={saving || hasConflict || (hasRisk && !riskAcknowledged)} className="rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
+              <button type="submit" disabled={saving || hasConflict || (hasRisk && !riskAcknowledged)} className="rounded-lg bg-black px-3 py-2 text-sm text-white disabled:opacity-50">Сохранить</button>
               {editing.id && (
                 <button type="button" onClick={() => editing.id && setDeleteConfirmId(editing.id)} className="rounded-lg border border-red-500 px-3 py-2 text-sm text-red-600">Удалить</button>
               )}
-              <button type="button" onClick={() => setEditing(null)} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600">Отмена</button>
+              <button type="button" onClick={() => setEditing(null)} className="rounded-lg border border-neutral-300 px-3 py-2 text-sm text-black/70">Отмена</button>
             </div>
           </form>
         </div>
@@ -962,23 +979,23 @@ export default function AdminBookingsPage() {
       })()}
 
       <div className="mt-4">
-        <h3 className="text-base font-semibold text-gray-900">Шахматка по столам</h3>
+        <h3 className="text-base font-semibold">Шахматка по столам</h3>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Дата</span>
-            <input type="date" className="rounded border border-gray-300 px-2 py-1.5 text-sm" value={gridDate} onChange={(e) => setGridDate(e.target.value)} />
+            <span>Дата</span>
+            <input type="date" className="rounded border border-neutral-300 px-2 py-1.5 text-sm" value={gridDate} onChange={(e) => setGridDate(e.target.value)} />
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Время с</span>
-            <input type="time" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-28" value={filterTimeFrom} onChange={(e) => setFilterTimeFrom(e.target.value)} />
+            <span>Время с</span>
+            <input type="time" className="rounded border border-neutral-300 px-2 py-1.5 text-sm w-28" value={filterTimeFrom} onChange={(e) => setFilterTimeFrom(e.target.value)} />
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">по</span>
-            <input type="time" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-28" value={filterTimeTo} onChange={(e) => setFilterTimeTo(e.target.value)} />
+            <span>по</span>
+            <input type="time" className="rounded border border-neutral-300 px-2 py-1.5 text-sm w-28" value={filterTimeTo} onChange={(e) => setFilterTimeTo(e.target.value)} />
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Стол</span>
-            <select className="rounded border border-gray-300 px-2 py-1.5 text-sm" value={filterTableId} onChange={(e) => setFilterTableId(e.target.value)}>
+            <span>Стол</span>
+            <select className="rounded border border-neutral-300 px-2 py-1.5 text-sm" value={filterTableId} onChange={(e) => setFilterTableId(e.target.value)}>
               <option value="">Все</option>
               {venueTables.map((t) => (
                 <option key={t.id} value={t.id}>№{t.number}</option>
@@ -986,18 +1003,18 @@ export default function AdminBookingsPage() {
             </select>
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Телефон</span>
-            <input type="text" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-36" value={filterPhone} onChange={(e) => setFilterPhone(e.target.value)} placeholder="Поиск" />
+            <span>Телефон</span>
+            <input type="text" className="rounded border border-neutral-300 px-2 py-1.5 text-sm w-36" value={filterPhone} onChange={(e) => setFilterPhone(e.target.value)} placeholder="Поиск" />
           </label>
           <label className="flex items-center gap-2 text-sm">
-            <span className="text-gray-600">Имя</span>
-            <input type="text" className="rounded border border-gray-300 px-2 py-1.5 text-sm w-36" value={filterName} onChange={(e) => setFilterName(e.target.value)} placeholder="Поиск" />
+            <span>Имя</span>
+            <input type="text" className="rounded border border-neutral-300 px-2 py-1.5 text-sm w-36" value={filterName} onChange={(e) => setFilterName(e.target.value)} placeholder="Поиск" />
           </label>
         </div>
         {loading ? (
-          <p className="mt-4 text-sm text-gray-500">Загрузка…</p>
+          <p className="mt-4 text-sm">Загрузка…</p>
         ) : venueTables.length === 0 ? (
-          <p className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">Нет столов. Добавьте столы в Зал & QR.</p>
+          <p className="mt-4 rounded-xl border border-neutral-200 bg-white p-6 text-center text-sm text-black/60">Нет столов. Добавьте столы в Зал & QR.</p>
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
             {venueTables.map((table) => {
@@ -1012,9 +1029,9 @@ export default function AdminBookingsPage() {
               return (
                 <div
                   key={table.id}
-                  className={`rounded-xl border-2 border-gray-200 bg-white p-4 shadow-sm transition-opacity ${!tableHasSearchMatch ? "opacity-50" : ""}`}
+                  className={`rounded-xl border-2 border-neutral-200 bg-white p-4 shadow-sm transition-opacity ${!tableHasSearchMatch ? "opacity-50" : ""}`}
                 >
-                  <div className="text-xl font-bold text-gray-900">Стол №{table.number}</div>
+                  <div className="text-xl font-bold">Стол №{table.number}</div>
                   <div className="mt-2 space-y-1.5">
                     {buildTimelineSegments(tableBookings, selectedDate, dayStart, dayEnd).map((seg, idx) => {
                       if (seg.type === "free") {
@@ -1038,7 +1055,7 @@ export default function AdminBookingsPage() {
                                 status: "pending",
                               });
                             }}
-                            className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-100 px-2 py-2 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-200"
+                            className="w-full rounded-lg border border-dashed border-neutral-300 bg-neutral-100 px-2 py-2 text-sm text-black/60 hover:border-neutral-400 hover:bg-neutral-200"
                           >
                             <span className="font-medium">{label}</span>
                             <span className="ml-1 text-xs">{seg.startTime} – {seg.endTime}</span>
@@ -1073,13 +1090,13 @@ export default function AdminBookingsPage() {
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-booking-title">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <h3 id="delete-booking-title" className="font-semibold text-gray-900">Удалить бронь?</h3>
-            <p className="mt-2 text-sm text-gray-600">Действие нельзя отменить.</p>
+            <h3 id="delete-booking-title" className="font-semibold">Удалить бронь?</h3>
+            <p className="mt-2 text-sm text-black/70">Действие нельзя отменить.</p>
             <div className="mt-4 flex gap-2">
               <button
                 type="button"
                 onClick={() => setDeleteConfirmId(null)}
-                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm font-medium hover:bg-neutral-50"
               >
                 Отмена
               </button>
@@ -1098,8 +1115,8 @@ export default function AdminBookingsPage() {
       {disableBookingModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="disable-booking-title">
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <h3 id="disable-booking-title" className="font-semibold text-gray-900">Отключить онлайн-бронирование</h3>
-            <p className="mt-2 text-sm text-gray-600">На сколько отключить приём заявок?</p>
+            <h3 id="disable-booking-title" className="font-semibold">Отключить онлайн-бронирование</h3>
+            <p className="mt-2 text-sm text-black/70">На сколько отключить приём заявок?</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {DISABLE_OPTIONS.map((opt) => (
                 <button
@@ -1109,7 +1126,7 @@ export default function AdminBookingsPage() {
                   className={`rounded-lg border py-2.5 text-sm font-medium transition-colors ${
                     disableBookingDays === opt.value
                       ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                      : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                      : "border-neutral-200 text-black/70 hover:bg-neutral-50"
                   }`}
                 >
                   {opt.label}
@@ -1120,14 +1137,14 @@ export default function AdminBookingsPage() {
               <button
                 type="button"
                 onClick={() => setDisableBookingModalOpen(false)}
-                className="flex-1 rounded-lg border border-gray-300 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm font-medium hover:bg-neutral-50"
               >
                 Отмена
               </button>
               <button
                 type="button"
                 onClick={applyDisableBooking}
-                className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                className="flex-1 rounded-lg bg-black py-2 text-sm font-medium text-white hover:bg-black/80"
               >
                 Отключить
               </button>
