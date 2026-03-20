@@ -176,9 +176,10 @@ function StaffRow({
   onDismiss: (s: Staff) => void;
   positionLabel: string;
 }) {
-  const name = (staff.firstName || staff.lastName)
+  const fullName = (staff.firstName || staff.lastName)
     ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
-    : (staff.identity?.displayName ?? staff.identity?.name ?? staff.id);
+    : (staff.identity?.displayName ?? staff.identity?.name ?? "");
+  const name = fullName.trim() ? fullName.split(' ')[0] : "Сотрудник";
   const isActive = staff.active !== false;
   const onShift = staff.onShift === true;
 
@@ -854,9 +855,10 @@ export default function TeamPage() {
     }
   };
 
-  const dismissName = (dismissModal?.firstName || dismissModal?.lastName)
+  const dismissNameRaw = (dismissModal?.firstName || dismissModal?.lastName)
     ? [dismissModal.firstName, dismissModal.lastName].filter(Boolean).join(" ")
-    : (dismissModal?.identity?.name ?? dismissModal?.id ?? "");
+    : (dismissModal?.identity?.name ?? dismissModal?.identity?.displayName ?? "");
+  const dismissName = String(dismissNameRaw ?? "").trim() ? String(dismissNameRaw).trim().split(' ')[0] : "Сотрудник";
 
   return (
     <div>
@@ -1164,7 +1166,8 @@ export default function TeamPage() {
             const other = staffList.filter((s) => s.id !== editingStaff.id && s.active !== false);
             const out: Record<string, { staffId: string; displayName: string }[]> = {};
             for (const s of other) {
-              const name = [s.firstName, s.lastName].filter(Boolean).join(" ") || s.identity?.displayName || s.id.slice(-8);
+              const full = [s.firstName, s.lastName].filter(Boolean).join(" ") || s.identity?.displayName || "";
+              const name = full.trim() ? full.split(' ')[0] : "Сотрудник";
               for (const tid of s.assignedTableIds ?? []) {
                 if (!out[tid]) out[tid] = [];
                 out[tid].push({ staffId: s.id, displayName: name });
