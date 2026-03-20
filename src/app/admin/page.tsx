@@ -78,6 +78,8 @@ interface StaffWithTables {
   /** defaultTables — массив номеров столов (или их строковых представлений) из профиля сотрудника */
   defaultTables: string[];
   onShift: boolean;
+  role?: string;
+  position?: string;
 }
 
 interface FeedEvent {
@@ -609,6 +611,12 @@ function AdminDashboardContent() {
     const byId = venueStaffOnShift ?? {};
     return staffList
       .filter((s) => byId[s.id] === true)
+      .filter((s) => {
+        const roleRaw = (s.role ?? s.position ?? "").trim();
+        if (!roleRaw) return true; // backward-compat: если роль не указана в документе
+        const role = roleRaw.toLowerCase();
+        return role === "waiter" || LPR_ROLES.includes(role as any);
+      })
       .map((s) => ({ id: s.id, displayName: s.displayName, position: "" }));
   }, [staffList, venueStaffOnShift]);
 
@@ -633,6 +641,8 @@ function AdminDashboardContent() {
             assignedTableIds,
             defaultTables,
             onShift: data.onShift === true,
+            role: (data.role as string | undefined) ?? (data.serviceRole as string | undefined),
+            position: (data.position as string | undefined) ?? (data.serviceRole as string | undefined),
           };
         });
       setStaffList(list);
@@ -1325,33 +1335,33 @@ function AdminDashboardContent() {
           </div>
         ) : venueType === "full_service" ? (
           <>
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-gray-600">Живой зал</h3>
-              <p className="mt-1 text-2xl font-bold text-gray-900">
+            <div className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm">
+              <h3 className="text-sm font-medium text-violet-700">Живой зал</h3>
+              <p className="mt-1 text-2xl font-bold text-violet-900">
                 {occupiedCount} <span className="text-gray-400 font-normal">/ {totalTables || "—"}</span>
               </p>
-              <p className="mt-0.5 text-xs text-gray-500">занято / всего столов</p>
+              <p className="mt-0.5 text-xs text-violet-600">занято / всего столов</p>
             </div>
             <Link
               href="/admin/bookings"
-              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block"
+              className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm hover:bg-violet-50 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-gray-600">Брони сегодня</h3>
-              <p className="mt-1 text-2xl font-bold text-blue-700">{bookingsTodayCount}</p>
-              <p className="mt-0.5 text-xs text-gray-500">{todayStr}</p>
+              <h3 className="text-sm font-medium text-violet-700">Брони сегодня</h3>
+              <p className="mt-1 text-2xl font-bold text-violet-900">{bookingsTodayCount}</p>
+              <p className="mt-0.5 text-xs text-violet-600">{todayStr}</p>
               {nextBookingInMinutes != null && nextBookingInMinutes > 0 && (
-                <p className="mt-1 text-xs font-medium text-blue-600">
+                <p className="mt-1 text-xs font-medium text-violet-600">
                   Следующая бронь через {Math.round(nextBookingInMinutes)} мин.
                 </p>
               )}
             </Link>
             <Link
               href="/admin/team"
-              className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:bg-gray-50 transition-colors block"
+              className="rounded-xl border border-violet-200 bg-white/70 p-4 shadow-sm hover:bg-violet-50 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-gray-600">На смене</h3>
-              <p className="mt-1 text-2xl font-bold text-emerald-700">{onShiftCount}</p>
-              <p className="mt-0.5 text-xs text-gray-500">сотрудников</p>
+              <h3 className="text-sm font-medium text-violet-700">На смене</h3>
+              <p className="mt-1 text-2xl font-bold text-violet-900">{onShiftCount}</p>
+              <p className="mt-0.5 text-xs text-violet-600">сотрудников</p>
             </Link>
           </>
         ) : (
@@ -1647,24 +1657,29 @@ function AdminDashboardContent() {
                   );
                   const defaultSelectValue =
                     defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "";
-                  const selectValue = waiterId || defaultSelectValue || "";
+                  // Если закреплённый официант НЕ на смене — показываем прочерк и убираем подсветку.
+                  const selectValue = waiterId
+                    ? waiterOnShift
+                      ? waiterId
+                      : ""
+                    : defaultSelectValue || "";
                   const isPlanSelection = Boolean(defaultSelectValue && !waiterId);
                   const hasEmergency = emergencyTableIds.has(table.id);
-                  const sessionGuestId = session?.guestId;
-                  const isVipGuest = Boolean(sessionGuestId && guestTypeByGuestId[sessionGuestId] === "vip");
+                  const isBookingSoon = isUrgent;
+                  // Физическая доступность стола: зелёная рамка НЕ зависит от onShift сотрудника.
+                  const shouldShowGreenReady =
+                    !isOccupied &&
+                    (!hasTodayBookingForTable ||
+                      (diffInMinutes != null && Number.isFinite(diffInMinutes) && diffInMinutes > 30));
                   const cardBorder = hasEmergency
-                    ? "border-red-600 border-8 animate-bounce"
-                    : isVipGuest && isOccupied
-                    ? "border-violet-500 border-4 animate-pulse shadow-[0_0_15px_rgba(139,92,246,0.5)]"
+                    ? "border-red-600 border-4 animate-pulse shadow-[0_0_14px_rgba(239,68,68,0.35)]"
                     : isOccupied
-                      ? "border-blue-700"
-                        : waiterOnShift
-                        ? "border-4 border-emerald-500"
-                        : hasTodayBookingForTable
-                          ? "border-orange-500 border-4 animate-pulse"
-                          : isUrgent
-                            ? "border-orange-500 border-4 animate-pulse"
-                            : "border-emerald-400";
+                      ? "border-4 border-blue-700"
+                      : isBookingSoon
+                        ? "border-orange-500 border-4 animate-pulse shadow-[0_0_14px_rgba(249,115,22,0.25)]"
+                        : shouldShowGreenReady
+                          ? "border-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.35)]"
+                          : "border-emerald-200";
                   const cardBg = isOccupied
                     ? "bg-blue-600"
                     : "bg-emerald-500";
@@ -1673,7 +1688,7 @@ function AdminDashboardContent() {
                   return (
                     <div
                       key={table.id}
-                      className={`rounded-xl border-2 p-4 shadow-sm ${cardBorder} ${cardBg} ${cardText}`}
+                      className={`rounded-xl border p-4 shadow-sm ${cardBorder} ${cardBg} ${cardText}`}
                     >
                       <div className="text-2xl font-bold text-white">
                         {table?.number ?? table.id ?? "—"}
@@ -1696,7 +1711,7 @@ function AdminDashboardContent() {
                                 if (v && tid) saveTableWaiter(tid, v);
                               }}
                               className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm bg-white/10 border-blue-400 text-white ${
-                                isGreenSelect ? "border-emerald-300 bg-emerald-900/30" : ""
+                                isGreenSelect ? "border-emerald-300 ring-2 ring-emerald-400" : ""
                               }`}
                             >
                               <option value="">—</option>
@@ -1750,7 +1765,7 @@ function AdminDashboardContent() {
                               }}
                               className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm ${
                                 isGreenSelect
-                                  ? "border-emerald-400 bg-emerald-50"
+                                  ? "border-emerald-400 bg-white/90 ring-2 ring-emerald-400"
                                   : "border-gray-300 bg-white"
                               }`}
                             >
