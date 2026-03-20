@@ -285,6 +285,8 @@ function AdminDashboardContent() {
   const [sessionsByTable, setSessionsByTable] = useState<Record<string, SessionOnTable>>({});
   const [bookingsByTable, setBookingsByTable] = useState<Record<string, BookingOnTable[]>>({});
   const [assignmentsByTable, setAssignmentsByTable] = useState<Record<string, string>>({});
+  // Для отладки: что реально лежит в tables/{tableId}.assignments.waiter (до преобразований/нормализации)
+  const [assignmentsWaiterRawByTable, setAssignmentsWaiterRawByTable] = useState<Record<string, unknown>>({});
   const [guestNames, setGuestNames] = useState<Record<string, string>>({});
   const [guestRatings, setGuestRatings] = useState<Record<string, number>>({});
   const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([]);
@@ -657,6 +659,7 @@ function AdminDashboardContent() {
     if (!tables.length) return;
     const unsub = onSnapshot(collection(db, "venues", venueId, "tables"), (snap) => {
       const next: Record<string, string> = {};
+      const nextRaw: Record<string, unknown> = {};
       snap.docs.forEach((d) => {
         const data = d.data();
         // Поддерживаем несколько исторических схем поля «закреплённый официант»:
@@ -664,6 +667,10 @@ function AdminDashboardContent() {
         // 2) waiterId (legacy/альтернатива)
         // 3) assignedStaffId (альтернатива)
         const assignments = data.assignments as { waiter?: unknown } | undefined;
+        // Прямая отладочная переменная: именно tables/{tableId}.assignments?.waiter
+        const rawFromAssignments = (data.assignments as { waiter?: unknown } | undefined)?.waiter;
+        nextRaw[d.id] = rawFromAssignments;
+
         const waiterRaw =
           data.waiterId ??
           assignments?.waiter ??
@@ -673,6 +680,7 @@ function AdminDashboardContent() {
         if (waiterId) next[d.id] = waiterId;
       });
       setAssignmentsByTable((prev) => ({ ...prev, ...next }));
+      setAssignmentsWaiterRawByTable((prev) => ({ ...prev, ...nextRaw }));
     });
     return () => unsub();
   }, [tables.length]);
@@ -683,12 +691,15 @@ function AdminDashboardContent() {
     let cancelled = false;
     (async () => {
       const next: Record<string, string> = {};
+      const nextRaw: Record<string, unknown> = {};
       for (const t of tables) {
         if (cancelled || !t?.id) return;
         const snap = await getDoc(doc(db, "venues", venueId, "tables", t.id));
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const assignments = data.assignments as { waiter?: unknown } | undefined;
+          const rawFromAssignments = (data.assignments as { waiter?: unknown } | undefined)?.waiter;
+          nextRaw[t.id] = rawFromAssignments;
           const waiterRaw =
             data.waiterId ??
             assignments?.waiter ??
@@ -699,6 +710,7 @@ function AdminDashboardContent() {
         }
       }
       if (!cancelled) setAssignmentsByTable((prev) => ({ ...prev, ...next }));
+      if (!cancelled) setAssignmentsWaiterRawByTable((prev) => ({ ...prev, ...nextRaw }));
     })();
     return () => {
       cancelled = true;
@@ -1342,33 +1354,33 @@ function AdminDashboardContent() {
           </div>
         ) : venueType === "full_service" ? (
           <>
-            <div className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm">
-              <h3 className="text-sm font-medium text-violet-900">Живой зал</h3>
-              <p className="mt-1 text-2xl font-bold text-violet-900">
+            <div className="rounded-xl border-2 border-violet-300 bg-white p-4 shadow-sm">
+              <h3 className="text-sm font-medium text-black">Живой зал</h3>
+              <p className="mt-1 text-2xl font-bold text-black">
                 {occupiedCount} <span className="text-gray-400 font-normal">/ {totalTables || "—"}</span>
               </p>
-              <p className="mt-0.5 text-xs text-violet-600">занято / всего столов</p>
+              <p className="mt-0.5 text-xs text-slate-700">занято / всего столов</p>
             </div>
             <Link
               href="/admin/bookings"
-              className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm hover:bg-violet-200 transition-colors block"
+              className="rounded-xl border-2 border-violet-300 bg-white p-4 shadow-sm hover:bg-violet-50 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-violet-900">Брони сегодня</h3>
-              <p className="mt-1 text-2xl font-bold text-violet-900">{bookingsTodayCount}</p>
-              <p className="mt-0.5 text-xs text-violet-600">{todayStr}</p>
+              <h3 className="text-sm font-medium text-black">Брони сегодня</h3>
+              <p className="mt-1 text-2xl font-bold text-black">{bookingsTodayCount}</p>
+              <p className="mt-0.5 text-xs text-slate-700">{todayStr}</p>
               {nextBookingInMinutes != null && nextBookingInMinutes > 0 && (
-                <p className="mt-1 text-xs font-medium text-violet-600">
+                <p className="mt-1 text-xs font-medium text-slate-700">
                   Следующая бронь через {Math.round(nextBookingInMinutes)} мин.
                 </p>
               )}
             </Link>
             <Link
               href="/admin/team"
-              className="rounded-xl border border-violet-300 bg-violet-100 p-4 shadow-sm hover:bg-violet-200 transition-colors block"
+              className="rounded-xl border-2 border-violet-300 bg-white p-4 shadow-sm hover:bg-violet-50 transition-colors block"
             >
-              <h3 className="text-sm font-medium text-violet-900">На смене</h3>
-              <p className="mt-1 text-2xl font-bold text-violet-900">{onShiftCount}</p>
-              <p className="mt-0.5 text-xs text-violet-600">сотрудников</p>
+              <h3 className="text-sm font-medium text-black">На смене</h3>
+              <p className="mt-1 text-2xl font-bold text-black">{onShiftCount}</p>
+              <p className="mt-0.5 text-xs text-slate-700">сотрудников</p>
             </Link>
           </>
         ) : (
@@ -1733,6 +1745,9 @@ function AdminDashboardContent() {
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-white/90">Официант</label>
+                            <p className="mt-1 text-[10px] text-white/70 font-mono">
+                              ID_in_DB: {String(assignmentsWaiterRawByTable[table.id] ?? "—")}
+                            </p>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
@@ -1786,6 +1801,9 @@ function AdminDashboardContent() {
                           )}
                           <div className="mt-2">
                             <label className="block text-xs text-slate-900/90">Официант</label>
+                            <p className="mt-1 text-[10px] text-slate-600/90 font-mono">
+                              ID_in_DB: {String(assignmentsWaiterRawByTable[table.id] ?? "—")}
+                            </p>
                             <select
                               value={selectValue ?? ""}
                               onChange={(e) => {
