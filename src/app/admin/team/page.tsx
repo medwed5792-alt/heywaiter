@@ -938,7 +938,14 @@ export default function TeamPage() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-gray-900">
-                  {[lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ") || "Без имени"}
+                  {String(
+                    [lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ") ||
+                      lookupResult.identity?.displayName ||
+                      lookupResult.identity?.name ||
+                      ""
+                  )
+                    .trim()
+                    .split(' ')[0] || "Сотрудник"}
                 </p>
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   {IDENTITY_OPTIONS.filter((o) => o.value !== "email").map((opt) => {

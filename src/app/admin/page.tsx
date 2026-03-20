@@ -316,11 +316,11 @@ function AdminDashboardContent() {
   const todayStr = new Date().toISOString().slice(0, 10);
 
   // Стандартизируем отображение имени: только первое слово.
-  const staffFirstName = (fullName: string | undefined | null): string => {
+  const staffFirstName = useCallback((fullName: string | undefined | null): string => {
     const s = String(fullName ?? "").trim();
     if (!s) return "Сотрудник";
     return s.split(' ')[0] || "Сотрудник";
-  };
+  }, []);
 
   const performEndOfDayReset = useCallback(
     async (reason: "auto" | "manual") => {
@@ -335,8 +335,7 @@ function AdminDashboardContent() {
         for (const d of staffDocs) {
           const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
           if (data?.onShift !== true) continue;
-          const staffDisplayName =
-            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
+          const staffDisplayName = staffFirstName((data.displayName as string | undefined) ?? (data.name as string | undefined));
           await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
             type: "shift_end",
             message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -377,7 +376,7 @@ function AdminDashboardContent() {
         setEndOfDayLoading(false);
       }
     },
-    []
+    [staffFirstName]
   );
 
   useEffect(() => {
@@ -673,9 +672,8 @@ function AdminDashboardContent() {
 
         const resolveDisplayName = (docId: string, data: any): string => {
           // Шаг 1: name/displayName в локальном документе
-          const localName =
-            (typeof data?.name === "string" ? data.name : "") ||
-            (typeof data?.displayName === "string" ? data.displayName : "");
+          // Если именно `name` в локальном документе пустое — дальше обязательно идём в `global_users`.
+          const localName = typeof data?.name === "string" ? data.name : "";
           const cleanedLocalName = String(localName ?? "").trim();
           if (cleanedLocalName) return cleanedLocalName;
 
@@ -696,20 +694,6 @@ function AdminDashboardContent() {
           const cleanedGlobalIdentityName = String(globalIdentityName ?? "").trim();
           if (globalFullName) return globalFullName;
           if (cleanedGlobalIdentityName) return cleanedGlobalIdentityName;
-
-          // Шаг 3: phone/email (если имя не найдено нигде)
-          const localPhone = typeof data?.phone === "string" ? data.phone.trim() : "";
-          const localEmail = typeof data?.email === "string" ? data.email.trim() : "";
-          const globalPhone =
-            typeof globalUser?.phone === "string" ? globalUser.phone.trim() : (globalUser?.identities?.phone ?? "").trim?.();
-          const cleanedGlobalPhone = typeof globalPhone === "string" ? globalPhone.trim() : "";
-          const globalEmail = globalUser?.identities?.email ?? "";
-          const cleanedGlobalEmail = typeof globalEmail === "string" ? globalEmail.trim() : "";
-
-          if (localPhone) return localPhone;
-          if (cleanedGlobalPhone) return cleanedGlobalPhone;
-          if (localEmail) return localEmail;
-          if (cleanedGlobalEmail) return cleanedGlobalEmail;
 
           return "Сотрудник";
         };
@@ -1068,8 +1052,9 @@ function AdminDashboardContent() {
       for (const d of staffDocs) {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
-        const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
+        const staffDisplayName = staffFirstName(
+          (data.displayName as string | undefined) ?? (data.name as string | undefined)
+        );
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -1089,7 +1074,7 @@ function AdminDashboardContent() {
     } finally {
       setToggleVenueLoading(false);
     }
-  }, [closeVenueConfirm, closeAllTablesAndVenue]);
+  }, [closeVenueConfirm, closeAllTablesAndVenue, staffFirstName]);
 
   useEffect(() => {
     const q = query(
@@ -1323,8 +1308,7 @@ function AdminDashboardContent() {
       for (const d of staffDocs) {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
-        const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
+        const staffDisplayName = staffFirstName((data.displayName as string | undefined) ?? (data.name as string | undefined));
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -1344,7 +1328,7 @@ function AdminDashboardContent() {
     } finally {
       setToggleVenueLoading(false);
     }
-  }, [toggleVenueLoading, isVenueClosed, occupiedCount]);
+  }, [toggleVenueLoading, isVenueClosed, occupiedCount, staffFirstName]);
 
   /** Время закрытия по графику сегодня и минут до закрытия (null если нет графика или уже после закрытия) */
   const scheduleCloseTimeAndMins = useMemo(() => {

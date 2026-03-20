@@ -117,8 +117,20 @@ export async function POST(request: NextRequest) {
       const staffData = alt.docs[0].data() ?? {};
       const firstName = (staffData.firstName as string) ?? "";
       const lastName = (staffData.lastName as string) ?? "";
-      const displayName =
-        [firstName, lastName].filter(Boolean).join(" ") || legacyId.slice(-8);
+      let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+      // Если в локальном документе нет имени — подтягиваем имя из global_users.
+      if (!displayName && userId) {
+        const globalSnap = await firestore.collection("global_users").doc(userId).get();
+        if (globalSnap.exists) {
+          const d = globalSnap.data() ?? {};
+          const gFirst = (d.firstName as string | undefined) ?? "";
+          const gLast = (d.lastName as string | undefined) ?? "";
+          const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
+          displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
+        }
+      }
+      displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
 
       if (action === "start") {
         // Для venues/{venue}/staff doc-id используем staffId (корневой staff doc id).
@@ -255,8 +267,19 @@ export async function POST(request: NextRequest) {
         const staffData = snap.data() ?? {};
         const firstName = (staffData.firstName as string) ?? "";
         const lastName = (staffData.lastName as string) ?? "";
-        const displayName =
-          [firstName, lastName].filter(Boolean).join(" ") || staffDocId.slice(-8);
+        let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+        // Если в локальном документе нет имени — подтягиваем имя из global_users.
+        if (!displayName && globalUserId) {
+          const globalSnap = await firestore.collection("global_users").doc(globalUserId).get();
+          if (globalSnap.exists) {
+            const d = globalSnap.data() ?? {};
+            const gFirst = (d.firstName as string | undefined) ?? "";
+            const gLast = (d.lastName as string | undefined) ?? "";
+            const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
+            displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
+          }
+        }
+        displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
         await firestore
           .collection("venues")
           .doc(staffVenueId)
@@ -319,8 +342,19 @@ export async function POST(request: NextRequest) {
       const staffData = snap.data() ?? {};
       const firstName = (staffData.firstName as string) ?? "";
       const lastName = (staffData.lastName as string) ?? "";
-      const displayName =
-        [firstName, lastName].filter(Boolean).join(" ") || staffDocId.slice(-8);
+      let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+      // Если в локальном документе нет имени — подтягиваем имя из global_users.
+      if (!displayName && globalUserId) {
+        const globalSnap = await firestore.collection("global_users").doc(globalUserId).get();
+        if (globalSnap.exists) {
+          const d = globalSnap.data() ?? {};
+          const gFirst = (d.firstName as string | undefined) ?? "";
+          const gLast = (d.lastName as string | undefined) ?? "";
+          const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
+          displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
+        }
+      }
+      displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
       await firestore
         .collection("venues")
         .doc(staffVenueId)

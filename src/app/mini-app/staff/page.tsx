@@ -456,7 +456,6 @@ function StaffContentInner() {
         return;
       }
 
-      const staffUserId = userId ?? staffId ?? "";
       let staffName = "Сотрудник";
       if (userId) {
         const globalSnap = await getDoc(doc(db, "global_users", userId));
