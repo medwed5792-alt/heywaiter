@@ -315,6 +315,13 @@ function AdminDashboardContent() {
 
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  // Стандартизируем отображение имени: только первое слово.
+  const staffFirstName = (fullName: string | undefined | null): string => {
+    const s = String(fullName ?? "").trim();
+    if (!s) return "Сотрудник";
+    return s.split(' ')[0] || "Сотрудник";
+  };
+
   const performEndOfDayReset = useCallback(
     async (reason: "auto" | "manual") => {
       setEndOfDayLoading(true);
@@ -329,7 +336,7 @@ function AdminDashboardContent() {
           const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
           if (data?.onShift !== true) continue;
           const staffDisplayName =
-            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
+            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
           await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
             type: "shift_end",
             message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -704,7 +711,7 @@ function AdminDashboardContent() {
           if (localEmail) return localEmail;
           if (cleanedGlobalEmail) return cleanedGlobalEmail;
 
-          return "Неизвестный сотрудник";
+          return "Сотрудник";
         };
 
         if (seq !== staffNameResolveSeqRef.current) return; // snapshot устарел
@@ -740,6 +747,34 @@ function AdminDashboardContent() {
     });
     return () => unsub();
   }, [venueType]);
+
+  // Cleanup: убираем «фантомные» номера столов из профиля сотрудника,
+  // чтобы карточки/предвыбор не опирались на несуществующие таблицы.
+  useEffect(() => {
+    if (!tables.length || staffList.length === 0) return;
+    const allowedTableNumbers = new Set(tables.map((t) => String(t.number)));
+
+    const digits = (v: string) => String(v).replace(/\D/g, "");
+    const clean = (arr: string[]) =>
+      (arr ?? [])
+        .map(String)
+        .filter((x) => {
+          const d = digits(x);
+          return d && allowedTableNumbers.has(d);
+        });
+
+    setStaffList((prev) => {
+      let changed = false;
+      const next = prev.map((s) => {
+        const cleanedAssigned = clean(s.assignedTableIds ?? []);
+        const cleanedDefault = clean(s.defaultTables ?? []);
+        if (cleanedAssigned.join("|") === (s.assignedTableIds ?? []).join("|") && cleanedDefault.join("|") === (s.defaultTables ?? []).join("|")) return s;
+        changed = true;
+        return { ...s, assignedTableIds: cleanedAssigned, defaultTables: cleanedDefault };
+      });
+      return changed ? next : prev;
+    });
+  }, [tables, staffList]);
 
   useEffect(() => {
     if (!tables.length) return;
@@ -1034,7 +1069,7 @@ function AdminDashboardContent() {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
         const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -1289,7 +1324,7 @@ function AdminDashboardContent() {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
         const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Сотрудник";
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -1834,7 +1869,7 @@ function AdminDashboardContent() {
                       {isOccupied && (
                         <>
                           {waiterOnShift ? (
-                            <p className="mt-1 text-xs font-medium text-white/90">{waiterDisplayName ?? "Официант"}</p>
+                            <p className="mt-1 text-xs font-medium text-white/90">{staffFirstName(waiterDisplayName)}</p>
                           ) : (
                             <p className="mt-1 text-xs font-medium text-white/70">Ожидает официанта</p>
                           )}
@@ -1861,7 +1896,7 @@ function AdminDashboardContent() {
                                   value={w.id}
                                   className={isGreenSelect && resolvedStaffId && w.id === resolvedStaffId ? "text-black font-semibold" : ""}
                                 >
-                                  {w.displayName}
+                                  {staffFirstName(w.displayName)}
                                 </option>
                               ))}
                             </select>
@@ -1893,7 +1928,7 @@ function AdminDashboardContent() {
                       {!isOccupied && (
                         <>
                           {waiterOnShift ? (
-                            <p className="mt-1 text-xs font-medium text-slate-900/90">{waiterDisplayName ?? "—"}</p>
+                            <p className="mt-1 text-xs font-medium text-slate-900/90">{staffFirstName(waiterDisplayName)}</p>
                           ) : (
                             <p className="mt-1 text-xs font-medium text-slate-900/70">Ожидает официанта</p>
                           )}
@@ -1920,7 +1955,7 @@ function AdminDashboardContent() {
                                   value={w.id}
                                   className={isGreenSelect && resolvedStaffId && w.id === resolvedStaffId ? "text-black font-semibold" : ""}
                                 >
-                                  {w.displayName}
+                                  {staffFirstName(w.displayName)}
                                 </option>
                               ))}
                             </select>
