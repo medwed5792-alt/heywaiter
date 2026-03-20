@@ -436,6 +436,26 @@ function StaffContentInner() {
     setSosLoading(true);
     setSosError(null);
     try {
+      // Валидация: стол должен существовать в venues/{STAFF_VENUE_ID}/tables.
+      // Сравниваем по document id и по полю number (который вводит пользователь, например "111").
+      const tablesSnap = await getDocs(collection(db, "venues", STAFF_VENUE_ID, "tables"));
+      const tableExists = tablesSnap.docs.some((d) => {
+        const docId = d.id;
+        if (docId === tableId) return true;
+        const rawNumber = d.data()?.number as unknown;
+        const parsed =
+          typeof rawNumber === "number"
+            ? rawNumber
+            : typeof rawNumber === "string"
+              ? Number(rawNumber.trim())
+              : NaN;
+        return Number.isFinite(parsed) && parsed === num;
+      });
+      if (!tableExists) {
+        setSosError("Стол не найден");
+        return;
+      }
+
       const staffUserId = userId ?? staffId ?? "";
       let staffName = staffUserId ? String(staffUserId).slice(-8) : "Официант";
       if (userId) {

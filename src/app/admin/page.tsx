@@ -631,9 +631,9 @@ function AdminDashboardContent() {
         .filter((d) => d.data().active !== false)
         .map((d) => {
           const data = d.data();
-          const firstName = (data.firstName as string) ?? "";
-          const lastName = (data.lastName as string) ?? "";
-          const displayName = [firstName, lastName].filter(Boolean).join(" ") || d.id.slice(-8);
+          // Универсальный алгоритм имени:
+          // берём поле name как в списке «Команда», принудительно приводим к строке.
+          const displayName = String((data as { name?: unknown }).name ?? "").trim() || d.id.slice(-8);
           const assignedTableIds = (data.assignedTableIds as string[] | undefined) ?? [];
           const defaultTablesRaw = (data.defaultTables as Array<string | number> | undefined) ?? [];
           const defaultTables = (defaultTablesRaw.length ? defaultTablesRaw : (assignedTableIds as Array<string | number>)).map((x) =>

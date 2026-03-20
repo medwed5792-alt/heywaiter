@@ -1283,6 +1283,11 @@ function StaffFormModal({
   });
   const [position, setPosition] = useState(staff.position ?? "");
   const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
+  // Чистим «Столы по умолчанию» от фантомов: оставляем только те tableIds, которые реально есть в текущей коллекции tables.
+  useEffect(() => {
+    const tableIdSet = new Set((tables ?? []).map((t) => t.id));
+    setAssignedTableIds((prev) => (prev ?? []).filter((id) => tableIdSet.has(id)));
+  }, [tables]);
   const [saving, setSaving] = useState(false);
   const groupAndCall = position ? getGroupAndCallCategory(position) : null;
   const group = groupAndCall?.group ?? (staff.group as StaffGroup | undefined);
@@ -1314,6 +1319,8 @@ function StaffFormModal({
       toast.error("Введите номер телефона");
       return;
     }
+    const tableIdSet = new Set((tables ?? []).map((t) => t.id));
+    const cleanedAssignedTableIds = (assignedTableIds ?? []).filter((id) => tableIdSet.has(id));
     setSaving(true);
     try {
       const res = await fetch("/api/admin/staff/upsert", {
@@ -1332,7 +1339,7 @@ function StaffFormModal({
           position: position || undefined,
           group: group ?? (position ? getGroupAndCallCategory(position)?.group : undefined),
           call_category: call_category ?? (position ? getGroupAndCallCategory(position)?.call_category : undefined),
-          assignedTableIds: assignedTableIds,
+          assignedTableIds: cleanedAssignedTableIds,
           medicalCard: medicalCardExpiry.trim() ? { expiryDate: medicalCardExpiry.trim(), lastChecked: null, notes: undefined } : undefined,
           identity: staff.identity ? { ...staff.identity, externalId: primaryTg || staff.identity.externalId, displayName: [firstName, lastName].filter(Boolean).join(" ") || displayName } : { channel: "telegram", externalId: primaryTg, locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
           primaryChannel: staff.primaryChannel ?? "telegram",
@@ -1363,7 +1370,7 @@ function StaffFormModal({
         position: position || undefined,
         group: nextGroup,
         call_category: nextCallCategory,
-        assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+        assignedTableIds: cleanedAssignedTableIds.length ? cleanedAssignedTableIds : undefined,
         medicalCard: medicalCardExpiry.trim() ? { expiryDate: medicalCardExpiry.trim(), lastChecked: null, notes: undefined } : undefined,
       });
       toast.success("Сохранено");
