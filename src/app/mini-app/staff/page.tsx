@@ -457,7 +457,7 @@ function StaffContentInner() {
       }
 
       const staffUserId = userId ?? staffId ?? "";
-      let staffName = staffUserId ? String(staffUserId).slice(-8) : "Официант";
+      let staffName = "Сотрудник";
       if (userId) {
         const globalSnap = await getDoc(doc(db, "global_users", userId));
         if (globalSnap.exists()) {
@@ -466,7 +466,7 @@ function StaffContentInner() {
           const last = (d.lastName as string | null | undefined) ?? "";
           const identityName = (d?.identity as { displayName?: string } | undefined)?.displayName ?? "";
           const resolved = [first, last].filter(Boolean).join(" ").trim() || identityName.trim() || staffName;
-          staffName = resolved;
+          staffName = resolved.trim().split(' ')[0] || "Сотрудник";
         }
       }
 
