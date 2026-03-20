@@ -1286,10 +1286,26 @@ function StaffFormModal({
   });
   const [position, setPosition] = useState(staff.position ?? "");
   const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
-  // Чистим «Столы по умолчанию» от фантомов: оставляем только те tableIds, которые реально есть в текущей коллекции tables.
+  // Cleanup «Столы по умолчанию» от фантомов:
+  // - если в assignedTableIds лежат doc-id — оставляем только существующие в текущей коллекции `tables`
+  // - если лежат номера столов (или строки с номерами) — матчим по `tables[].number` и оставляем только существующие
   useEffect(() => {
     const tableIdSet = new Set((tables ?? []).map((t) => t.id));
-    setAssignedTableIds((prev) => (prev ?? []).filter((id) => tableIdSet.has(id)));
+    const tableIdByNumber = new Map((tables ?? []).map((t) => [String(t.number), t.id]));
+    const allowedNumbers = new Set((tables ?? []).map((t) => String(t.number)));
+    const digits = (v: string) => String(v).replace(/\D/g, "");
+
+    setAssignedTableIds((prev) =>
+      (prev ?? [])
+        .map(String)
+        .map((id) => {
+          if (tableIdSet.has(id)) return id;
+          const n = digits(id);
+          if (!n || !allowedNumbers.has(n)) return null;
+          return tableIdByNumber.get(n) ?? null;
+        })
+        .filter((x): x is string => typeof x === "string")
+    );
   }, [tables]);
   const [saving, setSaving] = useState(false);
   const groupAndCall = position ? getGroupAndCallCategory(position) : null;
@@ -1323,7 +1339,19 @@ function StaffFormModal({
       return;
     }
     const tableIdSet = new Set((tables ?? []).map((t) => t.id));
-    const cleanedAssignedTableIds = (assignedTableIds ?? []).filter((id) => tableIdSet.has(id));
+    const tableIdByNumber = new Map((tables ?? []).map((t) => [String(t.number), t.id]));
+    const allowedNumbers = new Set((tables ?? []).map((t) => String(t.number)));
+    const digits = (v: string) => String(v).replace(/\D/g, "");
+
+    const cleanedAssignedTableIds = (assignedTableIds ?? [])
+      .map(String)
+      .map((id) => {
+        if (tableIdSet.has(id)) return id;
+        const n = digits(id);
+        if (!n || !allowedNumbers.has(n)) return null;
+        return tableIdByNumber.get(n) ?? null;
+      })
+      .filter((x): x is string => typeof x === "string");
     setSaving(true);
     try {
       const res = await fetch("/api/admin/staff/upsert", {
