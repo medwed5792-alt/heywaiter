@@ -80,6 +80,8 @@ interface StaffWithTables {
   onShift: boolean;
   role?: string;
   position?: string;
+  /** Глобальный userId (может отличаться от doc-id в коллекции venues/{venue}/staff) */
+  userId?: string;
 }
 
 interface FeedEvent {
@@ -643,6 +645,7 @@ function AdminDashboardContent() {
             onShift: data.onShift === true,
             role: (data.role as string | undefined) ?? (data.serviceRole as string | undefined),
             position: (data.position as string | undefined) ?? (data.serviceRole as string | undefined),
+            userId: (data.userId as string | undefined) ?? undefined,
           };
         });
       setStaffList(list);
@@ -661,10 +664,12 @@ function AdminDashboardContent() {
         // 2) waiterId (legacy/альтернатива)
         // 3) assignedStaffId (альтернатива)
         const assignments = data.assignments as { waiter?: unknown } | undefined;
-        const waiterId =
-          (typeof data.waiterId === "string" ? data.waiterId : undefined) ??
-          (typeof assignments?.waiter === "string" ? assignments.waiter : undefined) ??
-          (typeof data.assignedStaffId === "string" ? data.assignedStaffId : undefined);
+        const waiterRaw =
+          data.waiterId ??
+          assignments?.waiter ??
+          data.assignedStaffId ??
+          undefined;
+        const waiterId = waiterRaw == null ? "" : String(waiterRaw).trim();
         if (waiterId) next[d.id] = waiterId;
       });
       setAssignmentsByTable((prev) => ({ ...prev, ...next }));
@@ -684,10 +689,12 @@ function AdminDashboardContent() {
         if (snap.exists()) {
           const data = snap.data() ?? {};
           const assignments = data.assignments as { waiter?: unknown } | undefined;
-          const waiterId =
-            (typeof data.waiterId === "string" ? data.waiterId : undefined) ??
-            (typeof assignments?.waiter === "string" ? assignments.waiter : undefined) ??
-            (typeof data.assignedStaffId === "string" ? data.assignedStaffId : undefined);
+          const waiterRaw =
+            data.waiterId ??
+            assignments?.waiter ??
+            data.assignedStaffId ??
+            undefined;
+          const waiterId = waiterRaw == null ? "" : String(waiterRaw).trim();
           if (waiterId) next[t.id] = waiterId;
         }
       }
@@ -1633,11 +1640,28 @@ function AdminDashboardContent() {
                     Number.isFinite(diffInMinutes) &&
                     diffInMinutes >= 0 &&
                     diffInMinutes <= 30;
-                  // waiterId со стола (единый ключ для визуализации)
-                  const waiterId = safeAssignmentsByTable[table.id] ?? "";
-                  const isOnShift = waiterId !== "" && venueStaffOnShift[waiterId] === true;
-                  // Временная диагностика: приходят ли данные о закреплении и onShift вообще.
-                  console.log("Table:", table.id, "Waiter:", waiterId, "IsOnShift:", isOnShift);
+                  // TargetWaiterId — что именно пришло из tables/{tableId}.assignments.* (может быть doc-id или userId)
+                  const targetWaiterId = safeAssignmentsByTable[table.id] ?? "";
+                  // Разрешаем ID к staff-doc-id (d.id), чтобы правильно сопоставить onShift из venues/{venue}/staff
+                  const staffMember =
+                    targetWaiterId === ""
+                      ? undefined
+                      : safeStaffList.find((s) => s.id === targetWaiterId || s.userId === targetWaiterId);
+                  const resolvedStaffId = staffMember?.id ?? "";
+                  const isOnShift = resolvedStaffId !== "" && venueStaffOnShift[resolvedStaffId] === true;
+                  // Временная диагностика (важно для “почему имя не подтягивается”)
+                  console.log(
+                    "Table:",
+                    table.id,
+                    "Target Waiter:",
+                    targetWaiterId,
+                    "Resolved staffId:",
+                    resolvedStaffId,
+                    "Is He On Shift?:",
+                    staffMember?.onShift,
+                    "IsOnShiftComputed:",
+                    isOnShift
+                  );
                   // Сопоставление defaultTables: сравниваем ТОЛЬКО цифры из номера стола.
                   const tableNumberDigits = String(table?.number ?? "").replace(/\D/g, "");
                   // assignedWaiter: берём waiterId из таблицы, если пусто — ищем среди onShift staff по defaultTables
@@ -1650,20 +1674,30 @@ function AdminDashboardContent() {
                   // Для «светофора» (рамка + имя) учитываем ТОЛЬКО реальный waiterId со стола.
                   // defaultFromTeam оставляем только для select/подсказки.
                   const waiterOnShift = isOnShift;
-                  const waiterDisplayName = waiterId ? safeStaffList.find((s) => s.id === waiterId)?.displayName : undefined;
+                  const waiterDisplayName = staffMember?.displayName;
                   const isGreenSelect = waiterOnShift;
-                  const uniqueStaff = Array.from(
+                  const uniqueStaffBase = Array.from(
                     new Map(safeOnShiftWaiters.map((w) => [w.id, w])).values()
                   );
+                  // Если закреплённый официант найден в staffList и он на смене,
+                  // гарантируем, что его option есть в списке — даже если он был отфильтрован по роли выше.
+                  const uniqueStaff =
+                    staffMember && isOnShift
+                      ? Array.from(
+                          new Map(
+                            [...uniqueStaffBase, staffMember].map((w) => [w.id, w])
+                          ).values()
+                        )
+                      : uniqueStaffBase;
                   const defaultSelectValue =
                     defaultFromTeam && uniqueStaff.some((s) => s.id === defaultFromTeam.id) ? defaultFromTeam.id : "";
                   // Если закреплённый официант НЕ на смене — показываем прочерк и убираем подсветку.
-                  const selectValue = waiterId
+                  const selectValue = resolvedStaffId
                     ? waiterOnShift
-                      ? waiterId
+                      ? resolvedStaffId
                       : ""
                     : defaultSelectValue || "";
-                  const isPlanSelection = Boolean(defaultSelectValue && !waiterId);
+                  const isPlanSelection = Boolean(defaultSelectValue && !resolvedStaffId);
                   const hasEmergency = emergencyTableIds.has(table.id);
                   const isBookingSoon = isUrgent;
                   // Физическая доступность стола: зелёная рамка зависит только от времени до брони.
