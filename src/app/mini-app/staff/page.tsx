@@ -249,7 +249,12 @@ function StaffContentInner() {
   const [profileCheckRetryNonce, setProfileCheckRetryNonce] = useState(0);
   const [sosTableNumber, setSosTableNumber] = useState<string>("");
   const [sosLoading, setSosLoading] = useState(false);
-  const [sosError, setSosError] = useState<string | null>(null);
+  const [sosSubmitError, setSosSubmitError] = useState<string | null>(null);
+  const [sosValidationError, setSosValidationError] = useState<string | null>(null);
+  const [sosTablesLoading, setSosTablesLoading] = useState(false);
+  const [sosTablesLoadError, setSosTablesLoadError] = useState<string | null>(null);
+  const [allowedTableDocIds, setAllowedTableDocIds] = useState<Set<string>>(new Set());
+  const [allowedTableNumbers, setAllowedTableNumbers] = useState<Set<number>>(new Set());
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
   const { userId, staffId, onShift } = safeStaffData;
@@ -429,33 +434,88 @@ function StaffContentInner() {
 
   // Верхние кнопки SOS (без ввода номера стола) удалены, оставляем только «SOS по столу».
 
-  const handleSendSos = async () => {
-    const num = Number(sosTableNumber);
-    if (!Number.isFinite(num) || num < 1) return;
-    const tableId = String(sosTableNumber).trim();
-    setSosLoading(true);
-    setSosError(null);
-    try {
-      // Валидация: стол должен существовать в venues/{STAFF_VENUE_ID}/tables.
-      // Сравниваем по document id и по полю number (который вводит пользователь, например "111").
-      const tablesSnap = await getDocs(collection(db, "venues", STAFF_VENUE_ID, "tables"));
-      const tableExists = tablesSnap.docs.some((d) => {
-        const docId = d.id;
-        if (docId === tableId) return true;
-        const rawNumber = d.data()?.number as unknown;
-        const parsed =
-          typeof rawNumber === "number"
-            ? rawNumber
-            : typeof rawNumber === "string"
-              ? Number(rawNumber.trim())
-              : NaN;
-        return Number.isFinite(parsed) && parsed === num;
-      });
-      if (!tableExists) {
-        setSosError("Стол не найден");
-        return;
+  // Подгружаем актуальный справочник столов для валидации номера перед отправкой SOS.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSosTablesLoading(true);
+      setSosTablesLoadError(null);
+      try {
+        const tablesSnap = await getDocs(collection(db, "venues", STAFF_VENUE_ID, "tables"));
+        if (cancelled) return;
+        const docIds = new Set<string>();
+        const numbers = new Set<number>();
+        tablesSnap.docs.forEach((d) => {
+          docIds.add(d.id);
+          const rawNumber = d.data()?.number as unknown;
+          const parsed =
+            typeof rawNumber === "number"
+              ? rawNumber
+              : typeof rawNumber === "string"
+                ? Number(rawNumber.trim())
+                : NaN;
+          if (Number.isFinite(parsed) && parsed >= 1) numbers.add(parsed);
+        });
+        setAllowedTableDocIds(docIds);
+        setAllowedTableNumbers(numbers);
+      } catch (e) {
+        if (cancelled) return;
+        setSosTablesLoadError(e instanceof Error ? e.message : "Ошибка загрузки столов");
+        setAllowedTableDocIds(new Set());
+        setAllowedTableNumbers(new Set());
+      } finally {
+        if (!cancelled) setSosTablesLoading(false);
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
+  // Валидация введённого номера столов по загруженному справочнику.
+  useEffect(() => {
+    const raw = sosTableNumber.trim();
+    if (!raw) {
+      setSosValidationError(null);
+      return;
+    }
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num < 1) {
+      setSosValidationError("Введите корректный номер стола");
+      return;
+    }
+    if (sosTablesLoading) {
+      setSosValidationError(null);
+      return;
+    }
+    if (sosTablesLoadError) {
+      setSosValidationError(null);
+      return;
+    }
+    const tableExists = allowedTableDocIds.has(raw) || allowedTableNumbers.has(num);
+    setSosValidationError(tableExists ? null : `Стол №${raw} не найден в зале. Проверьте ввод`);
+  }, [sosTableNumber, sosTablesLoading, sosTablesLoadError, allowedTableDocIds, allowedTableNumbers]);
+
+  const handleSendSos = async () => {
+    const raw = sosTableNumber.trim();
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num < 1) return;
+    const tableId = raw;
+    if (sosTablesLoading) return;
+    if (sosTablesLoadError) {
+      setSosSubmitError(sosTablesLoadError);
+      return;
+    }
+
+    const tableExists = allowedTableDocIds.has(tableId) || allowedTableNumbers.has(num);
+    if (!tableExists) {
+      setSosSubmitError(`Стол №${tableId} не найден в зале. Проверьте ввод`);
+      return;
+    }
+
+    setSosLoading(true);
+    setSosSubmitError(null);
+    try {
       let staffName = "Сотрудник";
       if (userId) {
         const globalSnap = await getDoc(doc(db, "global_users", userId));
@@ -480,8 +540,9 @@ function StaffContentInner() {
       });
 
       setSosTableNumber("");
+      setSosValidationError(null);
     } catch (e) {
-      setSosError(e instanceof Error ? e.message : "Ошибка отправки SOS");
+      setSosSubmitError(e instanceof Error ? e.message : "Ошибка отправки SOS");
     } finally {
       setSosLoading(false);
     }
@@ -814,7 +875,7 @@ function StaffContentInner() {
                   value={sosTableNumber}
                   onChange={(e) => {
                     setSosTableNumber(e.target.value);
-                    setSosError(null);
+                    setSosSubmitError(null);
                   }}
                   className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
                   placeholder="№ стола"
@@ -824,12 +885,15 @@ function StaffContentInner() {
                   onClick={handleSendSos}
                   disabled={
                     sosLoading ||
+                    sosTablesLoading ||
+                    !!sosTablesLoadError ||
                     !sosTableNumber.trim()
+                    || !!sosValidationError
                   }
                   className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-50 ${
                     sosLoading
                       ? "bg-red-500"
-                      : sosTableNumber.trim()
+                      : sosTableNumber.trim() && !sosValidationError
                         ? "bg-red-600 animate-pulse"
                         : "bg-red-300"
                   }`}
@@ -837,8 +901,8 @@ function StaffContentInner() {
                   {sosLoading ? "Отправка…" : "SOS"}
                 </button>
               </div>
-              {sosError && (
-                <p className="mt-2 text-xs text-red-600">{sosError}</p>
+              {(sosSubmitError || sosValidationError) && (
+                <p className="mt-2 text-xs text-red-600">{sosSubmitError ?? sosValidationError}</p>
               )}
             </section>
 

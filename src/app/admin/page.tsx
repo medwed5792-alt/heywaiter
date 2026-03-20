@@ -277,6 +277,11 @@ function AdminDashboardContent() {
   const [venueLoading, setVenueLoading] = useState(true);
   const [venueName, setVenueName] = useState<string>("");
   const [tables, setTables] = useState<TableRow[]>([]);
+  // Lookup для быстрой валидации SOS (не даём фантомным столам открывать модалку).
+  const knownTablesLookupRef = useRef<{ idSet: Set<string>; numberSet: Set<string> }>({
+    idSet: new Set(),
+    numberSet: new Set(),
+  });
   const [occupiedCount, setOccupiedCount] = useState(0);
   const [bookingsTodayCount, setBookingsTodayCount] = useState(0);
   const [activeBookings, setActiveBookings] = useState<BookingOnTable[]>([]);
@@ -314,6 +319,27 @@ function AdminDashboardContent() {
   const [staffInsideById, setStaffInsideById] = useState<Record<string, boolean>>({});
 
   const todayStr = new Date().toISOString().slice(0, 10);
+
+  const isKnownTableFromNotification = useCallback((tableId?: string): boolean => {
+    const raw = tableId == null ? "" : String(tableId).trim();
+    if (!raw) return false;
+    const { idSet, numberSet } = knownTablesLookupRef.current;
+    if (idSet.has(raw)) return true;
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return false;
+    return numberSet.has(String(num));
+  }, []);
+
+  // Обновляем lookup, когда меняется справочник столов.
+  useEffect(() => {
+    const idSet = new Set<string>();
+    const numberSet = new Set<string>();
+    (tables ?? []).forEach((t) => {
+      if (t?.id) idSet.add(String(t.id).trim());
+      if (t?.number != null && Number.isFinite(Number(t.number))) numberSet.add(String(t.number));
+    });
+    knownTablesLookupRef.current = { idSet, numberSet };
+  }, [tables]);
 
   // Стандартизируем отображение имени: только первое слово.
   const staffFirstName = useCallback((fullName: string | undefined | null): string => {
@@ -886,7 +912,8 @@ function AdminDashboardContent() {
           };
         });
         setFeedEvents(list);
-        const sos = list.find((e) => e.type === "sos" && e.read === false);
+        // Игнорируем фантомные SOS: показывать модалку можно только для существующих столов.
+        const sos = list.find((e) => e.type === "sos" && e.read === false && isKnownTableFromNotification(e.tableId));
         setActiveSos(sos ?? null);
         setFeedLoading(false);
       } catch (e) {
@@ -896,6 +923,14 @@ function AdminDashboardContent() {
     });
     return () => unsub();
   }, []);
+
+  // На случай, если SOS пришёл раньше загрузки справочника столов — пересчитаем активную модалку после обновления `tables`.
+  useEffect(() => {
+    const sosValid = (feedEvents ?? []).find(
+      (e) => e.type === "sos" && e.read === false && isKnownTableFromNotification(e.tableId)
+    );
+    setActiveSos(sosValid ?? null);
+  }, [feedEvents, tables, isKnownTableFromNotification]);
 
   useEffect(() => {
     const q = query(
@@ -1580,6 +1615,11 @@ function AdminDashboardContent() {
                         ) : (
                           <GuestArrivedMessage ev={ev as FeedEvent} venueId={venueId} />
                         )
+                      ) : ev.type === "sos" ? (
+                        <>
+                          Внимание! Вызов со стола №
+                          {looksLikeTableIdError(ev.tableId) ? "—" : String(ev.tableId).trim()}
+                        </>
                       ) : (
                         ev.message
                       )}
@@ -1591,7 +1631,7 @@ function AdminDashboardContent() {
                       {createdAtLabel && (
                         <span className="ml-1 text-xs text-gray-500">· {createdAtLabel}</span>
                       )}
-                      {ev.tableId != null && !isBookingReminder && (
+                      {ev.tableId != null && !isBookingReminder && ev.type !== "sos" && (
                         <span className="ml-1 text-gray-500">
                           {looksLikeTableIdError(ev.tableId) ? "Ошибка данных стола" : `Стол №${ev.tableId}`}
                         </span>
@@ -1644,11 +1684,14 @@ function AdminDashboardContent() {
               <span>🚨 SOS сигнал</span>
             </h3>
             <p className="mt-2 text-sm text-gray-800">
-              {activeSos.tableId
-                ? looksLikeTableIdError(activeSos.tableId)
-                  ? "Ошибка данных стола"
-                  : `Стол №${activeSos.tableId}`
-                : "Стол не указан"}. {activeSos.message}
+              Внимание! Вызов со стола №
+              {activeSos.tableId && !looksLikeTableIdError(activeSos.tableId) ? String(activeSos.tableId).trim() : "—"}.
+              Требуется внимание!
+              {(() => {
+                const m = String(activeSos.message ?? "").match(/\(Вызвал:\s*([^)]+)\)/i);
+                const staff = m?.[1]?.trim();
+                return staff ? ` (Вызвал: ${staff})` : "";
+              })()}
             </p>
             <div className="mt-4 flex gap-2">
               <button
