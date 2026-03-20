@@ -23,6 +23,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
+import type { GlobalUser } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
 
 const BOOKING_WINDOW_MS = 30 * 60 * 1000; // ближайшие 30 минут для статуса столов
@@ -309,6 +310,7 @@ function AdminDashboardContent() {
   const activeSessionIdsRef = useRef<Set<string>>(new Set());
   const autoResetDoneRef = useRef(false);
   const lastClosingReminderAtRef = useRef<number>(0);
+  const staffNameResolveSeqRef = useRef(0);
   const [staffInsideById, setStaffInsideById] = useState<Record<string, boolean>>({});
 
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -327,7 +329,7 @@ function AdminDashboardContent() {
           const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
           if (data?.onShift !== true) continue;
           const staffDisplayName =
-            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+            (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
           await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
             type: "shift_end",
             message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -627,30 +629,114 @@ function AdminDashboardContent() {
   useEffect(() => {
     if (!venueType) return;
     const unsub = onSnapshot(collection(db, "venues", venueId, "staff"), (snap) => {
-      const list: StaffWithTables[] = snap.docs
-        .filter((d) => d.data().active !== false)
-        .map((d) => {
-          const data = d.data();
-          // Универсальный алгоритм имени:
-          // берём поле name как в списке «Команда», принудительно приводим к строке.
-          const displayName = String((data as { name?: unknown }).name ?? "").trim() || d.id.slice(-8);
+      const activeStaffDocs = snap.docs.filter((d) => d.data().active !== false);
+      const seq = ++staffNameResolveSeqRef.current;
+
+      (async () => {
+        const staffRows = activeStaffDocs.map((d) => ({
+          docId: d.id,
+          data: d.data(),
+        }));
+
+        // Пытаемся получить "связанный глобальный профиль" по userId.
+        // Если в venues/.../staff нет userId, пробуем вывести его из doc-id по префиксу venueId_.
+        const prefix = `${venueId}_`;
+        const userIds = Array.from(
+          new Set(
+            staffRows
+              .map(({ docId, data }) => {
+                const explicitUserId = typeof (data as any)?.userId === "string" ? String((data as any).userId).trim() : "";
+                if (explicitUserId) return explicitUserId;
+                if (docId.startsWith(prefix)) return docId.slice(prefix.length);
+                return "";
+              })
+              .filter(Boolean)
+          )
+        );
+
+        const globalUsers = new Map<string, GlobalUser>();
+        await Promise.all(
+          userIds.map(async (uid) => {
+            const globalSnap = await getDoc(doc(db, "global_users", uid));
+            if (globalSnap.exists()) {
+              globalUsers.set(uid, { id: globalSnap.id, ...(globalSnap.data() as Omit<GlobalUser, "id">) } as GlobalUser);
+            }
+          })
+        );
+
+        const resolveDisplayName = (docId: string, data: any): string => {
+          // Шаг 1: name/displayName в локальном документе
+          const localName =
+            (typeof data?.name === "string" ? data.name : "") ||
+            (typeof data?.displayName === "string" ? data.displayName : "");
+          const cleanedLocalName = String(localName ?? "").trim();
+          if (cleanedLocalName) return cleanedLocalName;
+
+          // Привязка к глобальному профилю
+          const explicitUserId = typeof data?.userId === "string" ? data.userId.trim() : "";
+          const derivedUserId = explicitUserId
+            ? explicitUserId
+            : docId.startsWith(prefix)
+              ? docId.slice(prefix.length)
+              : "";
+          const globalUser = derivedUserId ? globalUsers.get(derivedUserId) : undefined;
+
+          // Шаг 2 (критично): имя из глобального профиля
+          const globalFullName = globalUser
+            ? [globalUser.firstName, globalUser.lastName].filter(Boolean).join(" ").trim()
+            : "";
+          const globalIdentityName = globalUser?.identity?.displayName ?? (globalUser?.identity as any)?.name ?? "";
+          const cleanedGlobalIdentityName = String(globalIdentityName ?? "").trim();
+          if (globalFullName) return globalFullName;
+          if (cleanedGlobalIdentityName) return cleanedGlobalIdentityName;
+
+          // Шаг 3: phone/email (если имя не найдено нигде)
+          const localPhone = typeof data?.phone === "string" ? data.phone.trim() : "";
+          const localEmail = typeof data?.email === "string" ? data.email.trim() : "";
+          const globalPhone =
+            typeof globalUser?.phone === "string" ? globalUser.phone.trim() : (globalUser?.identities?.phone ?? "").trim?.();
+          const cleanedGlobalPhone = typeof globalPhone === "string" ? globalPhone.trim() : "";
+          const globalEmail = globalUser?.identities?.email ?? "";
+          const cleanedGlobalEmail = typeof globalEmail === "string" ? globalEmail.trim() : "";
+
+          if (localPhone) return localPhone;
+          if (cleanedGlobalPhone) return cleanedGlobalPhone;
+          if (localEmail) return localEmail;
+          if (cleanedGlobalEmail) return cleanedGlobalEmail;
+
+          return "Неизвестный сотрудник";
+        };
+
+        if (seq !== staffNameResolveSeqRef.current) return; // snapshot устарел
+
+        const list: StaffWithTables[] = staffRows.map(({ docId, data }) => {
           const assignedTableIds = (data.assignedTableIds as string[] | undefined) ?? [];
           const defaultTablesRaw = (data.defaultTables as Array<string | number> | undefined) ?? [];
-          const defaultTables = (defaultTablesRaw.length ? defaultTablesRaw : (assignedTableIds as Array<string | number>)).map((x) =>
-            String(x)
-          );
+          const defaultTables = (defaultTablesRaw.length ? defaultTablesRaw : (assignedTableIds as Array<string | number>)).map(String);
+
+          const explicitUserId = typeof data?.userId === "string" ? data.userId.trim() : "";
+          const derivedUserId = explicitUserId
+            ? explicitUserId
+            : docId.startsWith(prefix)
+              ? docId.slice(prefix.length)
+              : "";
+
           return {
-            id: d.id,
-            displayName,
+            id: docId,
+            displayName: resolveDisplayName(docId, data),
             assignedTableIds,
             defaultTables,
             onShift: data.onShift === true,
             role: (data.role as string | undefined) ?? (data.serviceRole as string | undefined),
             position: (data.position as string | undefined) ?? (data.serviceRole as string | undefined),
-            userId: (data.userId as string | undefined) ?? undefined,
+            userId: derivedUserId ? derivedUserId : undefined,
           };
         });
-      setStaffList(list);
+
+        setStaffList(list);
+      })().catch((e) => {
+        console.error("[admin/dashboard] staff displayName resolve error:", e);
+      });
     });
     return () => unsub();
   }, [venueType]);
@@ -948,7 +1034,7 @@ function AdminDashboardContent() {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
         const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
@@ -1203,7 +1289,7 @@ function AdminDashboardContent() {
         const data = d.data() as { onShift?: boolean; displayName?: string; name?: string };
         if (data?.onShift !== true) continue;
         const staffDisplayName =
-          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? d.id.slice(-8);
+          (data.displayName as string | undefined) ?? (data.name as string | undefined) ?? "Неизвестный сотрудник";
         await addDoc(collection(db, "venues", venueId, "staff", d.id, "notifications"), {
           type: "shift_end",
           message: `✨ Смена завершена! ${staffDisplayName}, спасибо за отличную работу! Заведение закрыто.`,
