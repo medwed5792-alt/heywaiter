@@ -14,6 +14,7 @@ import { collection, doc, getDoc, addDoc, serverTimestamp } from "firebase/fires
 import { db } from "@/lib/firebase";
 import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
 import { getAppUrl } from "@/lib/webhook/utils";
+import { createGuestEvent } from "@/lib/guest-events";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -121,13 +122,13 @@ export async function handleTelegramClient(request: NextRequest, token: string):
       return;
     }
     const { venueId, tableId } = parsed;
-    const tableIdNum = parseInt(tableId, 10) || 0;
-    await addDoc(collection(db, "serviceCalls"), {
+    const tableIdNum = parseInt(tableId, 10);
+    await createGuestEvent({
+      type: "call_waiter",
       venueId,
-      tableId: !Number.isNaN(tableIdNum) ? tableIdNum : tableId,
-      status: "pending",
-      guestTelegramId: from?.id,
-      createdAt: serverTimestamp(),
+      tableId,
+      tableNumber: !Number.isNaN(tableIdNum) ? tableIdNum : undefined,
+      visitorId: from?.id != null ? String(from.id) : undefined,
     });
     await sendTelegram(token, "answerCallbackQuery", {
       callback_query_id: callbackId,
