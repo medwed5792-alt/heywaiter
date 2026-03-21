@@ -227,7 +227,7 @@ function StaffContentInner() {
   const {
     staffData,
     venuesList,
-    loading,
+    isInitialLoading,
     error: staffError,
     refreshStaffData,
   } = useStaff();
@@ -629,7 +629,7 @@ function StaffContentInner() {
 
   // Нет заведений: проверяем профиль → редирект в кабинет или онбординг
   useEffect(() => {
-    if (loading || venuesList.length > 0) return;
+    if (isInitialLoading || venuesList.length > 0) return;
     // Если staff найден (даже при пустом venuesList из-за ограничений эндпойнта),
     // не уводим в кабинет/онбординг.
     if (userId || staffId) return;
@@ -652,14 +652,14 @@ function StaffContentInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [loading, venuesList.length, router, isIdNotBound, platformIdForDetect, platformKey, userId, staffId, profileCheckRetryNonce]);
+  }, [isInitialLoading, venuesList.length, router, isIdNotBound, platformIdForDetect, platformKey, userId, staffId, profileCheckRetryNonce]);
 
   // Таймаут, чтобы не держать пользователя бесконечно на "Проверка профиля…"
   useEffect(() => {
     const shouldWait =
       venuesList.length === 0 &&
       !freeAgentProfileChecked &&
-      !loading &&
+      !isInitialLoading &&
       !userId &&
       !staffId &&
       !isIdNotBound;
@@ -669,13 +669,13 @@ function StaffContentInner() {
     setProfileCheckTimedOut(false);
     const t = setTimeout(() => setProfileCheckTimedOut(true), 5000);
     return () => clearTimeout(t);
-  }, [venuesList.length, freeAgentProfileChecked, loading, userId, staffId, isIdNotBound]);
+  }, [venuesList.length, freeAgentProfileChecked, isInitialLoading, userId, staffId, isIdNotBound]);
 
   // Пока проверяем профиль при отсутствии заведений — показываем ожидание
   if (
     venuesList.length === 0 &&
     !freeAgentProfileChecked &&
-    !loading &&
+    !isInitialLoading &&
     !userId &&
     !staffId &&
     !isIdNotBound
@@ -704,7 +704,7 @@ function StaffContentInner() {
     );
   }
 
-  if (!staffData || loading) {
+  if (isInitialLoading) {
     return <div className="p-8 text-center">Загрузка данных...</div>;
   }
 

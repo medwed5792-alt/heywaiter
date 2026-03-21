@@ -15,6 +15,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
 const DEFAULT_VENUE_ID = "venue_andrey_alt";
@@ -103,7 +105,10 @@ export interface StaffContextValue {
   currentVenueId: string | null;
   staffData: StaffData;
   venuesList: VenueOption[];
+  /** @deprecated Используйте isInitialLoading; для совместимости = isInitialLoading */
   loading: boolean;
+  /** Первая загрузка при входе — блокирует полноэкранный лоадер */
+  isInitialLoading: boolean;
   error: string | null;
   setCurrentVenue: (venueId: string) => void;
   refreshStaffData: () => void;
@@ -120,6 +125,7 @@ const StaffContext = createContext<StaffContextValue>({
   staffData: defaultStaffData,
   venuesList: [],
   loading: true,
+  isInitialLoading: true,
   error: null,
   setCurrentVenue: () => {},
   refreshStaffData: () => {},
@@ -143,7 +149,7 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
   const [currentVenueId, setCurrentVenueIdState] = useState<string | null>(null);
   const [staffData, setStaffData] = useState<StaffData>(defaultStaffData);
   const [venuesList, setVenuesList] = useState<VenueOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const venuesFetched = useRef(false);
 
@@ -189,16 +195,14 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
   const refreshStaffData = useCallback(() => {
     const vid = currentVenueId;
     if (!vid) return;
-    setLoading(true);
-    fetchMe(vid).finally(() => setLoading(false));
+    void fetchMe(vid);
   }, [currentVenueId, fetchMe]);
 
   const setCurrentVenue = useCallback(
     (venueId: string) => {
       setStaffVenueInSession(venueId);
       setCurrentVenueIdState(venueId);
-      setLoading(true);
-      fetchMe(venueId).finally(() => setLoading(false));
+      void fetchMe(venueId);
     },
     [fetchMe]
   );
@@ -208,7 +212,7 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
     const { platformId } = getPlatformIdentity();
     if (!platformId) {
       setError("Откройте приложение из нужного мессенджера");
-      setLoading(false);
+      setIsInitialLoading(false);
       return;
     }
 
@@ -248,7 +252,7 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
         setCurrentVenueIdState(venueToUse);
         await fetchMe(venueToUse);
       }
-      if (!cancelled) setLoading(false);
+      if (!cancelled) setIsInitialLoading(false);
     })();
 
     return () => {
@@ -256,23 +260,37 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
     };
   }, [initialVenueFromUrl, fetchVenues, fetchMe]);
 
+  // Железная свая: onShift из venues/{venueId}/staff/{staffId} (как в /api/staff/me)
+  useEffect(() => {
+    if (!currentVenueId || !staffData.staffId) return;
+    const ref = doc(db, "venues", currentVenueId, "staff", staffData.staffId);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        setStaffData((prev) => ({
+          ...prev,
+          onShift: d?.onShift === true,
+        }));
+      },
+      (err) => {
+        console.warn("[StaffProvider] venue staff snapshot:", err);
+      }
+    );
+    return () => unsub();
+  }, [currentVenueId, staffData.staffId]);
+
   const value: StaffContextValue = {
     currentVenueId,
     staffData,
     venuesList,
-    loading,
+    loading: isInitialLoading,
+    isInitialLoading,
     error,
     setCurrentVenue,
     refreshStaffData,
   };
-
-  // Периодическое обновление данных смены (onShift и т.д.)
-  useEffect(() => {
-    if (!currentVenueId || loading) return;
-    const POLL_MS = 8000;
-    const t = setInterval(refreshStaffData, POLL_MS);
-    return () => clearInterval(t);
-  }, [currentVenueId, loading, refreshStaffData]);
 
   return <StaffContext.Provider value={value}>{children}</StaffContext.Provider>;
 }
