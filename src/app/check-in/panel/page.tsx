@@ -10,6 +10,7 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
+import { AdSpace } from "@/components/ads/AdSpace";
 
 const VENUE_ID = "venue_andrey_alt";
 
@@ -187,6 +188,9 @@ function FullServicePanel({
               )}
             </p>
           </div>
+        )}
+        {metaLoaded && !tableNotFound && (
+          <AdSpace placement="guest_welcome" className="mb-4" />
         )}
         {metaLoaded && tableNotFound && (
           <div className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-200">

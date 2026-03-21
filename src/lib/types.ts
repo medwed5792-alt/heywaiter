@@ -177,7 +177,7 @@ export interface Venue {
     menuLink?: string;
     menuPdfUrl?: string;
     menuItems?: string[];
-    /** Рекламный блок для кнопки «Акции» в боте: текст и/или картинка */
+    /** Локальный блок «Акции» заведения (не глобальные слоты super_ads_catalog). Глобальная реклама — только Супер-админ. */
     promos?: { text?: string; imageUrl?: string };
   };
   /** PRO: в CRM показывается рейтинг гостя (globalGuestScore) */

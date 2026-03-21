@@ -4,8 +4,11 @@ import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import { User, Star, Trash2, Pencil } from "lucide-react";
 import type { GlobalUser } from "@/lib/types";
+import { SuperAdsCatalogTab } from "@/components/super/SuperAdsCatalogTab";
 
-export default function SuperCatalogPage() {
+type CatalogTab = "staff" | "ads";
+
+function SuperStaffCatalogTab() {
   const [users, setUsers] = useState<GlobalUser[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -184,6 +187,41 @@ export default function SuperCatalogPage() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function SuperCatalogPage() {
+  const [tab, setTab] = useState<CatalogTab>("staff");
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+        <button
+          type="button"
+          onClick={() => setTab("staff")}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            tab === "staff"
+              ? "bg-slate-900 text-white"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+          }`}
+        >
+          Каталог персонала
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("ads")}
+          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            tab === "ads"
+              ? "bg-slate-900 text-white"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+          }`}
+        >
+          Реклама Mini App
+        </button>
+      </div>
+
+      {tab === "staff" ? <SuperStaffCatalogTab /> : <SuperAdsCatalogTab />}
     </div>
   );
 }

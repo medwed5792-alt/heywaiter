@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
+import { AdSpace } from "@/components/ads/AdSpace";
 
 declare global {
   interface Window {
@@ -33,7 +34,9 @@ interface GuestMainMenuProps {
 }
 
 export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuProps) {
-  const [view, setView] = useState<"menu" | "scanner" | "monitor" | "booking" | "promos" | "rating" | "search" | "contact">("menu");
+  const [view, setView] = useState<
+    "menu" | "history" | "scanner" | "monitor" | "booking" | "promos" | "rating" | "search" | "contact"
+  >("menu");
   const [venues, setVenues] = useState<Array<{ id: string; name: string; address?: string }>>([]);
   const [selectedVenueId, setSelectedVenueId] = useState<string>("");
   const [freeTables, setFreeTables] = useState<Array<{ tableId: string; tableNumber?: number }>>([]);
@@ -150,6 +153,22 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
       .then((data) => { if (data.ok) setBookingSubmit(true); })
       .catch(() => {});
   }, [selectedVenueId, bookingForm]);
+
+  if (view === "history") {
+    return (
+      <main className="min-h-screen bg-slate-50 p-6" style={{ zoom: 0.75 }}>
+        <div className="mx-auto max-w-md">
+          <button type="button" onClick={() => setView("menu")} className="mb-4 text-sm text-gray-600 underline">
+            ← Меню
+          </button>
+          <h2 className="text-lg font-bold text-gray-900">📋 История</h2>
+          <p className="mt-4 text-sm text-gray-600">
+            Здесь появится история ваших визитов и заказов.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (view === "search") {
     return (
@@ -302,12 +321,16 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
     );
   }
 
-  const menuButtons = [
+  const cabinetButtons = [
+    { id: "history" as const, label: "📋 История", onClick: () => setView("history") },
+    { id: "promos" as const, label: "🎁 Акции", onClick: () => setView("promos") },
+    { id: "rating" as const, label: "⭐ Рейтинг", onClick: () => setView("rating") },
+  ];
+
+  const serviceButtons = [
     { id: "scanner" as const, label: "📸 Сканер QR", onClick: openScanner },
     { id: "monitor" as const, label: "📍 Монитор мест", onClick: () => setView("monitor") },
     { id: "booking" as const, label: "📅 Бронирование", onClick: () => setView("booking") },
-    { id: "promos" as const, label: "🎁 Акции", onClick: () => setView("promos") },
-    { id: "rating" as const, label: "⭐ Рейтинг", onClick: () => setView("rating") },
     { id: "search" as const, label: "🔍 Поиск", onClick: () => setView("search") },
     { id: "contact" as const, label: "📞 Связаться", onClick: () => setView("contact") },
   ];
@@ -317,8 +340,35 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
       <div className="mx-auto max-w-md">
         <h1 className="mb-4 text-lg font-bold text-gray-900">{hubVenueTitle || "HeyWaiter"}</h1>
         <p className="mb-4 text-sm text-gray-500">Выберите действие</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Личный кабинет</p>
         <div className="space-y-2">
-          {menuButtons.map((btn) => (
+          <button
+            type="button"
+            onClick={cabinetButtons[0].onClick}
+            className="w-full rounded-xl border border-gray-200 bg-white py-3 px-4 text-left text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50"
+          >
+            {cabinetButtons[0].label}
+          </button>
+          <AdSpace placement="guest_hub_between_history_promos" />
+          <button
+            type="button"
+            onClick={cabinetButtons[1].onClick}
+            className="w-full rounded-xl border border-gray-200 bg-white py-3 px-4 text-left text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50"
+          >
+            {cabinetButtons[1].label}
+          </button>
+          <AdSpace placement="guest_hub_between_promos_rating" />
+          <button
+            type="button"
+            onClick={cabinetButtons[2].onClick}
+            className="w-full rounded-xl border border-gray-200 bg-white py-3 px-4 text-left text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50"
+          >
+            {cabinetButtons[2].label}
+          </button>
+        </div>
+        <p className="mt-6 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Сервисы</p>
+        <div className="space-y-2">
+          {serviceButtons.map((btn) => (
             <button
               key={btn.id}
               type="button"

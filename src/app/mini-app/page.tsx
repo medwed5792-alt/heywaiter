@@ -5,6 +5,7 @@ import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
+import { AdSpace } from "@/components/ads/AdSpace";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 
 const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
@@ -288,20 +289,25 @@ function MiniAppContent() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6" style={{ zoom: 0.75 }}>
-      <p className="text-gray-500 text-center max-w-sm">
-        {isLoadingTable ? (
-          "Загрузка стола…"
-        ) : fromTelegram && venueId ? (
-          <>
-            {tableNumberResolved != null
-              ? `Добро пожаловать в ${venueDisplayName}! Ваш стол №${tableNumberResolved}`
-              : `Добро пожаловать в ${venueDisplayName}!`}
-            …
-          </>
-        ) : (
-          "Открытие пульта…"
-        )}
-      </p>
+      <div className="w-full max-w-sm flex flex-col items-center gap-3">
+        <p className="text-gray-500 text-center">
+          {isLoadingTable ? (
+            "Загрузка стола…"
+          ) : fromTelegram && venueId ? (
+            <>
+              {tableNumberResolved != null
+                ? `Добро пожаловать в ${venueDisplayName}! Ваш стол №${tableNumberResolved}`
+                : `Добро пожаловать в ${venueDisplayName}!`}
+              …
+            </>
+          ) : (
+            "Открытие пульта…"
+          )}
+        </p>
+        {!isLoadingTable && fromTelegram && venueId ? (
+          <AdSpace placement="mini_gateway" className="w-full" />
+        ) : null}
+      </div>
     </main>
   );
 }
