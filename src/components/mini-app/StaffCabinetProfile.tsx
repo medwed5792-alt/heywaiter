@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 /** Восемь мессенджеров (без phone — он отдельным полем). */
 const MESSENGER_KEYS = ["tg", "wa", "vk", "viber", "wechat", "inst", "fb", "line"] as const;
@@ -46,6 +47,7 @@ function emptyIdentities(): Record<MessengerKey, string> {
 }
 
 export function StaffCabinetProfile({ platformKey, platformId }: StaffCabinetProfileProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,100 +150,131 @@ export function StaffCabinetProfile({ platformKey, platformId }: StaffCabinetPro
   }
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-800">Глобальная карточка</h3>
-      <p className="mt-1 text-xs text-slate-500">
-        Имя, контакты и мессенджеры сохраняются в едином профиле (global_users).
-      </p>
-
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      {success && <p className="mt-2 text-sm text-emerald-600">{success}</p>}
-
-      <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-        <fieldset className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Имя</span>
-            <input
-              type="text"
-              value={form.firstName}
-              onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              autoComplete="given-name"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Фамилия</span>
-            <input
-              type="text"
-              value={form.lastName}
-              onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              autoComplete="family-name"
-            />
-          </label>
-        </fieldset>
-
-        <label className="block">
-          <span className="text-xs font-medium text-slate-600">Телефон</span>
-          <input
-            type="tel"
-            inputMode="tel"
-            value={form.phone}
-            onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            autoComplete="tel"
-            placeholder="+7…"
-          />
-        </label>
-
-        <div className="border-t border-slate-100 pt-3">
-          <p className="text-xs font-medium text-slate-600">Мессенджеры (identities)</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {MESSENGER_KEYS.map((key) => {
-              const isAnchor = key === platformKey;
-              return (
-                <label key={key} className="block">
-                  <span className="text-xs text-slate-500">
-                    {LABELS[key]}
-                    {isAnchor ? " (как вы вошли)" : ""}
-                  </span>
-                  <input
-                    type="text"
-                    value={form.identities[key]}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        identities: { ...f.identities, [key]: e.target.value },
-                      }))
-                    }
-                    disabled={isAnchor}
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-600"
-                    placeholder={isAnchor ? "Закреплено за входом" : ""}
-                  />
-                </label>
-              );
-            })}
-          </div>
+    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setIsExpanded((v) => !v)}
+        className="flex w-full items-start justify-between gap-3 rounded-2xl p-4 text-left transition-colors hover:bg-slate-50"
+        aria-expanded={isExpanded}
+      >
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-semibold text-slate-800">Глобальная карточка</span>
+          <p className="mt-0.5 text-xs text-slate-500">Имя, контакты и мессенджеры</p>
         </div>
+        <ChevronDown
+          className={`h-5 w-5 shrink-0 text-slate-500 transition-transform duration-300 ease-out ${
+            isExpanded ? "rotate-180" : "rotate-0"
+          }`}
+          aria-hidden
+        />
+      </button>
 
-        <div className="flex flex-wrap items-center gap-2 pt-2">
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-          >
-            {saving ? "Сохранение…" : "Сохранить"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={saving || loading}
-            className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            Обновить
-          </button>
+      {(error || success) && !isExpanded && (
+        <div className="border-t border-slate-100 px-4 py-2">
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          {success && <p className="text-sm text-emerald-600">{success}</p>}
         </div>
-      </form>
+      )}
+
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <form onSubmit={handleSubmit} className="space-y-3 border-t border-slate-100 px-4 pb-4 pt-3">
+            {(error || success) && isExpanded && (
+              <div className="space-y-1">
+                {error && <p className="text-sm text-red-600">{error}</p>}
+                {success && <p className="text-sm text-emerald-600">{success}</p>}
+              </div>
+            )}
+            <fieldset className="grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">Имя</span>
+                <input
+                  type="text"
+                  value={form.firstName}
+                  onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  autoComplete="given-name"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">Фамилия</span>
+                <input
+                  type="text"
+                  value={form.lastName}
+                  onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  autoComplete="family-name"
+                />
+              </label>
+            </fieldset>
+
+            <label className="block">
+              <span className="text-xs font-medium text-slate-600">Телефон</span>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={form.phone}
+                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                autoComplete="tel"
+                placeholder="+7…"
+              />
+            </label>
+
+            <div className="border-t border-slate-100 pt-3">
+              <p className="text-xs font-medium text-slate-600">Мессенджеры (identities)</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {MESSENGER_KEYS.map((key) => {
+                  const isAnchor = key === platformKey;
+                  return (
+                    <label key={key} className="block">
+                      <span className="text-xs text-slate-500">
+                        {LABELS[key]}
+                        {isAnchor ? " (как вы вошли)" : ""}
+                      </span>
+                      <input
+                        type="text"
+                        value={form.identities[key]}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            identities: { ...f.identities, [key]: e.target.value },
+                          }))
+                        }
+                        disabled={isAnchor}
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-600"
+                        placeholder={isAnchor ? "Закреплено за входом" : ""}
+                      />
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={() => void load()}
+                disabled={saving || loading}
+                className="order-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:order-1"
+              >
+                Обновить
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="order-1 w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 sm:order-2 sm:w-auto sm:min-w-[12rem]"
+              >
+                {saving ? "Сохранение…" : "Сохранить изменения"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
   );
 }
