@@ -9,6 +9,7 @@ import { GuestMainMenu } from "@/components/guest/GuestMainMenu";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
+import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 
 const VENUE_ID = "venue_andrey_alt";
 
@@ -107,9 +108,13 @@ function FullServicePanel({
     (async () => {
       try {
         const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
-        if (!cancelled && venueSnap.exists()) {
-          const data = venueSnap.data();
-          setVenueName(((data?.name as string) || VENUE_ID) ?? VENUE_ID);
+        if (!cancelled) {
+          if (venueSnap.exists()) {
+            const data = venueSnap.data();
+            setVenueName(resolveVenueDisplayName(data?.name));
+          } else {
+            setVenueName(resolveVenueDisplayName(undefined));
+          }
         }
         if (!tableId) {
           if (!cancelled) setTableNotFound(true);
@@ -118,9 +123,8 @@ function FullServicePanel({
         const tableSnap = await getDoc(doc(db, "venues", VENUE_ID, "tables", tableId));
         if (!cancelled) {
           if (tableSnap.exists()) {
-            const t = tableSnap.data();
-            const num = (t.tableNumber as number | undefined) ?? (t.number as number | undefined);
-            setTableNumber(num != null ? num : null);
+            const t = tableSnap.data() as Record<string, unknown>;
+            setTableNumber(resolveTableNumberFromDoc(t));
           } else {
             setTableNotFound(true);
           }
@@ -168,15 +172,19 @@ function FullServicePanel({
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && onClick()}
             >
-              HeyWaiter
+              {metaLoaded ? venueName : "HeyWaiter"}
             </h1>
           )}
         </DebugPanelTrigger>
         {metaLoaded && !tableNotFound && (
           <div className="mb-4 rounded-xl bg-white p-4 text-center shadow-sm border border-slate-200">
-            <p className="text-xs text-slate-500 mb-1">{venueName || "Ресторан"}</p>
-            <p className="text-lg font-bold uppercase tracking-wide text-slate-900">
-              ВЫ ЗА СТОЛОМ №{tableNumber != null ? tableNumber : tableId}
+            <p className="text-base text-slate-800 leading-relaxed">
+              Добро пожаловать в {venueName}!
+              {tableNumber != null ? (
+                <> Ваш стол №{tableNumber}.</>
+              ) : (
+                <> Номер стола уточните у персонала.</>
+              )}
             </p>
           </div>
         )}
@@ -247,6 +255,16 @@ function FastFoodPrimitiveView({
   const [orderNumber, setOrderNumber] = useState("");
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [venueTitle, setVenueTitle] = useState("");
+  const [venueTitleLoaded, setVenueTitleLoaded] = useState(false);
+
+  useEffect(() => {
+    getDoc(doc(db, "venues", venueId))
+      .then((snap) => {
+        setVenueTitle(resolveVenueDisplayName(snap.exists() ? snap.data()?.name : undefined));
+      })
+      .finally(() => setVenueTitleLoaded(true));
+  }, [venueId]);
 
   const handleWait = async () => {
     const num = orderNumber.trim();
@@ -278,7 +296,9 @@ function FastFoodPrimitiveView({
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-md">
-        <h1 className="mb-4 text-lg font-bold text-gray-900">HeyWaiter</h1>
+        <h1 className="mb-4 text-lg font-bold text-gray-900">
+          {venueTitleLoaded ? venueTitle : "HeyWaiter"}
+        </h1>
         <p className="mb-2 text-sm text-gray-600">Введите номер заказа или чека</p>
         <input
           type="text"
@@ -315,6 +335,16 @@ function FastFoodOrderView({
 }) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
+  const [venueTitle, setVenueTitle] = useState("");
+  const [venueTitleLoaded, setVenueTitleLoaded] = useState(false);
+
+  useEffect(() => {
+    getDoc(doc(db, "venues", venueId))
+      .then((snap) => {
+        setVenueTitle(resolveVenueDisplayName(snap.exists() ? snap.data()?.name : undefined));
+      })
+      .finally(() => setVenueTitleLoaded(true));
+  }, [venueId]);
 
   useEffect(() => {
     const ref = doc(db, "orders", orderId);
@@ -358,7 +388,7 @@ function FastFoodOrderView({
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && onClick()}
             >
-              HeyWaiter
+              {venueTitleLoaded ? venueTitle : "HeyWaiter"}
             </h1>
           )}
         </DebugPanelTrigger>

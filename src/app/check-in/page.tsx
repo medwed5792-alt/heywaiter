@@ -21,6 +21,7 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { getCheckInCopy } from "@/lib/i18n-checkin";
 import { buildDeepLink, messengerLabels } from "@/lib/deep-links";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
@@ -61,10 +62,46 @@ function CheckInContent() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict">("idle");
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [tgClientUsername, setTgClientUsername] = useState<string | null>(null);
+  const [venueDisplayName, setVenueDisplayName] = useState<string>("");
+  const [tableNumberResolved, setTableNumberResolved] = useState<number | null>(null);
+  const [venueMetaLoaded, setVenueMetaLoaded] = useState(false);
 
   useEffect(() => {
     setLocale(getBrowserLocale());
   }, []);
+
+  useEffect(() => {
+    if (!venueId || !tableId) {
+      setVenueDisplayName("");
+      setTableNumberResolved(null);
+      setVenueMetaLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, "venues", venueId));
+        if (!cancelled) {
+          if (venueSnap.exists()) {
+            setVenueDisplayName(resolveVenueDisplayName(venueSnap.data()?.name));
+          } else {
+            setVenueDisplayName(resolveVenueDisplayName(undefined));
+          }
+        }
+        const tableSnap = await getDoc(doc(db, "venues", venueId, "tables", tableId));
+        if (!cancelled && tableSnap.exists()) {
+          setTableNumberResolved(resolveTableNumberFromDoc(tableSnap.data() as Record<string, unknown>));
+        } else if (!cancelled) {
+          setTableNumberResolved(null);
+        }
+      } finally {
+        if (!cancelled) setVenueMetaLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [venueId, tableId]);
 
   useEffect(() => {
     getDoc(doc(db, "system_settings", "bots"))
@@ -218,7 +255,7 @@ function CheckInContent() {
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && onClick()}
             >
-              {copy.title}
+              {venueMetaLoaded ? venueDisplayName : copy.title}
             </h1>
           )}
         </DebugPanelTrigger>
@@ -238,8 +275,16 @@ function CheckInContent() {
             Следующий вызов через {cooldownLeft} сек
           </p>
         )}
-        <p className="mt-4 text-xs text-gray-500 uppercase tracking-wider">
-          Стол · {tableId} · {copy.choose}
+        <p className="mt-4 text-sm text-gray-600">
+          {venueMetaLoaded ? (
+            <>
+              Добро пожаловать в {venueDisplayName}!
+              {tableNumberResolved != null ? <> Ваш стол №{tableNumberResolved}.</> : null}{" "}
+              {copy.choose}
+            </>
+          ) : (
+            <span className="text-gray-500">Загрузка…</span>
+          )}
         </p>
         {/* Интерфейс гостя: 8 кнопок мессенджеров в сетке 2×4, фирменные цвета */}
         <div className="mt-6 grid grid-cols-2 gap-3">

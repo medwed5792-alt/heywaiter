@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 
 const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
@@ -188,9 +189,16 @@ function MiniAppContent() {
         }
         if (tableId) {
           let tableData: Record<string, unknown> | null = null;
+          if (resolvedVenueId) {
+            const nested = await getDoc(doc(db, "venues", resolvedVenueId, "tables", tableId));
+            if (cancelled) return;
+            if (nested.exists()) {
+              tableData = nested.data() as Record<string, unknown>;
+            }
+          }
           const byDocId = await getDoc(doc(db, "tables", tableId));
           if (cancelled) return;
-          if (byDocId.exists()) {
+          if (!tableData && byDocId.exists()) {
             tableData = byDocId.data() as Record<string, unknown>;
             const docVenueId = tableData?.venueId as string | undefined;
             if (docVenueId && !resolvedVenueId) {
@@ -199,6 +207,10 @@ function MiniAppContent() {
               const venueSnap = await getDoc(doc(db, "venues", docVenueId));
               if (!cancelled && venueSnap.exists()) {
                 setVenueSettings(venueSnap.data() as Record<string, unknown>);
+              }
+              const nestedAfter = await getDoc(doc(db, "venues", docVenueId, "tables", tableId));
+              if (!cancelled && nestedAfter.exists()) {
+                tableData = nestedAfter.data() as Record<string, unknown>;
               }
             }
           }
@@ -268,18 +280,24 @@ function MiniAppContent() {
     router.replace(`/check-in/panel?${params.toString()}`);
   }, [loaded, firestoreDone, venueId, tableId, searchParams, router, forceStaffByBot]);
 
-  const venueName = (venueSettings?.name as string) ?? venueId;
-  const tableNumber = (tableSettings?.tableNumber as number) ?? tableId;
+  const venueDisplayName = resolveVenueDisplayName(venueSettings?.name);
+  const tableNumberResolved =
+    tableSettings != null ? resolveTableNumberFromDoc(tableSettings as Record<string, unknown>) : null;
 
   const isLoadingTable = Boolean(tableId && !firestoreDone);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6" style={{ zoom: 0.75 }}>
-      <p className="text-gray-500">
+      <p className="text-gray-500 text-center max-w-sm">
         {isLoadingTable ? (
           "Загрузка стола…"
         ) : fromTelegram && venueId ? (
-          <>Загрузка {venueName}{tableId ? ` · Стол ${tableNumber || tableId}` : ""}…</>
+          <>
+            {tableNumberResolved != null
+              ? `Добро пожаловать в ${venueDisplayName}! Ваш стол №${tableNumberResolved}`
+              : `Добро пожаловать в ${venueDisplayName}!`}
+            …
+          </>
         ) : (
           "Открытие пульта…"
         )}

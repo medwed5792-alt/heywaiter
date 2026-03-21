@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { resolveVenueDisplayName } from "@/lib/venue-display";
 
 declare global {
   interface Window {
@@ -43,6 +44,13 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
   const [bookingForm, setBookingForm] = useState({ date: "", startTime: "12:00", endTime: "14:00", seats: 2, guestName: "", guestContact: "" });
   const [bookingSubmit, setBookingSubmit] = useState(false);
   const [contactSent, setContactSent] = useState(false);
+  const [hubVenueTitle, setHubVenueTitle] = useState("");
+
+  useEffect(() => {
+    getDoc(doc(db, "venues", VENUE_ID)).then((snap) => {
+      setHubVenueTitle(resolveVenueDisplayName(snap.exists() ? snap.data()?.name : undefined));
+    });
+  }, []);
 
   const guestName = typeof window !== "undefined" && window.Telegram?.WebApp?.initDataUnsafe?.user
     ? [window.Telegram.WebApp.initDataUnsafe.user.first_name, window.Telegram.WebApp.initDataUnsafe.user.last_name].filter(Boolean).join(" ") || "Гость"
@@ -65,7 +73,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
   useEffect(() => {
     if (view !== "monitor" && view !== "booking" && view !== "promos" && view !== "rating") return;
     getDocs(collection(db, "venues")).then((snap) => {
-      setVenues(snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? d.id, address: d.data().address as string | undefined })));
+      setVenues(snap.docs.map((d) => ({ id: d.id, name: resolveVenueDisplayName(d.data().name), address: d.data().address as string | undefined })));
       if (!selectedVenueId && snap.docs[0]) setSelectedVenueId(snap.docs[0].id);
     });
   }, [view, selectedVenueId]);
@@ -307,7 +315,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
   return (
     <main className="min-h-screen bg-slate-50 p-6" style={{ zoom: 0.75 }}>
       <div className="mx-auto max-w-md">
-        <h1 className="mb-4 text-lg font-bold text-gray-900">HeyWaiter</h1>
+        <h1 className="mb-4 text-lg font-bold text-gray-900">{hubVenueTitle || "HeyWaiter"}</h1>
         <p className="mb-4 text-sm text-gray-500">Выберите действие</p>
         <div className="space-y-2">
           {menuButtons.map((btn) => (

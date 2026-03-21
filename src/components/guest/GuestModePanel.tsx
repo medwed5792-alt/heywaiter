@@ -153,9 +153,9 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
             </p>
           </>
         )}
-        {!error && cooldownLeft === 0 && !loading && !geoMessage && (
+        {!error && cooldownLeft === 0 && !loading && !geoMessage && tableNumber != null && (
           <p className="text-sm text-slate-500">
-            Стол №{tableNumber != null ? tableNumber : tableId}
+            Стол №{tableNumber}
           </p>
         )}
         {geoBlocked && geoMessage && (
