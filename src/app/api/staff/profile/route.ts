@@ -64,8 +64,8 @@ export async function GET(request: NextRequest) {
 
 /**
  * PATCH /api/staff/profile
- * Обновление полей личного кабинета: phone, birthDate, photoUrl + identities.<platformKey>.
- * Body: { channel?: string, platformId?: string, telegramId?: string, phone?: string, birthDate?: string, photoUrl?: string, identities?: Record<string, string | null> }
+ * Обновление полей личного кабинета: firstName, lastName, phone, birthDate, photoUrl + identities.<platformKey>.
+ * Body: { channel?, platformId?, telegramId?, firstName?, lastName?, phone?, birthDate?, photoUrl?, identities? }
  */
 export async function PATCH(request: NextRequest) {
   try {
@@ -106,6 +106,15 @@ export async function PATCH(request: NextRequest) {
     const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
     const nextIdentities = { ...(current.identities as Record<string, string | null> | undefined) };
     let identitiesUpdated = false;
+
+    if (body.firstName !== undefined) {
+      updates.firstName =
+        typeof body.firstName === "string" ? body.firstName.trim() || null : null;
+    }
+    if (body.lastName !== undefined) {
+      updates.lastName =
+        typeof body.lastName === "string" ? body.lastName.trim() || null : null;
+    }
 
     if (body.phone !== undefined) {
       const phone = typeof body.phone === "string" ? body.phone.replace(/\D/g, "") : "";
@@ -157,7 +166,8 @@ export async function PATCH(request: NextRequest) {
       updates.identities = nextIdentities;
     }
 
-    if (Object.keys(updates).length <= 1) {
+    const userFieldKeys = Object.keys(updates).filter((k) => k !== "updatedAt");
+    if (userFieldKeys.length === 0) {
       return NextResponse.json({ ok: true, message: "Нечего обновлять" });
     }
 

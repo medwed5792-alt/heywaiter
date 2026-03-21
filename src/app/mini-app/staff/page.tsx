@@ -7,6 +7,7 @@ import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp
 import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
+import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
 
 const NOTIFICATIONS_POLL_MS = 5000;
 const GEO_OPTIONS: PositionOptions = {
@@ -936,7 +937,7 @@ function StaffContentInner() {
 
         {tab === "cabinet" && (
           <div className="space-y-4">
-            <p className="text-xs text-slate-500">Только просмотр. Редактирование недоступно.</p>
+            <StaffCabinetProfile platformKey={platformKey} platformId={platformIdForDetect} />
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-slate-700">
                 <Calendar className="h-5 w-5 text-slate-500" />
