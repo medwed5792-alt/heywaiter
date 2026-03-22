@@ -54,8 +54,8 @@ function getBrowserLocale(): string {
 function CheckInContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const tableId = searchParams.get("t") ?? "";
-  const venueId = searchParams.get("v") ?? "";
+  const tableId = (searchParams.get("t") ?? "").trim();
+  const venueId = (searchParams.get("v") ?? "").trim();
   const { visitorId, recordVisitorSession } = useVisitor();
 
   const [locale, setLocale] = useState(getBrowserLocale());
@@ -206,9 +206,13 @@ function CheckInContent() {
             createdAt: serverTimestamp(),
           });
           setStatus("success");
-          window.location.href = buildDeepLink(channel, venueId, tableId, visitorId ?? undefined, {
-            telegramUsername: tgClientUsername ?? undefined,
-          });
+          window.location.href = buildDeepLink(
+            channel,
+            venueId,
+            tableId,
+            visitorId?.trim() || undefined,
+            { telegramUsername: tgClientUsername ?? undefined }
+          );
         }
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
       } catch (err) {

@@ -5,6 +5,7 @@ import { useEffect, useState, useRef, useCallback, Suspense } from "react";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { AdSpace } from "@/components/ads/AdSpace";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 
@@ -42,19 +43,6 @@ function isStaffBotContext(): boolean {
   return username === STAFF_BOT_USERNAME;
 }
 
-/** Парсинг start_param: "v_venueId_t_tableId" или "v_venueId_t_tableId_vid_visitorId" */
-function parseStartParam(startParam: string): { venueId: string; tableId: string; visitorId?: string } | null {
-  const s = startParam?.trim();
-  if (!s) return null;
-  const withVid = s.match(/^v_([^_]+)_t_([^_]+)_vid_(.+)$/);
-  if (withVid) return { venueId: withVid[1], tableId: withVid[2], visitorId: withVid[3] };
-  const vT = s.match(/^v_([^_]+)_t_(.+)$/);
-  if (vT) return { venueId: vT[1], tableId: vT[2] };
-  const parts = s.split("_");
-  if (parts.length >= 2) return { venueId: parts[0], tableId: parts.slice(1).join("_") };
-  return null;
-}
-
 function getStartParam(): string {
   if (typeof window === "undefined") return "";
   const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
@@ -87,7 +75,7 @@ function MiniAppContent() {
 
   const applyStartParam = useCallback((startParam: string) => {
     if (!startParam.trim()) return false;
-    const parsed = parseStartParam(startParam);
+    const parsed = parseStartParamPayload(startParam);
     if (!parsed) return false;
     lastAppliedStartParam.current = startParam;
     clearMiniappCache();

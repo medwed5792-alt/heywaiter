@@ -15,6 +15,7 @@ import { db } from "@/lib/firebase";
 import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
 import { getAppUrl } from "@/lib/webhook/utils";
 import { createGuestEvent } from "@/lib/guest-events";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -53,17 +54,18 @@ function getWebAppBaseUrl(): string {
  */
 function parseStartPayload(text: string): { venueId: string; tableId: string } | null {
   const raw = text?.trim() ?? "";
-  const vT = raw.match(/\/start\s+(v_([^_]+)_t_(\d+))/i) ?? raw.match(/\/start\s+(v_([^_]+)_t_([^_\s]+))/i);
-  if (vT) return { venueId: vT[2], tableId: vT[3] };
+  const afterStart = raw.replace(/^\/start\s+/i, "").trim();
+  if (!afterStart) return null;
+  const parsed = parseStartParamPayload(afterStart);
+  if (parsed) return { venueId: parsed.venueId, tableId: parsed.tableId };
   const short = raw.match(/\/start\s+([^_\s]+)_(\d+)/);
   if (short) return { venueId: short[1], tableId: short[2] };
   return null;
 }
 
 function parseCallbackData(data: string): { venueId: string; tableId: string } | null {
-  const match = data?.match(/v_([^_]+)_t_([^_\s]+)/);
-  if (!match) return null;
-  return { venueId: match[1], tableId: match[2] };
+  const parsed = parseStartParamPayload(data || "");
+  return parsed ? { venueId: parsed.venueId, tableId: parsed.tableId } : null;
 }
 
 async function sendTelegram(

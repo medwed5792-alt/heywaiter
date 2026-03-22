@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { collection, query, where, getDocs, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { AdSpace } from "@/components/ads/AdSpace";
 
 declare global {
@@ -22,10 +23,14 @@ const APP_URL = typeof window !== "undefined" ? window.location.origin : "";
 const VENUE_ID = "venue_andrey_alt";
 
 function parseQrPayload(text: string): { tableId: string } | null {
-  const match = text?.match(/v_([^_]+)_t_([^\s]+)/) ?? text?.match(/v=([^&]+)&t=([^&]+)/);
-  if (!match) return null;
-  // Всегда игнорируем venueId из QR и привязываем к venue_andrey_alt
-  return { tableId: match[2] };
+  const trimmed = text?.trim() ?? "";
+  const fromVt = parseStartParamPayload(trimmed);
+  if (fromVt) {
+    return { tableId: fromVt.tableId };
+  }
+  const qp = trimmed.match(/v=([^&]+)&t=([^&]+)/);
+  if (qp) return { tableId: qp[2] };
+  return null;
 }
 
 interface GuestMainMenuProps {
