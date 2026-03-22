@@ -15,17 +15,17 @@ export default function SuperDashboardPage() {
         <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-slate-600">
           <li>
             <a href="/super/catalog" className="text-zinc-600 underline hover:text-zinc-800">
-              Каталог: персонал (global_users) и реклама Mini App (super_ads_catalog)
+              Каталог персонала (global_users)
+            </a>
+          </li>
+          <li>
+            <a href="/super/system" className="text-zinc-600 underline hover:text-zinc-800">
+              Система: реклама Mini App (super_ads_catalog)
             </a>
           </li>
           <li>
             <a href="/super/bots" className="text-zinc-600 underline hover:text-zinc-800">
               Настройки ботов
-            </a>
-          </li>
-          <li>
-            <a href="/super/system" className="text-zinc-600 underline hover:text-zinc-800">
-              Система
             </a>
           </li>
           <li>

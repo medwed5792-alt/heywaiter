@@ -22,15 +22,15 @@ function telegramBotUsername(override?: string | null): string {
 
 /**
  * Ссылка для открытия Telegram Mini App (короткое имя "waiter").
- * Формат: https://t.me/BotUsername/waiter?startapp=v_venueId_t_tableId_vid_visitorId
+ * startapp без visitorId — лимит Telegram ~64 символа; гость идентифицируется локально (VisitorProvider).
+ * Формат: https://t.me/BotUsername/waiter?startapp=v_venueId_t_tableId
  */
 export function buildTelegramStartAppLink(
   venueId: string,
   tableId: string,
-  visitorId: string,
   telegramUsername?: string | null
 ): string {
-  const payload = `v_${venueId}_t_${tableId}_vid_${visitorId}`;
+  const payload = `v_${venueId}_t_${tableId}`;
   const bot = telegramBotUsername(telegramUsername);
   return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
 }
@@ -47,34 +47,36 @@ export function buildDeepLink(
   visitorId?: string | null,
   options?: BuildDeepLinkOptions
 ): string {
-  const payload = visitorId
+  /** Длинные ссылки с visitor допустимы вне Telegram; Mini App start_param — только v_/t_. */
+  const payloadWithOptionalVisitor = visitorId
     ? `v_${venueId}_t_${tableId}_vid_${visitorId}`
     : `v_${venueId}_t_${tableId}`;
 
   switch (channel) {
     case "telegram": {
       const bot = telegramBotUsername(options?.telegramUsername);
-      return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
+      const startPayload = `v_${venueId}_t_${tableId}`;
+      return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(startPayload)}`;
     }
     case "whatsapp":
-      const text = encodeURIComponent(`start ${payload}`);
+      const text = encodeURIComponent(`start ${payloadWithOptionalVisitor}`);
       return BOT_WHATSAPP
         ? `https://wa.me/${BOT_WHATSAPP.replace(/\D/g, "")}?text=${text}`
         : `https://wa.me/?text=${text}`;
     case "viber":
-      return `viber://pa?chatURI=${BOT_VIBER_URI}&context=${encodeURIComponent(payload)}`;
+      return `viber://pa?chatURI=${BOT_VIBER_URI}&context=${encodeURIComponent(payloadWithOptionalVisitor)}`;
     case "instagram":
     case "facebook":
-      return `https://m.me/?text=${encodeURIComponent(payload)}`;
+      return `https://m.me/?text=${encodeURIComponent(payloadWithOptionalVisitor)}`;
     case "wechat":
-      return `https://wechat.com/?text=${encodeURIComponent(payload)}`;
+      return `https://wechat.com/?text=${encodeURIComponent(payloadWithOptionalVisitor)}`;
     case "vk":
-      return `https://vk.com/?text=${encodeURIComponent(payload)}`;
+      return `https://vk.com/?text=${encodeURIComponent(payloadWithOptionalVisitor)}`;
     case "line":
       if (!BOT_LINE_ID) return "#";
-      return `https://line.me/R/ti/p/@${BOT_LINE_ID.replace(/^@/, "")}?start=${encodeURIComponent(payload)}`;
+      return `https://line.me/R/ti/p/@${BOT_LINE_ID.replace(/^@/, "")}?start=${encodeURIComponent(payloadWithOptionalVisitor)}`;
     default:
-      return `/#${payload}`;
+      return `/#${payloadWithOptionalVisitor}`;
   }
 }
 

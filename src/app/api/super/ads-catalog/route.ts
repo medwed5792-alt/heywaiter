@@ -1,5 +1,5 @@
 /**
- * GET/POST super_ads_catalog — только для UI Супер-Админа (/super/catalog → вкладка «Реклама»).
+ * GET/POST super_ads_catalog — UI Супер-Админа: /super/system (рекламные слоты).
  */
 export const dynamic = "force-dynamic";
 

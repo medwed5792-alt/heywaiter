@@ -1,6 +1,7 @@
 /**
- * Парсинг контракта v_<venueId>_t_<tableId>[_vid_<visitorId>].
- * venueId может содержать подчёркивания; граница venue/table — литерал "_t_".
+ * Парсинг контракта v_<venueId>_t_<tableId>[_vid_<visitorId>] (legacy).
+ * venueId может содержать подчёркивания — граница venue|table: последний литерал "_t_" в строке
+ * после префикса "v_".
  */
 export function parseStartParamPayload(
   payload: string
@@ -18,8 +19,8 @@ export function parseStartParamPayload(
 
   const rest = s.slice(2);
   const tMarker = "_t_";
-  const tIdx = rest.indexOf(tMarker);
-  if (tIdx === -1) {
+  const lastT = rest.lastIndexOf(tMarker);
+  if (lastT === -1) {
     const parts = s.split("_");
     if (parts.length >= 2) {
       return { venueId: parts[0], tableId: parts.slice(1).join("_") };
@@ -27,8 +28,8 @@ export function parseStartParamPayload(
     return null;
   }
 
-  const venueId = rest.slice(0, tIdx);
-  let afterT = rest.slice(tIdx + tMarker.length);
+  const venueId = rest.slice(0, lastT);
+  const afterT = rest.slice(lastT + tMarker.length);
 
   const vidMarker = "_vid_";
   const vidIdx = afterT.indexOf(vidMarker);

@@ -271,7 +271,7 @@ export function SuperAdsCatalogTab() {
             Глобальный рекламный каталог
           </h2>
           <p className="mt-2 text-sm text-slate-600 max-w-2xl">
-            Коллекция <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code>: регионы,
+            Коллекция <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code> (раздел «Система»): регионы,
             уровень заведения (1–5★), тип (кафе/бар/ресторан), расписание. Баннер с флагом «Глобальный резерв»
             показывается только если нет подходящей таргетированной рекламы.
           </p>
