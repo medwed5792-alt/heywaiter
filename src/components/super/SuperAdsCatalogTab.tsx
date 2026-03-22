@@ -11,6 +11,7 @@ import {
 } from "@/lib/super-ads";
 
 const PLACEMENT_LABELS: Record<string, string> = {
+  main_gate: "Mini App: под шапкой (главный слот)",
   mini_gateway: "Шлюз Mini App (загрузка)",
   guest_welcome: "Под приветствием гостя (стол)",
   guest_hub_between_history_promos: "Хаб: между «История» и «Акции»",

@@ -7,6 +7,8 @@ import { pickRotatedAdIndex } from "@/lib/super-ads";
 type AdSpaceProps = {
   /** Ключ слота из SUPER_AD_PLACEMENTS / каталога */
   placement: string;
+  /** DOM id корневого узла (например main-gate для якоря и тестов) */
+  id?: string;
   className?: string;
   /** Контекст таргетинга: заведение (API подтянет adRegion / adVenueLevel / adCategory из venues/{venueId}) */
   venueId?: string;
@@ -38,9 +40,8 @@ async function trackAdEvent(adId: string, event: "impression" | "click"): Promis
  * Глобальный рекламный слот: данные только из `super_ads_catalog` (Супер-админ → /super/catalog → Реклама).
  * Передайте venueId и при необходимости location — подберётся таргетированный баннер, иначе глобальный резерв.
  */
-export function AdSpace({ placement, className = "", venueId, location }: AdSpaceProps) {
+export function AdSpace({ placement, id, className = "", venueId, location }: AdSpaceProps) {
   const [ad, setAd] = useState<SuperAdCatalogItem | null>(null);
-  const impressionTracked = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +109,7 @@ export function AdSpace({ placement, className = "", venueId, location }: AdSpac
   if (ad.href?.trim()) {
     return (
       <a
+        id={id}
         href={ad.href}
         target="_blank"
         rel="noopener noreferrer"
@@ -119,5 +121,9 @@ export function AdSpace({ placement, className = "", venueId, location }: AdSpac
     );
   }
 
-  return <div className={boxClass}>{inner}</div>;
+  return (
+    <div id={id} className={boxClass}>
+      {inner}
+    </div>
+  );
 }

@@ -19,6 +19,7 @@ export const SUPER_ADS_COLLECTION = "super_ads_catalog";
 
 /** Идентификаторы слотов размещения (привязка в AdSpace и в документах каталога). */
 export const SUPER_AD_PLACEMENTS = [
+  "main_gate",
   "mini_gateway",
   "guest_welcome",
   "guest_hub_between_history_promos",
