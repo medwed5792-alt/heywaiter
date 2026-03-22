@@ -27,6 +27,22 @@ export async function PATCH(
     if (typeof body.active === "boolean") patch.active = body.active;
     if (Array.isArray(body.placements)) patch.placements = body.placements.map(String);
     if (typeof body.sortOrder === "number") patch.sortOrder = body.sortOrder;
+    if (Array.isArray(body.regions)) patch.regions = body.regions.map((x: unknown) => String(x).trim()).filter(Boolean);
+    if (Array.isArray(body.venueLevels)) {
+      patch.venueLevels = body.venueLevels
+        .map((x: unknown) => Number(x))
+        .filter((n: number) => !Number.isNaN(n) && n >= 1 && n <= 5);
+    }
+    if (typeof body.category === "string") patch.category = body.category.trim();
+    if (body.schedule !== undefined) {
+      if (body.schedule && typeof body.schedule === "object") {
+        patch.schedule = body.schedule;
+      } else {
+        const { FieldValue } = await import("firebase-admin/firestore");
+        patch.schedule = FieldValue.delete();
+      }
+    }
+    if (typeof body.isGlobalReserve === "boolean") patch.isGlobalReserve = body.isGlobalReserve;
     await ref.update(patch);
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -190,7 +190,7 @@ function FullServicePanel({
           </div>
         )}
         {metaLoaded && !tableNotFound && (
-          <AdSpace placement="guest_welcome" className="mb-4" />
+          <AdSpace placement="guest_welcome" venueId={venueId} className="mb-4" />
         )}
         {metaLoaded && tableNotFound && (
           <div className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700 border border-red-200">

@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
 import { Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
 import type { SuperAdCatalogItem } from "@/lib/super-ads";
-import { SUPER_AD_PLACEMENTS } from "@/lib/super-ads";
+import {
+  SUPER_AD_PLACEMENTS,
+  SUPER_AD_TARGET_REGIONS,
+  SUPER_AD_CATEGORY_PRESETS,
+} from "@/lib/super-ads";
 
 const PLACEMENT_LABELS: Record<string, string> = {
   mini_gateway: "Шлюз Mini App (загрузка)",
@@ -13,21 +17,97 @@ const PLACEMENT_LABELS: Record<string, string> = {
   guest_hub_between_promos_rating: "Хаб: между «Акции» и «Рейтинг»",
 };
 
-const emptyForm = {
+const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"] as const;
+
+const TIMEZONES = [
+  "Europe/Moscow",
+  "Europe/Kaliningrad",
+  "Europe/Samara",
+  "Asia/Yekaterinburg",
+  "Asia/Omsk",
+  "Asia/Krasnoyarsk",
+  "Asia/Irkutsk",
+  "Asia/Vladivostok",
+  "UTC",
+];
+
+const VENUE_LEVELS = [1, 2, 3, 4, 5] as const;
+
+type FormState = {
+  title: string;
+  body: string;
+  imageUrl: string;
+  href: string;
+  active: boolean;
+  placements: string[];
+  sortOrder: number;
+  regions: string[];
+  venueLevels: number[];
+  category: string;
+  isGlobalReserve: boolean;
+  scheduleDays: number[];
+  scheduleStart: string;
+  scheduleEnd: string;
+  scheduleTz: string;
+};
+
+const emptyForm = (): FormState => ({
   title: "",
   body: "",
   imageUrl: "",
   href: "",
   active: true,
-  placements: [] as string[],
+  placements: [],
   sortOrder: 0,
-};
+  regions: [],
+  venueLevels: [],
+  category: "",
+  isGlobalReserve: false,
+  scheduleDays: [],
+  scheduleStart: "",
+  scheduleEnd: "",
+  scheduleTz: "Europe/Moscow",
+});
+
+function buildSchedulePayload(f: FormState): Record<string, unknown> | undefined {
+  const hasDays = f.scheduleDays.length > 0;
+  const hasTime = Boolean(f.scheduleStart.trim() || f.scheduleEnd.trim());
+  if (!hasDays && !hasTime) return undefined;
+  const o: Record<string, unknown> = {
+    timezone: f.scheduleTz.trim() || "Europe/Moscow",
+  };
+  if (hasDays) o.daysOfWeek = [...f.scheduleDays].sort((a, b) => a - b);
+  if (f.scheduleStart.trim()) o.startTime = f.scheduleStart.trim();
+  if (f.scheduleEnd.trim()) o.endTime = f.scheduleEnd.trim();
+  return o;
+}
+
+function itemToForm(a: SuperAdCatalogItem): FormState {
+  const sch = a.schedule;
+  return {
+    title: a.title ?? "",
+    body: a.body ?? "",
+    imageUrl: a.imageUrl ?? "",
+    href: a.href ?? "",
+    active: a.active !== false,
+    placements: a.placements ?? [],
+    sortOrder: a.sortOrder ?? 0,
+    regions: a.regions ?? [],
+    venueLevels: a.venueLevels ?? [],
+    category: a.category ?? "",
+    isGlobalReserve: a.isGlobalReserve === true,
+    scheduleDays: sch?.daysOfWeek ? [...sch.daysOfWeek] : [],
+    scheduleStart: sch?.startTime ?? "",
+    scheduleEnd: sch?.endTime ?? "",
+    scheduleTz: sch?.timezone ?? "Europe/Moscow",
+  };
+}
 
 export function SuperAdsCatalogTab() {
   const [ads, setAds] = useState<SuperAdCatalogItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -52,20 +132,12 @@ export function SuperAdsCatalogTab() {
 
   const openNew = () => {
     setEditingId("new");
-    setForm({ ...emptyForm });
+    setForm(emptyForm());
   };
 
   const openEdit = (a: SuperAdCatalogItem) => {
     setEditingId(a.id);
-    setForm({
-      title: a.title ?? "",
-      body: a.body ?? "",
-      imageUrl: a.imageUrl ?? "",
-      href: a.href ?? "",
-      active: a.active !== false,
-      placements: a.placements ?? [],
-      sortOrder: a.sortOrder ?? 0,
-    });
+    setForm(itemToForm(a));
   };
 
   const togglePlacement = (id: string) => {
@@ -77,14 +149,63 @@ export function SuperAdsCatalogTab() {
     }));
   };
 
+  const toggleLevel = (n: number) => {
+    setForm((f) => ({
+      ...f,
+      venueLevels: f.venueLevels.includes(n)
+        ? f.venueLevels.filter((x) => x !== n)
+        : [...f.venueLevels, n].sort((a, b) => a - b),
+    }));
+  };
+
+  const toggleScheduleDay = (d: number) => {
+    setForm((f) => ({
+      ...f,
+      scheduleDays: f.scheduleDays.includes(d)
+        ? f.scheduleDays.filter((x) => x !== d)
+        : [...f.scheduleDays, d].sort((a, b) => a - b),
+    }));
+  };
+
   const save = async () => {
     setSaving(true);
     try {
+      const schedule = buildSchedulePayload(form);
+      const body =
+        editingId === "new"
+          ? {
+              title: form.title,
+              body: form.body,
+              imageUrl: form.imageUrl,
+              href: form.href,
+              active: form.active,
+              placements: form.placements,
+              sortOrder: form.sortOrder,
+              regions: form.regions,
+              venueLevels: form.venueLevels,
+              category: form.category,
+              isGlobalReserve: form.isGlobalReserve,
+              ...(schedule ? { schedule } : {}),
+            }
+          : {
+              title: form.title,
+              body: form.body,
+              imageUrl: form.imageUrl,
+              href: form.href,
+              active: form.active,
+              placements: form.placements,
+              sortOrder: form.sortOrder,
+              regions: form.regions,
+              venueLevels: form.venueLevels,
+              category: form.category,
+              isGlobalReserve: form.isGlobalReserve,
+              schedule: schedule ?? null,
+            };
       if (editingId === "new") {
         const res = await fetch("/api/super/ads-catalog", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка");
@@ -93,7 +214,7 @@ export function SuperAdsCatalogTab() {
         const res = await fetch(`/api/super/ads-catalog/${encodeURIComponent(editingId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка");
@@ -126,6 +247,15 @@ export function SuperAdsCatalogTab() {
     }
   };
 
+  const targetingSummary = (a: SuperAdCatalogItem) => {
+    const parts: string[] = [];
+    if (a.isGlobalReserve) parts.push("резерв");
+    if (a.regions?.length) parts.push(`регионы: ${a.regions.length}`);
+    if (a.venueLevels?.length) parts.push(`★ ${a.venueLevels.join(",")}`);
+    if (a.category?.trim()) parts.push(a.category);
+    return parts.length ? parts.join(" · ") : "широкий";
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -135,9 +265,9 @@ export function SuperAdsCatalogTab() {
             Глобальный рекламный каталог
           </h2>
           <p className="mt-2 text-sm text-slate-600 max-w-2xl">
-            Коллекция Firestore <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code>.
-            Эти объявления показываются в Mini App гостей и на шлюзе. Админы заведений не редактируют эти слоты —
-            только Супер-админ.
+            Коллекция <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code>: регионы,
+            уровень заведения (1–5★), тип (кафе/бар/ресторан), расписание. Баннер с флагом «Глобальный резерв»
+            показывается только если нет подходящей таргетированной рекламы.
           </p>
         </div>
         <button
@@ -154,21 +284,24 @@ export function SuperAdsCatalogTab() {
         <p className="mt-4 text-sm text-slate-500">Загрузка…</p>
       ) : (
         <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full min-w-[720px]">
+          <table className="w-full min-w-[960px]">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="p-3 text-left text-xs font-medium text-slate-600">Заголовок</th>
+                <th className="p-3 text-left text-xs font-medium text-slate-600">Таргетинг</th>
                 <th className="p-3 text-left text-xs font-medium text-slate-600">Слоты</th>
+                <th className="p-3 text-right text-xs font-medium text-slate-600">Показы</th>
+                <th className="p-3 text-right text-xs font-medium text-slate-600">Клики</th>
                 <th className="p-3 text-left text-xs font-medium text-slate-600">Активно</th>
-                <th className="p-3 text-left text-xs font-medium text-slate-600">Порядок</th>
                 <th className="p-3 text-left text-xs font-medium text-slate-600">Действия</th>
               </tr>
             </thead>
             <tbody>
               {ads.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-sm text-slate-500">
-                    Нет объявлений. Добавьте записи — они попадут в ротацию на слотах Mini App.
+                  <td colSpan={7} className="p-6 text-center text-sm text-slate-500">
+                    Нет объявлений. Добавьте записи и отметьте хотя бы одну как «Глобальный резерв», чтобы слот не
+                    пустовал.
                   </td>
                 </tr>
               ) : (
@@ -177,6 +310,7 @@ export function SuperAdsCatalogTab() {
                     <td className="p-3 text-sm text-slate-900 max-w-xs">
                       {a.title || <span className="text-slate-400">(без заголовка)</span>}
                     </td>
+                    <td className="p-3 text-xs text-slate-600 max-w-[200px]">{targetingSummary(a)}</td>
                     <td className="p-3 text-xs text-slate-600">
                       {!a.placements?.length ? (
                         <span title="Все слоты">все</span>
@@ -184,8 +318,9 @@ export function SuperAdsCatalogTab() {
                         a.placements.join(", ")
                       )}
                     </td>
+                    <td className="p-3 text-sm text-right tabular-nums">{a.impressions ?? 0}</td>
+                    <td className="p-3 text-sm text-right tabular-nums">{a.clicks ?? 0}</td>
                     <td className="p-3 text-sm">{a.active !== false ? "да" : "нет"}</td>
-                    <td className="p-3 text-sm">{a.sortOrder ?? 0}</td>
                     <td className="p-3 flex gap-2">
                       <button
                         type="button"
@@ -215,7 +350,7 @@ export function SuperAdsCatalogTab() {
 
       {editingId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-base font-semibold text-slate-900">
               {editingId === "new" ? "Новое объявление" : "Редактирование"}
             </h3>
@@ -260,6 +395,127 @@ export function SuperAdsCatalogTab() {
                 />
                 Активно
               </label>
+              <label className="flex items-start gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={form.isGlobalReserve}
+                  onChange={(e) => setForm((f) => ({ ...f, isGlobalReserve: e.target.checked }))}
+                />
+                <span>
+                  Глобальный резерв сети (показ только если нет подходящей таргетированной рекламы)
+                </span>
+              </label>
+
+              <div>
+                <p className="text-xs font-medium text-slate-600">Регионы (пусто = все города)</p>
+                <select
+                  multiple
+                  className="mt-2 h-36 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                  value={form.regions}
+                  onChange={(e) => {
+                    const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
+                    setForm((f) => ({ ...f, regions: opts }));
+                  }}
+                >
+                  {SUPER_AD_TARGET_REGIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">Ctrl/Cmd + клик для нескольких регионов</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-medium text-slate-600">Уровень заведения (1–5★), пусто = любой</p>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {VENUE_LEVELS.map((n) => (
+                    <label key={n} className="inline-flex items-center gap-1.5 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={form.venueLevels.includes(n)}
+                        onChange={() => toggleLevel(n)}
+                      />
+                      {n}★
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600">Тип заведения</label>
+                <select
+                  className="mt-1 w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  value={form.category}
+                  onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                >
+                  {SUPER_AD_CATEGORY_PRESETS.map((o) => (
+                    <option key={o.value || "__any"} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-medium text-slate-700">Расписание показа</p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Без дней и без интервала времени — круглосуточно (в зоне по умолчанию).
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {DAY_LABELS.map((label, d) => (
+                    <label
+                      key={d}
+                      className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-xs"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.scheduleDays.includes(d)}
+                        onChange={() => toggleScheduleDay(d)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="text-xs text-slate-600">Начало (HH:mm)</label>
+                    <input
+                      type="text"
+                      placeholder="09:00"
+                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                      value={form.scheduleStart}
+                      onChange={(e) => setForm((f) => ({ ...f, scheduleStart: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-600">Конец (HH:mm)</label>
+                    <input
+                      type="text"
+                      placeholder="23:00"
+                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                      value={form.scheduleEnd}
+                      onChange={(e) => setForm((f) => ({ ...f, scheduleEnd: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <label className="text-xs text-slate-600">Часовой пояс</label>
+                  <select
+                    className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    value={form.scheduleTz}
+                    onChange={(e) => setForm((f) => ({ ...f, scheduleTz: e.target.value }))}
+                  >
+                    {TIMEZONES.map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <p className="text-xs font-medium text-slate-600">Слоты (пусто = все слоты)</p>
                 <div className="mt-2 space-y-2">

@@ -1,43 +1,64 @@
 /**
- * GET /api/public/super-ads?placement=...
- * Публичная выдача активных объявлений из super_ads_catalog (для Mini App / AdSpace).
+ * GET /api/public/super-ads?placement=...&venueId=...&location=...
+ * Подбор релевантных баннеров из super_ads_catalog с таргетингом и «железным» глобальным резервом.
  */
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import type { SuperAdCatalogItem } from "@/lib/super-ads";
-import { filterAdsForPlacement } from "@/lib/super-ads";
+import type { AdDeliveryContext } from "@/lib/super-ads";
+import {
+  selectAdsForDelivery,
+  superAdFromFirestoreDoc,
+  toPublicSuperAdItem,
+} from "@/lib/super-ads";
 
 export async function GET(request: NextRequest) {
   try {
     const { getAdminFirestore } = await import("@/lib/firebase-admin");
     const firestore = getAdminFirestore();
-    const snap = await firestore.collection("super_ads_catalog").get();
     const placement = request.nextUrl.searchParams.get("placement")?.trim() ?? "";
+    const venueId = request.nextUrl.searchParams.get("venueId")?.trim() ?? "";
+    const location = request.nextUrl.searchParams.get("location")?.trim() ?? "";
 
-    let ads: SuperAdCatalogItem[] = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        id: d.id,
-        title: data.title as string | undefined,
-        body: data.body as string | undefined,
-        imageUrl: data.imageUrl as string | undefined,
-        href: data.href as string | undefined,
-        active: data.active as boolean | undefined,
-        placements: data.placements as string[] | undefined,
-        sortOrder: typeof data.sortOrder === "number" ? data.sortOrder : undefined,
-      };
-    });
+    const snap = await firestore.collection("super_ads_catalog").get();
+    const all = snap.docs.map((d) => superAdFromFirestoreDoc(d.id, d.data() as Record<string, unknown>));
 
-    ads = ads.filter((a) => a.active !== false);
-
-    if (placement) {
-      ads = filterAdsForPlacement(ads, placement);
+    if (!placement) {
+      const loose = all
+        .filter((a) => a.active !== false)
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      return NextResponse.json({ ads: loose.map(toPublicSuperAdItem) });
     }
 
-    ads.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    let region = location;
+    let venueLevel: number | undefined;
+    let category: string | undefined;
 
-    return NextResponse.json({ ads });
+    if (venueId) {
+      const venueSnap = await firestore.collection("venues").doc(venueId).get();
+      if (venueSnap.exists) {
+        const v = venueSnap.data() as Record<string, unknown>;
+        if (!region && typeof v.adRegion === "string" && v.adRegion.trim()) {
+          region = v.adRegion.trim();
+        }
+        if (typeof v.adVenueLevel === "number" && v.adVenueLevel >= 1 && v.adVenueLevel <= 5) {
+          venueLevel = v.adVenueLevel;
+        }
+        if (typeof v.adCategory === "string" && v.adCategory.trim()) {
+          category = v.adCategory.trim();
+        }
+      }
+    }
+
+    const ctx: AdDeliveryContext = {
+      region: region || "",
+      venueLevel,
+      category,
+    };
+
+    const { ads: selected } = selectAdsForDelivery(all, placement, ctx);
+
+    return NextResponse.json({ ads: selected.map(toPublicSuperAdItem) });
   } catch (err) {
     console.error("[public/super-ads]", err);
     return NextResponse.json(

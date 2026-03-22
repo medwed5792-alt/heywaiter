@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { SuperAdCatalogItem } from "@/lib/super-ads";
 import { pickRotatedAdIndex } from "@/lib/super-ads";
 
@@ -8,22 +8,45 @@ type AdSpaceProps = {
   /** Ключ слота из SUPER_AD_PLACEMENTS / каталога */
   placement: string;
   className?: string;
+  /** Контекст таргетинга: заведение (API подтянет adRegion / adVenueLevel / adCategory из venues/{venueId}) */
+  venueId?: string;
+  /** Город/регион гостя; перекрывает venues.adRegion, если задан */
+  location?: string;
 };
+
+function buildSuperAdsUrl(placement: string, venueId?: string, location?: string): string {
+  const params = new URLSearchParams();
+  params.set("placement", placement);
+  if (venueId?.trim()) params.set("venueId", venueId.trim());
+  if (location?.trim()) params.set("location", location.trim());
+  return `/api/public/super-ads?${params.toString()}`;
+}
+
+async function trackAdEvent(adId: string, event: "impression" | "click"): Promise<void> {
+  try {
+    await fetch("/api/public/super-ads/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adId, event }),
+    });
+  } catch {
+    /* best-effort */
+  }
+}
 
 /**
  * Глобальный рекламный слот: данные только из `super_ads_catalog` (Супер-админ → /super/catalog → Реклама).
- * Локальные админы заведений не управляют этим контентом.
+ * Передайте venueId и при необходимости location — подберётся таргетированный баннер, иначе глобальный резерв.
  */
-export function AdSpace({ placement, className = "" }: AdSpaceProps) {
+export function AdSpace({ placement, className = "", venueId, location }: AdSpaceProps) {
   const [ad, setAd] = useState<SuperAdCatalogItem | null>(null);
+  const impressionTracked = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(
-          `/api/public/super-ads?placement=${encodeURIComponent(placement)}`
-        );
+        const res = await fetch(buildSuperAdsUrl(placement, venueId, location));
         const data = (await res.json()) as { ads?: SuperAdCatalogItem[] };
         const list = data.ads ?? [];
         if (cancelled || list.length === 0) {
@@ -39,7 +62,19 @@ export function AdSpace({ placement, className = "" }: AdSpaceProps) {
     return () => {
       cancelled = true;
     };
-  }, [placement]);
+  }, [placement, venueId, location]);
+
+  useEffect(() => {
+    if (!ad?.id || typeof sessionStorage === "undefined") return;
+    const key = `heywaiter_super_ad_imp_${placement}_${ad.id}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, "1");
+    void trackAdEvent(ad.id, "impression");
+  }, [ad?.id, placement]);
+
+  const handleClick = useCallback(() => {
+    if (ad?.id) void trackAdEvent(ad.id, "click");
+  }, [ad?.id]);
 
   if (!ad) return null;
 
@@ -77,6 +112,7 @@ export function AdSpace({ placement, className = "" }: AdSpaceProps) {
         target="_blank"
         rel="noopener noreferrer"
         className={`block ${boxClass} transition-opacity hover:opacity-95`}
+        onClick={handleClick}
       >
         {inner}
       </a>

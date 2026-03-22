@@ -182,6 +182,12 @@ export interface Venue {
   };
   /** PRO: в CRM показывается рейтинг гостя (globalGuestScore) */
   isPro?: boolean;
+  /** Глобальная реклама (super_ads): город/регион для таргетинга */
+  adRegion?: string;
+  /** 1–5 — уровень заведения для подбора баннеров */
+  adVenueLevel?: number;
+  /** кафе | бар | ресторан — для таргетинга баннеров */
+  adCategory?: string;
   createdAt: unknown;
   updatedAt: unknown;
 }

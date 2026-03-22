@@ -293,7 +293,7 @@ function MiniAppContent() {
           )}
         </p>
         {!isLoadingTable && fromTelegram && venueId ? (
-          <AdSpace placement="mini_gateway" className="w-full" />
+          <AdSpace placement="mini_gateway" venueId={venueId || undefined} className="w-full" />
         ) : null}
       </div>
     </main>
