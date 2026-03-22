@@ -17,7 +17,7 @@ interface GuestEventPayload {
 /**
  * Та же схема приоритетов, что и на Дашборде для «карты стола», плюс currentWaiterId из редактора.
  */
-function pickWaiterIdFromTableData(data: Record<string, unknown>): string | null {
+export function getWaiterIdFromTableDoc(data: Record<string, unknown>): string | null {
   const assignments = data.assignments as { waiter?: unknown } | undefined;
   const raw =
     (typeof data.currentWaiterId === "string" ? data.currentWaiterId : null) ??
@@ -41,7 +41,7 @@ export async function resolveAssignedStaffForCall(
     return { status: "unassigned" };
   }
   const data = (tableSnap.data() ?? {}) as Record<string, unknown>;
-  const staffId = pickWaiterIdFromTableData(data);
+  const staffId = getWaiterIdFromTableDoc(data);
   if (!staffId) {
     return { status: "unassigned" };
   }

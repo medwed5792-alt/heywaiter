@@ -19,11 +19,16 @@ export const SUPER_ADS_COLLECTION = "super_ads_catalog";
 
 /** Идентификаторы слотов размещения (привязка в AdSpace и в документах каталога). */
 export const SUPER_AD_PLACEMENTS = [
+  "main_ad",
   "main_gate",
   "mini_gateway",
   "guest_welcome",
   "guest_hub_between_history_promos",
   "guest_hub_between_promos_rating",
+  "repeat_after_scan",
+  "repeat_after_places",
+  "repeat_after_promos",
+  "repeat_after_rating",
 ] as const;
 
 export type SuperAdPlacementId = (typeof SUPER_AD_PLACEMENTS)[number];

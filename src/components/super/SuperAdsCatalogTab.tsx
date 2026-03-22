@@ -11,11 +11,16 @@ import {
 } from "@/lib/super-ads";
 
 const PLACEMENT_LABELS: Record<string, string> = {
+  main_ad: "Mini App гость: под кнопкой вызова (первый визит)",
   main_gate: "Mini App: под шапкой (главный слот)",
   mini_gateway: "Шлюз Mini App (загрузка)",
   guest_welcome: "Под приветствием гостя (стол)",
   guest_hub_between_history_promos: "Хаб: между «История» и «Акции»",
   guest_hub_between_promos_rating: "Хаб: между «Акции» и «Рейтинг»",
+  repeat_after_scan: "Лента: после сканера",
+  repeat_after_places: "Лента: после «Мои места»",
+  repeat_after_promos: "Лента: после «Акции»",
+  repeat_after_rating: "Лента: после «Рейтинг»",
 };
 
 const DAY_LABELS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"] as const;
