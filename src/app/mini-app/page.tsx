@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import {
   doc,
   getDoc,
@@ -13,12 +13,9 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
-import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { AdSpace } from "@/components/ads/AdSpace";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
-import { useGeoFencing } from "@/hooks/useGeoFencing";
-import { IS_GEO_DEBUG } from "@/lib/geo";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { AD_CITY_HINTS } from "@/lib/ad-geo-hints";
 import {
@@ -48,14 +45,6 @@ type VisitEntry = {
   tableLabel: string;
   visitedAt: number;
 };
-
-function clearMiniappCache(): void {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.removeItem(MINIAPP_CACHE_VENUE);
-    localStorage.removeItem(MINIAPP_CACHE_TABLE);
-  } catch (_) {}
-}
 
 const STAFF_BOT_USERNAME = "waitertalk_bot";
 
@@ -107,10 +96,10 @@ function MiniAppContent() {
   const [venueSettings, setVenueSettings] = useState<Record<string, unknown> | null>(null);
   const [tableSettings, setTableSettings] = useState<Record<string, unknown> | null>(null);
   const [staffName, setStaffName] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  /** false — пока не определили: есть ли start_param / v+t (не показываем «Личный кабинет»). */
+  const [entryRouteResolved, setEntryRouteResolved] = useState(false);
   const [firestoreDone, setFirestoreDone] = useState(false);
   const [forceStaffByBot, setForceStaffByBot] = useState(false);
-  const lastAppliedStartParam = useRef<string>("");
   const [callLoading, setCallLoading] = useState(false);
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [visitHistory, setVisitHistory] = useState<VisitEntry[]>([]);
@@ -120,50 +109,6 @@ function MiniAppContent() {
   const [ratingRows, setRatingRows] = useState<
     Array<{ id: string; name: string; avg: number; count: number }>
   >([]);
-
-  const { ensureInsideVenue } = useGeoFencing({
-    mode: "guest",
-    venueId: venueId || "_",
-    tableId: tableId || "_",
-    sessionOpen: true,
-    startAfterUserAction: true,
-  });
-
-  const forceResetTableAndLoad = useCallback((newVenueId: string, newTableId: string) => {
-    lastAppliedStartParam.current = "";
-    setVenueId(newVenueId);
-    setTableId(newTableId);
-    setVenueSettings(null);
-    setTableSettings(null);
-    setStaffName(null);
-    setFirestoreDone(false);
-  }, []);
-
-  const applyStartParam = useCallback(
-    (startParam: string) => {
-      if (!startParam.trim()) return false;
-      const parsed = parseStartParamPayload(startParam);
-      if (!parsed) return false;
-      lastAppliedStartParam.current = startParam;
-      clearMiniappCache();
-      setVenueId(parsed.venueId);
-      setTableId(parsed.tableId);
-      setVenueSettings(null);
-      setTableSettings(null);
-      setStaffName(null);
-      setFirestoreDone(false);
-      if (parsed.visitorId) {
-        try {
-          if (typeof localStorage !== "undefined") {
-            localStorage.setItem(VISITOR_STORAGE_KEY, parsed.visitorId);
-          }
-          setVisitorId(parsed.visitorId);
-        } catch (_) {}
-      }
-      return true;
-    },
-    [setVisitorId]
-  );
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.Telegram?.WebApp) {
@@ -196,55 +141,71 @@ function MiniAppContent() {
   }, [router]);
 
   useEffect(() => {
-    const startParam = getTelegramStartParam();
-    const fromQueryV = (searchParams.get("v") ?? "").trim();
-    const fromQueryT = (searchParams.get("t") ?? "").trim();
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
+    const fromQueryT = (searchParams.get("t") ?? "").trim();
     const isStaffByUrl = (bot === "staff" || role === "staff") && !fromQueryT;
     const isStaffEntry = isStaffByUrl || forceStaffByBot;
 
-    if (typeof window !== "undefined" && startParam) {
-      clearMiniappCache();
-    }
-
     if (isStaffEntry) {
-      setLoaded(true);
       setFirestoreDone(true);
+      setEntryRouteResolved(true);
       return;
     }
 
-    if (startParam) {
-      const applied = applyStartParam(startParam);
-      if (!applied) {
-        setLoaded(true);
-        setFirestoreDone(true);
-      }
-    } else if (fromQueryV || fromQueryT) {
-      const newV = fromQueryV || venueId;
-      const newT = fromQueryT || tableId;
-      if (newV !== venueId || newT !== tableId) {
-        forceResetTableAndLoad(newV, newT);
-      }
-    } else {
-      setLoaded(true);
-      setFirestoreDone(true);
-    }
-    setLoaded(true);
-  }, [searchParams, applyStartParam, forceResetTableAndLoad, venueId, tableId, forceStaffByBot]);
+    let cancelled = false;
+    const delays = [0, 40, 120, 300, 700, 2000];
 
-  useEffect(() => {
-    const delays = [0, 150, 400, 900];
-    const timers = delays.map((ms) =>
-      setTimeout(() => {
-        const sp = getTelegramStartParam();
-        if (sp && sp !== lastAppliedStartParam.current) {
-          applyStartParam(sp);
+    const tryBindSession = (): boolean => {
+      const sp = getTelegramStartParam();
+      const fromQueryV = (searchParams.get("v") ?? "").trim();
+      const fromQueryT = (searchParams.get("t") ?? "").trim();
+
+      if (sp) {
+        const p = parseMiniAppStartParam(sp);
+        if (p) {
+          setVenueId(p.venueId);
+          setTableId(p.tableId);
+          setVenueSettings(null);
+          setTableSettings(null);
+          setStaffName(null);
+          setFirestoreDone(false);
+          return true;
         }
-      }, ms)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [applyStartParam]);
+      }
+      if (fromQueryV && fromQueryT) {
+        lastAppliedStartParam.current = "";
+        setVenueId(fromQueryV);
+        setTableId(fromQueryT);
+        setVenueSettings(null);
+        setTableSettings(null);
+        setStaffName(null);
+        setFirestoreDone(false);
+        return true;
+      }
+      return false;
+    };
+
+    let i = 0;
+    const step = () => {
+      if (cancelled) return;
+      if (tryBindSession()) {
+        setEntryRouteResolved(true);
+        return;
+      }
+      i += 1;
+      if (i < delays.length) {
+        window.setTimeout(step, delays[i] - delays[i - 1]);
+      } else {
+        setFirestoreDone(true);
+        setEntryRouteResolved(true);
+      }
+    };
+    step();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, forceStaffByBot]);
 
   useEffect(() => {
     if (!venueId && !tableId) {
@@ -334,7 +295,7 @@ function MiniAppContent() {
   }, [venueId, tableId]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!entryRouteResolved) return;
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
     const urlT = (searchParams.get("t") ?? "").trim();
@@ -343,7 +304,7 @@ function MiniAppContent() {
       const v = (venueId || searchParams.get("v")) ?? "";
       router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
     }
-  }, [loaded, searchParams, venueId, router, forceStaffByBot]);
+  }, [entryRouteResolved, searchParams, venueId, router, forceStaffByBot]);
 
   useEffect(() => {
     if (cooldownLeft <= 0) return;
@@ -464,13 +425,6 @@ function MiniAppContent() {
 
   const handleCallWaiter = useCallback(async () => {
     if (!venueId || !tableId || !tableRecognized) return;
-    if (!IS_GEO_DEBUG) {
-      const check = await ensureInsideVenue();
-      if (!check.allowed) {
-        toast.error("Вызов доступен только в заведении");
-        return;
-      }
-    }
     setCallLoading(true);
     try {
       await createGuestEvent({
@@ -493,7 +447,6 @@ function MiniAppContent() {
     tableRecognized,
     tableNumberResolved,
     visitorId,
-    ensureInsideVenue,
   ]);
 
   const openTableScanner = useCallback(() => {
@@ -524,6 +477,14 @@ function MiniAppContent() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
         <p className="text-slate-500 text-sm">Открытие кабинета персонала…</p>
+      </main>
+    );
+  }
+
+  if (!entryRouteResolved) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-slate-500 text-sm">Загрузка…</p>
       </main>
     );
   }
@@ -563,6 +524,15 @@ function MiniAppContent() {
               )}
             </header>
 
+            {tableRecognized ? (
+              <AdSpace
+                id="main-gate"
+                placement="main_gate"
+                venueId={venueId || undefined}
+                className="w-full"
+              />
+            ) : null}
+
             <button
               type="button"
               disabled={callDisabled}
@@ -579,13 +549,6 @@ function MiniAppContent() {
                 <span className="text-sm text-slate-500">Повтор через {cooldownLeft} с</span>
               )}
             </button>
-
-            <AdSpace
-              id="main-ad"
-              placement="main_ad"
-              venueId={venueId || undefined}
-              className="w-full"
-            />
           </>
         ) : (
           <>
