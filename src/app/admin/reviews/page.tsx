@@ -4,8 +4,7 @@ import { useState, useEffect } from "react";
 import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Review } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;

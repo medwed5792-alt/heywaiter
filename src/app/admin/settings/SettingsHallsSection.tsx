@@ -16,11 +16,11 @@ import { db } from "@/lib/firebase";
 import { LayoutGrid, Map, Plus, Pencil, Trash2, QrCode } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { VenueType } from "@/lib/types";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 const DEFAULT_CHECK_IN = "Располагайтесь! Нажмите кнопку ниже, чтобы открыть меню или позвать официанта.";
 const DEFAULT_BOOKING = "Извините, этот стол забронирован. Обратитесь к хостес.";
 const DEFAULT_THANK_YOU = "🙏 Спасибо за визит! Будем рады видеть вас снова.";
-const VENUE_ID = "venue_andrey_alt";
 
 interface Hall {
   id: string;
@@ -518,7 +518,7 @@ export function SettingsHallsSection() {
         <textarea className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" rows={2} value={messages.booking} onChange={(e) => setMessages((m) => ({ ...m, booking: e.target.value }))} />
         <label className="mt-4 block text-sm font-medium text-gray-700">Благодарность (thankYou)</label>
         <textarea className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" rows={2} value={messages.thankYou} onChange={(e) => setMessages((m) => ({ ...m, thankYou: e.target.value }))} />
-        <button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setSaving(true); try { const res = await fetch("/api/admin/venue/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ venueId: "venue_andrey_alt", messages }) }); if (!res.ok) throw new Error((await res.json()).error || "Ошибка"); toast.success("Тексты сохранены"); } catch (e) { toast.error(e instanceof Error ? e.message : "Ошибка"); } finally { setSaving(false); }} } disabled={saving}>
+        <button type="button" className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50" onClick={async () => { setSaving(true); try { const res = await fetch("/api/admin/venue/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ venueId: VENUE_ID, messages }) }); if (!res.ok) throw new Error((await res.json()).error || "Ошибка"); toast.success("Тексты сохранены"); } catch (e) { toast.error(e instanceof Error ? e.message : "Ошибка"); } finally { setSaving(false); }} } disabled={saving}>
           {saving ? "Сохранение…" : "Сохранить тексты"}
         </button>
       </div>

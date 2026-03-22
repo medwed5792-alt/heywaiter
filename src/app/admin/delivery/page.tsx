@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 export default function AdminDeliveryPage() {
   const [orderNumber, setOrderNumber] = useState("");

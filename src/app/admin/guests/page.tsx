@@ -7,8 +7,7 @@ import { StickyNote } from "lucide-react";
 import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
 import type { MessengerChannel } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 const GLOBAL_GUESTS_BATCH = 30;
 const DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 

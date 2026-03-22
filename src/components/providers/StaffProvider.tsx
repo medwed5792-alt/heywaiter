@@ -3,7 +3,7 @@
 /**
  * StaffProvider — централизованное состояние сотрудника (Unified ID V.2.0).
  * Хранит текущее заведение, данные из /api/staff/me и список заведений из /api/staff/venues.
- * Восстановление currentVenueId из sessionStorage; при v=venue_andrey_alt — загрузка списка и выбор.
+ * Восстановление currentVenueId из sessionStorage; при v=... — загрузка списка и выбор.
  */
 
 import {
@@ -17,9 +17,9 @@ import {
 } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
-const DEFAULT_VENUE_ID = "venue_andrey_alt";
 
 function platformKeyFromUrl(raw: string | null): string | null {
   const v = raw?.trim().toLowerCase();

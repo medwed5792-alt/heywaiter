@@ -9,8 +9,9 @@ import { UserPlus, User, Briefcase, Star, Phone, BookOpen } from "lucide-react";
 import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, MedicalCard } from "@/lib/types";
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
-const venueId = "venue_andrey_alt";
+const venueId = DEFAULT_VENUE_ID;
 const VENUE_ID = venueId;
 
 /** Тип поиска: номер телефона или одна из соцсетей (совпадает с API). */

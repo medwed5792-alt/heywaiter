@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { findUserByIdentity, toIdentityKey } from "@/lib/auth/unifiedSearch";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 function cleanPhone(value: string): string {
   return value.replace(/\D/g, "");
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     const platform = typeof body.platform === "string" ? body.platform.trim() : "tg";
     const platformId = typeof body.platformId === "string" ? body.platformId.trim() : "";
-    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "venue_andrey_alt";
+    const venueId = resolveVenueId(typeof body.venueId === "string" ? body.venueId : undefined);
 
     if (!phone || !platformId) {
       return NextResponse.json(

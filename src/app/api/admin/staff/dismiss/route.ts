@@ -5,7 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import type { StaffCareerEntry, Affiliation } from "@/lib/types";
 
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 /**
  * POST /api/admin/staff/dismiss (Unlink / Расторжение контракта)

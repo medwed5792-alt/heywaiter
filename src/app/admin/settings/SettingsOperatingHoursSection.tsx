@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import toast from "react-hot-toast";
-
-const venueId = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as venueId } from "@/lib/standards/venue-default";
 
 type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 

@@ -8,8 +8,7 @@ import { db } from "@/lib/firebase";
 import { ScheduleTimeline } from "@/components/admin/ScheduleTimeline";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import type { ScheduleEntry, ShiftSlot, Staff, Venue, ServiceRole } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 /** Подписи ролей для UI (расширяемый список) */
 const ROLE_LABELS: Partial<Record<string, string>> = {

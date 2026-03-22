@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import type { UnifiedIdentities } from "@/lib/types";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 const MERGE_SECRET = "HW_MERGE_2026";
 
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const venueId = (keepData.venueId as string) || "venue_andrey_alt";
+    const venueId = resolveVenueId(keepData.venueId as string | undefined);
     const venueSourceStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(sourceId);
     batch.set(
       venueSourceStaffRef,

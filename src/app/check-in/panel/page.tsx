@@ -11,8 +11,7 @@ import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { AdSpace } from "@/components/ads/AdSpace";
-
-const VENUE_ID = "venue_andrey_alt";
+import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
 
 /**
  * Транзитный шлюз для ГОСТЯ. По ссылке /check-in/panel?v=...&t=... принудительно
@@ -22,8 +21,7 @@ const VENUE_ID = "venue_andrey_alt";
 function PanelContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  // Жёсткая привязка гостевого интерфейса к одному заведению
-  const venueId = VENUE_ID;
+  const venueId = getVenueIdFromSearchParams(searchParams);
   const tableId = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
   const orderId = searchParams.get("orderId") ?? "";
   const chatId = searchParams.get("chatId") ?? "";
@@ -103,12 +101,12 @@ function FullServicePanel({
   const [metaLoaded, setMetaLoaded] = useState(false);
   const [tableNotFound, setTableNotFound] = useState(false);
 
-  // Жёсткая загрузка заведения и стола из venues/venue_andrey_alt/tables
+  // Загрузка заведения и стола из venues/{venueId}/tables
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const venueSnap = await getDoc(doc(db, "venues", VENUE_ID));
+        const venueSnap = await getDoc(doc(db, "venues", venueId));
         if (!cancelled) {
           if (venueSnap.exists()) {
             const data = venueSnap.data();
@@ -121,7 +119,7 @@ function FullServicePanel({
           if (!cancelled) setTableNotFound(true);
           return;
         }
-        const tableSnap = await getDoc(doc(db, "venues", VENUE_ID, "tables", tableId));
+        const tableSnap = await getDoc(doc(db, "venues", venueId, "tables", tableId));
         if (!cancelled) {
           if (tableSnap.exists()) {
             const t = tableSnap.data() as Record<string, unknown>;
@@ -137,7 +135,7 @@ function FullServicePanel({
     return () => {
       cancelled = true;
     };
-  }, [tableId]);
+  }, [tableId, venueId]);
   useEffect(() => {
     if (checkInDone.current || !venueId || !tableId) return;
     checkInDone.current = true;

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { toIdentityKey } from "@/lib/auth/unifiedSearch";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
@@ -17,9 +18,7 @@ import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    // Для синхронизации с админкой используем строго один venue.
-    const _requestedVenueId = searchParams.get("venueId")?.trim();
-    const venueId = "venue_andrey_alt";
+    const venueId = resolveVenueId(searchParams.get("venueId"));
     const channelParam = searchParams.get("channel")?.trim() || searchParams.get("platform")?.trim() || "tg";
     const key = toIdentityKey(channelParam);
     if (!key) {

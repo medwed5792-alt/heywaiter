@@ -4,8 +4,7 @@ import { NextResponse } from "next/server";
 import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Staff, GlobalUser } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 /**
  * GET /api/admin/team

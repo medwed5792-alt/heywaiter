@@ -1,7 +1,7 @@
 import { addDoc, collection, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-
-const DEFAULT_VENUE_ID = "venue_andrey_alt";
+import { resolveVenueId } from "@/lib/standards/venue-default";
+import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 
 export type GuestEventType = "call_waiter" | "request_bill" | "sos";
 
@@ -14,18 +14,9 @@ interface GuestEventPayload {
   venueId?: string;
 }
 
-/**
- * Та же схема приоритетов, что и на Дашборде для «карты стола», плюс currentWaiterId из редактора.
- */
+/** Алиас к единой схеме `getWaiterIdFromTablePayload` (см. @/lib/standards/table-waiter). */
 export function getWaiterIdFromTableDoc(data: Record<string, unknown>): string | null {
-  const assignments = data.assignments as { waiter?: unknown } | undefined;
-  const raw =
-    (typeof data.currentWaiterId === "string" ? data.currentWaiterId : null) ??
-    (typeof data.waiterId === "string" ? data.waiterId : null) ??
-    (assignments?.waiter != null ? String(assignments.waiter) : null) ??
-    (typeof data.assignedStaffId === "string" ? data.assignedStaffId : null);
-  const s = raw?.trim();
-  return s || null;
+  return getWaiterIdFromTablePayload(data);
 }
 
 /**
@@ -53,7 +44,7 @@ export async function resolveAssignedStaffForCall(
 
 export async function createGuestEvent(payload: GuestEventPayload): Promise<void> {
   const { type, tableId, tableNumber, visitorId } = payload;
-  const effectiveVenueId = (payload.venueId?.trim() || DEFAULT_VENUE_ID).trim();
+  const effectiveVenueId = resolveVenueId(payload.venueId);
 
   const baseMessage =
     type === "request_bill"

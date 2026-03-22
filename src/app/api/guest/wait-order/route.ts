@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
-const VENUE_ID = "venue_andrey_alt";
+const VENUE_ID = DEFAULT_VENUE_ID;
 
 /**
  * POST /api/guest/wait-order

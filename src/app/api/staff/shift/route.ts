@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import type { DocumentReference, Firestore } from "firebase-admin/firestore";
+import { DEFAULT_VENUE_ID, resolveVenueId } from "@/lib/standards/venue-default";
 
 /** При завершении смены — очистить waiterId у всех столов, где сотрудник был назначен с Дашборда */
 async function clearWaiterFromTables(
@@ -59,9 +60,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const staffIdBody = (body.staffId as string)?.trim();
     const userId = (body.userId as string)?.trim();
-    // Для синхронизации с админкой используем строго один venue.
-    // Игнорируем переданный из клиента currentVenueId/venueId.
-    const venueId = "venue_andrey_alt";
+    const venueId = resolveVenueId(typeof body.venueId === "string" ? body.venueId : undefined);
     const action = (body.action as string)?.trim();
 
     if (action !== "start" && action !== "stop") {
@@ -88,10 +87,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const VENUE_ID = "venue_andrey_alt";
     let snap = await staffRef.get();
     const staffVenueId =
-      (venueId && venueId.trim()) || (snap.exists ? (snap.data()?.venueId as string) : null) || VENUE_ID;
+      (venueId && venueId.trim()) || (snap.exists ? (snap.data()?.venueId as string) : null) || DEFAULT_VENUE_ID;
 
     if (!snap.exists) {
       if (staffIdBody) {

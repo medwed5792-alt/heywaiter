@@ -15,7 +15,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { GuestType } from "@/lib/types";
 
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 const SCALE = 0.75;
 
 function toMillis(v: unknown): number | null {

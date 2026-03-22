@@ -2,10 +2,9 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { notifyOrderReadyEdge } from "@/lib/notify-order-ready-edge";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 export const runtime = "edge";
-
-const VENUE_ID = "venue_andrey_alt";
 
 /**
  * POST /api/admin/delivery/notify

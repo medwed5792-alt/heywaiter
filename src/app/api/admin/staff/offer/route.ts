@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { getBotToken } from "@/lib/webhook/channels";
 import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const TELEGRAM_TIMEOUT_MS = 2000;
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     console.log("SENDING OFFER TO:", body);
     const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "venue_andrey_alt";
+    const venueId = resolveVenueId(typeof body.venueId === "string" ? body.venueId : undefined);
     const tgId = typeof body.tgId === "string" ? body.tgId.trim() : "";
     const firstName = typeof body.firstName === "string" ? body.firstName.trim() : null;
     const lastName = typeof body.lastName === "string" ? body.lastName.trim() : null;

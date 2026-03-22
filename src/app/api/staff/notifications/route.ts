@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 /**
  * GET /api/staff/notifications?staffId=...&venueId=...&limit=30
@@ -23,8 +24,7 @@ export async function GET(request: NextRequest) {
 
     const firestore = getAdminFirestore();
 
-    const FIXED_VENUE_ID = "venue_andrey_alt";
-    const venueIdToUse = venueId || FIXED_VENUE_ID;
+    const venueIdToUse = resolveVenueId(venueId);
     const toMs = (value: any): number | null => {
       try {
         const d = value?.toDate?.();
@@ -56,10 +56,10 @@ export async function GET(request: NextRequest) {
       createdAtMs: number;
     }> = [];
 
-    // 1) Новый источник уведомлений: venues/venue_andrey_alt/staff/[STAFF_ID]/notifications
+    // 1) venues/{venueId}/staff/{staffId}/notifications
     const perStaffSnap = await firestore
       .collection("venues")
-      .doc(FIXED_VENUE_ID)
+      .doc(venueIdToUse)
       .collection("staff")
       .doc(staffId)
       .collection("notifications")

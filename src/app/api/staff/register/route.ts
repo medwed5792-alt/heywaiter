@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { findUserByIdentity, toIdentityKey } from "@/lib/auth/unifiedSearch";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 /**
  * POST /api/staff/register
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
     const platform = typeof body.platform === "string" ? body.platform.trim() : "tg";
     const platformId = typeof body.platformId === "string" ? body.platformId.trim() : "";
-    const venueId = typeof body.venueId === "string" ? body.venueId.trim() : "venue_andrey_alt";
+    const venueId = resolveVenueId(typeof body.venueId === "string" ? body.venueId : undefined);
 
     if (!platformId) {
       return NextResponse.json(

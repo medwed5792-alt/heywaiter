@@ -21,6 +21,7 @@ import {
 import { db } from "@/lib/firebase";
 import type { Booking } from "@/lib/types";
 import type { GuestType } from "@/lib/types";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 type BookingWithMeta = Booking & {
   startAt?: unknown;
@@ -37,7 +38,6 @@ interface TableRow {
   number: number;
 }
 
-const VENUE_ID = "venue_andrey_alt";
 const LATE_NOTIFY_INTERVAL_MS = 15 * 60 * 1000; // 15 мин
 
 function toStartAt(date: string, startTime: string): Date {

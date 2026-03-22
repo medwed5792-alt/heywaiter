@@ -6,8 +6,7 @@ import type { DocumentReference } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { findExistingUserIdByIdentities, findUserIdByIdentityKey } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 /** Синхронизирует назначение столов: в venues/VENUE_ID/tables у каждого выбранного стола — assignments.waiter = staffDocId; у снятых — удаляем waiter. */
 async function syncTableAssignments(

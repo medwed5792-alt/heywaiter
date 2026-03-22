@@ -7,8 +7,7 @@ import { SettingsHallsSection } from "./SettingsHallsSection";
 import { SettingsMenuSection } from "./SettingsMenuSection";
 import { SettingsGeoSection } from "./SettingsGeoSection";
 import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
-
-const venueId = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as venueId } from "@/lib/standards/venue-default";
 
 function SettingsContent() {
   const [venueName, setVenueName] = useState<string>("");

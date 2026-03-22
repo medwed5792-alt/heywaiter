@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
 import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -218,12 +219,10 @@ function StaffOnboardingScreen({
   );
 }
 
-const STAFF_VENUE_ID = "venue_andrey_alt";
-
 function StaffContentInner() {
-  const venueId = STAFF_VENUE_ID;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const venueId = getVenueIdFromSearchParams(searchParams);
   const {
     staffData,
     venuesList,
@@ -442,7 +441,7 @@ function StaffContentInner() {
       setSosTablesLoading(true);
       setSosTablesLoadError(null);
       try {
-        const tablesSnap = await getDocs(collection(db, "venues", STAFF_VENUE_ID, "tables"));
+        const tablesSnap = await getDocs(collection(db, "venues", venueId, "tables"));
         if (cancelled) return;
         const docIds = new Set<string>();
         const numbers = new Set<number>();
@@ -533,7 +532,7 @@ function StaffContentInner() {
       const msg = `🚨 SOS: Стол №${tableId}. Требуется внимание! (Вызвал: ${staffName})`;
       await addDoc(collection(db, "staffNotifications"), {
         type: "sos",
-        venueId: STAFF_VENUE_ID,
+        venueId: venueId,
         tableId,
         read: false,
         message: msg,
@@ -569,7 +568,7 @@ function StaffContentInner() {
           const snap = await getDocs(
             query(
               collection(db, "staff"),
-              where("venueId", "==", STAFF_VENUE_ID),
+              where("venueId", "==", venueId),
               where("tgId", "==", platformIdForDetect),
               limit(1)
             )
@@ -585,7 +584,7 @@ function StaffContentInner() {
             const snap = await getDocs(
               query(
                 collection(db, "staff"),
-                where("venueId", "==", STAFF_VENUE_ID),
+                where("venueId", "==", venueId),
                 where("phone", "==", phoneClean),
                 limit(1)
               )
@@ -734,7 +733,7 @@ function StaffContentInner() {
               setBindPhoneSaving(true);
               try {
                 const res = await fetch(
-                  `/api/staff/me?venueId=${encodeURIComponent(STAFF_VENUE_ID)}&channel=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(platformIdForDetect)}&phone=${encodeURIComponent(
+                  `/api/staff/me?venueId=${encodeURIComponent(venueId)}&channel=${encodeURIComponent(platformKey)}&platformId=${encodeURIComponent(platformIdForDetect)}&phone=${encodeURIComponent(
                     bindPhone.trim()
                   )}`
                 );
@@ -988,8 +987,10 @@ function StaffContentInner() {
 }
 
 function MiniAppStaffContent() {
+  const searchParams = useSearchParams();
+  const initialVenueId = getVenueIdFromSearchParams(searchParams);
   return (
-    <StaffProvider initialVenueFromUrl={STAFF_VENUE_ID}>
+    <StaffProvider initialVenueFromUrl={initialVenueId}>
       <StaffContentInner />
     </StaffProvider>
   );

@@ -6,8 +6,7 @@ import toast from "react-hot-toast";
 import { collection, doc, getDoc, updateDoc, serverTimestamp, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { StaffLiveGeo } from "@/lib/types";
-
-const VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";

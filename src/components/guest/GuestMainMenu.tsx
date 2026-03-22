@@ -6,6 +6,7 @@ import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { AdSpace } from "@/components/ads/AdSpace";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
 declare global {
   interface Window {
@@ -20,7 +21,6 @@ declare global {
 }
 
 const APP_URL = typeof window !== "undefined" ? window.location.origin : "";
-const VENUE_ID = "venue_andrey_alt";
 
 function parseQrPayload(text: string): { tableId: string } | null {
   const trimmed = text?.trim() ?? "";
@@ -56,7 +56,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
   const [hubAdLocation, setHubAdLocation] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    getDoc(doc(db, "venues", VENUE_ID)).then((snap) => {
+    getDoc(doc(db, "venues", DEFAULT_VENUE_ID)).then((snap) => {
       const data = snap.data();
       setHubVenueTitle(resolveVenueDisplayName(snap.exists() ? data?.name : undefined));
       const r = typeof data?.adRegion === "string" ? data.adRegion.trim() : "";
@@ -73,8 +73,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
       window.Telegram.WebApp.showScanQrPopup({ text: "Отсканируйте QR-код стола" }, (text) => {
         const parsed = parseQrPayload(text);
         if (parsed) {
-          // После сканирования QR работаем только с venue_andrey_alt
-          window.location.href = `${APP_URL}/check-in/panel?v=${VENUE_ID}&t=${parsed.tableId}&chatId=${chatId ?? ""}&platform=${platform}`;
+          window.location.href = `${APP_URL}/check-in/panel?v=${DEFAULT_VENUE_ID}&t=${parsed.tableId}&chatId=${chatId ?? ""}&platform=${platform}`;
         }
       });
     } else {
@@ -358,7 +357,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
           >
             {cabinetButtons[0].label}
           </button>
-          <AdSpace placement="guest_hub_between_history_promos" venueId={VENUE_ID} location={hubAdLocation} />
+          <AdSpace placement="guest_hub_between_history_promos" venueId={DEFAULT_VENUE_ID} location={hubAdLocation} />
           <button
             type="button"
             onClick={cabinetButtons[1].onClick}
@@ -366,7 +365,7 @@ export function GuestMainMenu({ chatId, platform = "telegram" }: GuestMainMenuPr
           >
             {cabinetButtons[1].label}
           </button>
-          <AdSpace placement="guest_hub_between_promos_rating" venueId={VENUE_ID} location={hubAdLocation} />
+          <AdSpace placement="guest_hub_between_promos_rating" venueId={DEFAULT_VENUE_ID} location={hubAdLocation} />
           <button
             type="button"
             onClick={cabinetButtons[2].onClick}

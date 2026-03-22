@@ -2,8 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-
-const DEFAULT_VENUE_ID = "venue_andrey_alt";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
 function isPhantomNumber(value: unknown): boolean {
   if (value === undefined || value === null) return true;

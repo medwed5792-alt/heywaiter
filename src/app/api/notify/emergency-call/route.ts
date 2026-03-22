@@ -3,8 +3,9 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
-const VENUE_ID = "venue_andrey_alt";
+const VENUE_ID = DEFAULT_VENUE_ID;
 const EMERGENCY_TEXT =
   "🚨 КРИТИЧЕСКИЙ ВЫЗОВ (SOS)! ТРЕБУЕТСЯ ВМЕШАТЕЛЬСТВО ЛПР!";
 

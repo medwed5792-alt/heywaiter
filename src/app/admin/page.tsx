@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import {
@@ -273,7 +274,7 @@ function GuestArrivedMessage({
 
 function AdminDashboardContent() {
   const searchParams = useSearchParams();
-  const venueId = searchParams.get("v")?.trim() || "venue_andrey_alt";
+  const venueId = getVenueIdFromSearchParams(searchParams);
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [venueName, setVenueName] = useState<string>("");

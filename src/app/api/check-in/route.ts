@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { ActiveSession, MessengerIdentity } from "@/lib/types";
+import { resolveVenueId } from "@/lib/standards/venue-default";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // 30 мин
 
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const VENUE_EVENTS_ID = "venue_andrey_alt";
+    const VENUE_EVENTS_ID = resolveVenueId(venueId);
 
     type FirestoreAdmin = ReturnType<typeof getAdminFirestore>;
     async function addGuestArrivedEvent(

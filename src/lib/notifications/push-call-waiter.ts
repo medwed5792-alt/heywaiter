@@ -6,6 +6,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { ServiceRole } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
+import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
@@ -57,7 +58,7 @@ async function sendTelegramMessage(
   }
 }
 
-/** ID официанта со стола (как на дашборде) + currentWaiterId. */
+/** ID официанта со стола — та же логика, что getWaiterIdFromTablePayload. */
 export async function getOperationalWaiterForTable(
   firestore: Firestore,
   venueId: string,
@@ -66,15 +67,7 @@ export async function getOperationalWaiterForTable(
   const tableRef = firestore.collection("venues").doc(venueId).collection("tables").doc(tableId);
   const tableSnap = await tableRef.get();
   if (!tableSnap.exists) return null;
-  const data = tableSnap.data() ?? {};
-  const assignments = data.assignments as Record<string, string> | undefined;
-  const raw =
-    (typeof data.currentWaiterId === "string" ? data.currentWaiterId : null) ??
-    (typeof data.waiterId === "string" ? data.waiterId : null) ??
-    assignments?.waiter ??
-    (typeof data.assignedStaffId === "string" ? data.assignedStaffId : null);
-  const s = typeof raw === "string" ? raw.trim() : "";
-  return s || null;
+  return getWaiterIdFromTablePayload(tableSnap.data() as Record<string, unknown>);
 }
 
 async function getLprStaffIds(firestore: Firestore, venueId: string): Promise<string[]> {
