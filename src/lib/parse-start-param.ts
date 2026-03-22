@@ -1,7 +1,7 @@
 /**
- * Парсинг контракта v_<venueId>_t_<tableId>[_vid_<visitorId>] (legacy).
- * venueId может содержать подчёркивания — граница venue|table: последний литерал "_t_" в строке
- * после префикса "v_".
+ * Парсинг start_param / QR: единственный разделитель смысла — литерал "_t_".
+ * Слева — venueId целиком (после опционального префикса "v_"), справа — tableId и опционально legacy "_vid_".
+ * Без "_t_" возвращаем null — без угадываний и подстановок (режим «Личный кабинет» в Mini App).
  */
 export function parseStartParamPayload(
   payload: string
@@ -9,37 +9,30 @@ export function parseStartParamPayload(
   const s = payload?.trim();
   if (!s) return null;
 
-  if (!s.startsWith("v_")) {
-    const parts = s.split("_");
-    if (parts.length >= 2) {
-      return { venueId: parts[0], tableId: parts.slice(1).join("_") };
-    }
-    return null;
+  const marker = "_t_";
+  const idx = s.indexOf(marker);
+  if (idx === -1) return null;
+
+  let left = s.slice(0, idx);
+  const rightRaw = s.slice(idx + marker.length);
+  if (!rightRaw.trim()) return null;
+
+  if (left.startsWith("v_")) {
+    left = left.slice(2);
   }
 
-  const rest = s.slice(2);
-  const tMarker = "_t_";
-  const lastT = rest.lastIndexOf(tMarker);
-  if (lastT === -1) {
-    const parts = s.split("_");
-    if (parts.length >= 2) {
-      return { venueId: parts[0], tableId: parts.slice(1).join("_") };
-    }
-    return null;
-  }
-
-  const venueId = rest.slice(0, lastT);
-  const afterT = rest.slice(lastT + tMarker.length);
+  const venueId = left.trim();
+  let tablePart = rightRaw.trim();
+  if (!venueId || !tablePart) return null;
 
   const vidMarker = "_vid_";
-  const vidIdx = afterT.indexOf(vidMarker);
+  const vidIdx = tablePart.indexOf(vidMarker);
   if (vidIdx !== -1) {
-    const tableId = afterT.slice(0, vidIdx);
-    const visitorId = afterT.slice(vidIdx + vidMarker.length);
-    if (!venueId || !tableId || !visitorId) return null;
+    const tableId = tablePart.slice(0, vidIdx).trim();
+    const visitorId = tablePart.slice(vidIdx + vidMarker.length).trim();
+    if (!tableId || !visitorId) return null;
     return { venueId, tableId, visitorId };
   }
 
-  if (!venueId || !afterT) return null;
-  return { venueId, tableId: afterT };
+  return { venueId, tableId: tablePart };
 }

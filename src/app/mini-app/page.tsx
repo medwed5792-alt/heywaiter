@@ -13,6 +13,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { AdSpace } from "@/components/ads/AdSpace";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
@@ -162,7 +163,7 @@ function MiniAppContent() {
       const fromQueryT = (searchParams.get("t") ?? "").trim();
 
       if (sp) {
-        const p = parseMiniAppStartParam(sp);
+        const p = parseStartParamPayload(sp);
         if (p) {
           setVenueId(p.venueId);
           setTableId(p.tableId);
@@ -174,7 +175,6 @@ function MiniAppContent() {
         }
       }
       if (fromQueryV && fromQueryT) {
-        lastAppliedStartParam.current = "";
         setVenueId(fromQueryV);
         setTableId(fromQueryT);
         setVenueSettings(null);
