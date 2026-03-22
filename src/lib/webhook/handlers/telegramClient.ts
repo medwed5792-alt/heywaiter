@@ -7,7 +7,7 @@
  * setChatMenuButton задаёт постоянную кнопку «Пульт»/«Меню» слева от поля ввода.
  *
  * Авто-открытие: если в BotFather создано расширение "Mini App", можно использовать
- * ссылку вида t.me/BotUsername/app_name?startapp=v_venueId_t_tableId для быстрого запуска.
+ * ссылку вида t.me/BotUsername/app_name?startapp=v:venueId:t:tableId для быстрого запуска.
  */
 import { NextRequest } from "next/server";
 import { collection, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
@@ -49,7 +49,7 @@ function getWebAppBaseUrl(): string {
 /**
  * Парсинг Deep Link из /start.
  * Поддерживаемые форматы:
- * - /start v_venueId_t_tableId (контракт с QR, например v_current_t_5)
+ * - /start v:venueId:t:tableId (контракт с QR; легаси: v_venueId_t_tableId)
  * - /start venueId_tableId (короткий формат, например test_1 → venueId: test, tableId: 1)
  */
 function parseStartPayload(text: string): { venueId: string; tableId: string } | null {
@@ -263,7 +263,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     reply_markup: {
       inline_keyboard: [
         [{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }],
-        [{ text: "🔔 ВЫЗВАТЬ ОФИЦИАНТА", callback_data: `v_${venueId}_t_${tableId}` }],
+        [{ text: "🔔 ВЫЗВАТЬ ОФИЦИАНТА", callback_data: `v:${venueId}:t:${tableId}` }],
       ],
     },
   });

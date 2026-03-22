@@ -63,6 +63,7 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
       try {
         await createGuestEvent({
           type,
+          venueId,
           tableId,
           tableNumber,
           visitorId: visitorId ?? undefined,

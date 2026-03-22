@@ -68,6 +68,7 @@ export function GuestCallPanel({
         if (role === "waiter") {
           await createGuestEvent({
             type: "call_waiter",
+            venueId,
             tableId,
             visitorId: visitorId ?? undefined,
           });
@@ -108,6 +109,7 @@ export function GuestCallPanel({
     try {
       await createGuestEvent({
         type: "request_bill",
+        venueId,
         tableId,
         visitorId: visitorId ?? undefined,
       });

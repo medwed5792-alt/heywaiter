@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import toast from "react-hot-toast";
 import {
@@ -270,9 +271,9 @@ function GuestArrivedMessage({
   return <span>{ev.message}</span>;
 }
 
-const venueId = "venue_andrey_alt";
-
 function AdminDashboardContent() {
+  const searchParams = useSearchParams();
+  const venueId = searchParams.get("v")?.trim() || "venue_andrey_alt";
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [venueName, setVenueName] = useState<string>("");
@@ -1043,7 +1044,7 @@ function AdminDashboardContent() {
     } finally {
       setCloseTableLoading(false);
     }
-  }, [closeTableModal]);
+  }, [closeTableModal, venueId]);
 
   const closeAllTablesAndVenue = useCallback(async () => {
     const sessions = Object.values(sessionsByTable ?? {});

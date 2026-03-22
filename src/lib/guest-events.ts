@@ -29,8 +29,7 @@ export function getWaiterIdFromTableDoc(data: Record<string, unknown>): string |
 }
 
 /**
- * Читает карточку стола и staff: при закреплённом на смене официанте возвращает его id,
- * иначе — сигнал для ленты «общий» вызов (ЛПР).
+ * Читает карточку стола и staff: при закреплённом официанте (в т.ч. вручную) возвращает его id.
  */
 export async function resolveAssignedStaffForCall(
   venueId: string,
@@ -49,13 +48,7 @@ export async function resolveAssignedStaffForCall(
   if (!staffSnap.exists()) {
     return { status: "unassigned" };
   }
-  const sd = staffSnap.data() ?? {};
-  const onVenue = sd.venueId === venueId;
-  const onShift = sd.onShift === true;
-  if (onVenue && onShift) {
-    return { assignedStaffId: staffId };
-  }
-  return { status: "unassigned" };
+  return { assignedStaffId: staffId };
 }
 
 export async function createGuestEvent(payload: GuestEventPayload): Promise<void> {
@@ -91,4 +84,24 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
   }
 
   await addDoc(collection(db, "venues", effectiveVenueId, "events"), eventBody);
+
+  const pushPayload = {
+    venueId: effectiveVenueId,
+    tableId,
+    visitorId,
+    type: type as "call_waiter" | "request_bill" | "sos",
+  };
+  if (typeof window === "undefined") {
+    const { pushCallWaiterNotification } = await import("@/lib/notifications/push-call-waiter");
+    await pushCallWaiterNotification(pushPayload).catch((e) =>
+      console.warn("[createGuestEvent] pushCallWaiterNotification:", e)
+    );
+  } else {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    await fetch(`${origin}/api/notifications/call-waiter`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pushPayload),
+    }).catch((e) => console.warn("[createGuestEvent] call-waiter fetch:", e));
+  }
 }

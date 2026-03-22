@@ -1,9 +1,35 @@
 /**
- * Парсинг start_param / QR: единственный разделитель смысла — литерал "_t_".
- * Слева — venueId целиком (после опционального префикса "v_"), справа — tableId и опционально legacy "_vid_".
- * Без "_t_" возвращаем null — без угадываний и подстановок (режим «Личный кабинет» в Mini App).
+ * Парсинг start_param / QR для Mini App и ботов.
+ *
+ * Основной формат (короткий): `v:venueId:t:tableId` и опционально `:vid:visitorId`
+ * Легаси: `v_venueId_t_tableId` и `..._vid_...`
  */
-export function parseStartParamPayload(
+
+function parseColonPayload(
+  payload: string
+): { venueId: string; tableId: string; visitorId?: string } | null {
+  const raw = payload?.trim() ?? "";
+  const marker = ":t:";
+  const i = raw.indexOf(marker);
+  if (i === -1 || !raw.startsWith("v:")) return null;
+  const venueId = raw.slice(2, i).trim();
+  const afterT = raw.slice(i + marker.length);
+  const vidSep = ":vid:";
+  const vi = afterT.indexOf(vidSep);
+  let tableId: string;
+  let visitorId: string | undefined;
+  if (vi === -1) {
+    tableId = afterT.trim();
+  } else {
+    tableId = afterT.slice(0, vi).trim();
+    visitorId = afterT.slice(vi + vidSep.length).trim();
+  }
+  if (!venueId || !tableId) return null;
+  if (visitorId !== undefined && !visitorId) return null;
+  return visitorId ? { venueId, tableId, visitorId } : { venueId, tableId };
+}
+
+function parseLegacyUnderscorePayload(
   payload: string
 ): { venueId: string; tableId: string; visitorId?: string } | null {
   const s = payload?.trim();
@@ -35,4 +61,14 @@ export function parseStartParamPayload(
   }
 
   return { venueId, tableId: tablePart };
+}
+
+export function parseStartParamPayload(
+  payload: string
+): { venueId: string; tableId: string; visitorId?: string } | null {
+  const s = payload?.trim();
+  if (!s) return null;
+  const colon = parseColonPayload(s);
+  if (colon) return colon;
+  return parseLegacyUnderscorePayload(s);
 }

@@ -1,6 +1,6 @@
 /**
  * Deep Links для мессенджеров (QR & Social Bridge).
- * Формат: v_{venueId}_t_{tableId} — контракт с ботами.
+ * Основной формат: `v:venueId:t:tableId` (короче, чем v_…_t_…).
  */
 
 import type { MessengerChannel } from "./types";
@@ -20,17 +20,21 @@ function telegramBotUsername(override?: string | null): string {
   return BOT_TELEGRAM.replace(/^@/, "");
 }
 
+function buildStartPayload(venueId: string, tableId: string, visitorId?: string | null): string {
+  const base = `v:${venueId}:t:${tableId}`;
+  return visitorId?.trim() ? `${base}:vid:${visitorId.trim()}` : base;
+}
+
 /**
  * Ссылка для открытия Telegram Mini App (короткое имя "waiter").
- * startapp без visitorId — лимит Telegram ~64 символа; гость идентифицируется локально (VisitorProvider).
- * Формат: https://t.me/BotUsername/waiter?startapp=v_venueId_t_tableId
+ * startapp — лимит Telegram ~64 символа; гость идентифицируется локально (VisitorProvider).
  */
 export function buildTelegramStartAppLink(
   venueId: string,
   tableId: string,
   telegramUsername?: string | null
 ): string {
-  const payload = `v_${venueId}_t_${tableId}`;
+  const payload = buildStartPayload(venueId, tableId);
   const bot = telegramBotUsername(telegramUsername);
   return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
 }
@@ -47,15 +51,12 @@ export function buildDeepLink(
   visitorId?: string | null,
   options?: BuildDeepLinkOptions
 ): string {
-  /** Длинные ссылки с visitor допустимы вне Telegram; Mini App start_param — только v_/t_. */
-  const payloadWithOptionalVisitor = visitorId
-    ? `v_${venueId}_t_${tableId}_vid_${visitorId}`
-    : `v_${venueId}_t_${tableId}`;
+  const payloadWithOptionalVisitor = buildStartPayload(venueId, tableId, visitorId);
 
   switch (channel) {
     case "telegram": {
       const bot = telegramBotUsername(options?.telegramUsername);
-      const startPayload = `v_${venueId}_t_${tableId}`;
+      const startPayload = buildStartPayload(venueId, tableId);
       return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(startPayload)}`;
     }
     case "whatsapp":
