@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import toast from "react-hot-toast";
+import { useState, useCallback, useEffect } from "react";
 import { Bell, Receipt } from "lucide-react";
 import { createTargetedNotification } from "@/lib/stealth-notifications";
 import { useRolesOnShift } from "@/hooks/useRolesOnShift";
-import { useGeoFencing } from "@/hooks/useGeoFencing";
 import { getRoleLabel } from "@/lib/shift-aware-roles";
 import { VoiceTranslatorPro } from "./VoiceTranslatorPro";
 import type { ServiceRole } from "@/lib/types";
@@ -16,11 +14,8 @@ interface GuestCallPanelProps {
   venueId: string;
   tableId: string;
   sessionId?: string;
-  /** visitorId из Mini App (start_param) для POST /api/notifications/call-waiter */
   visitorId?: string | null;
-  /** Сессия открыта (для Escape Alert: гость покинул зону) */
   sessionOpen?: boolean;
-  /** PRO: показывать кнопку «Переводчик» */
   isPro?: boolean;
 }
 
@@ -29,40 +24,15 @@ export function GuestCallPanel({
   tableId,
   sessionId,
   visitorId,
-  sessionOpen = true,
+  sessionOpen: _sessionOpen = true,
   isPro = false,
 }: GuestCallPanelProps) {
   const { roles, loading } = useRolesOnShift(venueId);
-  const { startGeoFencing, geoPromptMessage, ensureInsideVenue } = useGeoFencing({
-    mode: "guest",
-    venueId,
-    tableId,
-    sessionId,
-    sessionOpen,
-    startAfterUserAction: true,
-  });
-  const geoStartedRef = useRef(false);
-  const [geoPrompt, setGeoPrompt] = useState(false);
   const [callingRole, setCallingRole] = useState<ServiceRole | null>(null);
   const [cooldownLeft, setCooldownLeft] = useState(0);
-  const [geoBlocked, setGeoBlocked] = useState(false);
-  const [geoError, setGeoError] = useState<string | null>(null);
 
   const handleCallRole = useCallback(
     async (role: ServiceRole) => {
-      const check = await ensureInsideVenue();
-      if (!check.allowed) {
-        setGeoBlocked(true);
-        setGeoError("Функции доступны только в ресторане");
-        toast.error("Функции доступны только в ресторане");
-        return;
-      }
-      if (!geoStartedRef.current) {
-        geoStartedRef.current = true;
-        startGeoFencing();
-        setGeoPrompt(true);
-        setTimeout(() => setGeoPrompt(false), 4000);
-      }
       setCallingRole(role);
       try {
         if (role === "waiter") {
@@ -88,23 +58,10 @@ export function GuestCallPanel({
         setCallingRole(null);
       }
     },
-    [venueId, tableId, sessionId, visitorId, startGeoFencing, ensureInsideVenue]
+    [venueId, tableId, sessionId, visitorId]
   );
 
   const handleRequestBill = useCallback(async () => {
-    const check = await ensureInsideVenue();
-    if (!check.allowed) {
-      setGeoBlocked(true);
-      setGeoError("Функции доступны только в ресторане");
-      toast.error("Функции доступны только в ресторане");
-      return;
-    }
-    if (!geoStartedRef.current) {
-      geoStartedRef.current = true;
-      startGeoFencing();
-      setGeoPrompt(true);
-      setTimeout(() => setGeoPrompt(false), 4000);
-    }
     setCallingRole("waiter");
     try {
       await createGuestEvent({
@@ -119,9 +76,8 @@ export function GuestCallPanel({
     } finally {
       setCallingRole(null);
     }
-  }, [venueId, tableId, sessionId, startGeoFencing, ensureInsideVenue]);
+  }, [venueId, tableId, visitorId]);
 
-  // Таймер 120 с
   useEffect(() => {
     if (cooldownLeft <= 0) return;
     const t = setInterval(() => {
@@ -171,19 +127,9 @@ export function GuestCallPanel({
           Попросить счёт
         </button>
       </div>
-      {geoPrompt && (
-        <p className="mt-2 text-xs text-blue-600">
-          {geoPromptMessage}
-        </p>
-      )}
       {cooldownLeft > 0 && (
         <p className="mt-2 text-xs text-gray-500">
           Следующий вызов через {cooldownLeft} сек
-        </p>
-      )}
-      {geoBlocked && geoError && (
-        <p className="mt-2 text-xs text-red-600">
-          {geoError}
         </p>
       )}
       {isPro && (

@@ -20,7 +20,7 @@ export function getWaiterIdFromTableDoc(data: Record<string, unknown>): string |
 }
 
 /**
- * Читает карточку стола и staff: при закреплённом официанте (в т.ч. вручную) возвращает его id.
+ * Только документ venues/{venueId}/tables/{tableId}; официант — поле currentWaiterId (как в Дашборде).
  */
 export async function resolveAssignedStaffForCall(
   venueId: string,
@@ -33,10 +33,6 @@ export async function resolveAssignedStaffForCall(
   const data = (tableSnap.data() ?? {}) as Record<string, unknown>;
   const staffId = getWaiterIdFromTableDoc(data);
   if (!staffId) {
-    return { status: "unassigned" };
-  }
-  const staffSnap = await getDoc(doc(db, "staff", staffId));
-  if (!staffSnap.exists()) {
     return { status: "unassigned" };
   }
   return { assignedStaffId: staffId };

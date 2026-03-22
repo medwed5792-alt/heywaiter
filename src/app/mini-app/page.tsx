@@ -2,14 +2,7 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback, Suspense } from "react";
-import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  where,
-  getDocs,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -147,7 +140,10 @@ function MiniAppContent() {
   }, [isSdkReady, searchParams, forceStaffByBot]);
 
   useEffect(() => {
-    if (!venueId && !tableId) {
+    if (!venueId || !tableId) {
+      setVenueSettings(null);
+      setTableSettings(null);
+      setStaffName(null);
       setFirestoreDone(true);
       return;
     }
@@ -157,69 +153,30 @@ function MiniAppContent() {
     let cancelled = false;
     (async () => {
       try {
-        let resolvedVenueId = venueId;
-        if (venueId) {
-          const venueSnap = await getDoc(doc(db, "venues", venueId));
-          if (cancelled) return;
-          if (venueSnap.exists()) {
-            setVenueSettings(venueSnap.data() as Record<string, unknown>);
-          }
+        const venueSnap = await getDoc(doc(db, "venues", venueId));
+        if (cancelled) return;
+        if (venueSnap.exists()) {
+          setVenueSettings(venueSnap.data() as Record<string, unknown>);
         }
-        if (tableId) {
-          let tableData: Record<string, unknown> | null = null;
-          if (resolvedVenueId) {
-            const nested = await getDoc(doc(db, "venues", resolvedVenueId, "tables", tableId));
-            if (cancelled) return;
-            if (nested.exists()) {
-              tableData = nested.data() as Record<string, unknown>;
-            }
-          }
-          const byDocId = await getDoc(doc(db, "tables", tableId));
-          if (cancelled) return;
-          if (!tableData && byDocId.exists()) {
-            tableData = byDocId.data() as Record<string, unknown>;
-            const docVenueId = tableData?.venueId as string | undefined;
-            if (docVenueId && !resolvedVenueId) {
-              resolvedVenueId = docVenueId;
-              setVenueId(docVenueId);
-              const venueSnap = await getDoc(doc(db, "venues", docVenueId));
-              if (!cancelled && venueSnap.exists()) {
-                setVenueSettings(venueSnap.data() as Record<string, unknown>);
-              }
-              const nestedAfter = await getDoc(doc(db, "venues", docVenueId, "tables", tableId));
-              if (!cancelled && nestedAfter.exists()) {
-                tableData = nestedAfter.data() as Record<string, unknown>;
-              }
-            }
-          }
-          if (!tableData && resolvedVenueId) {
-            const tablesSnap = await getDocs(
-              query(
-                collection(db, "tables"),
-                where("venueId", "==", resolvedVenueId),
-                where("tableId", "==", tableId)
-              )
-            );
-            if (cancelled) return;
-            const first = tablesSnap.docs[0];
-            if (first?.exists()) {
-              tableData = first.data() as Record<string, unknown>;
-            }
-          }
-          if (tableData) {
-            setTableSettings(tableData);
-            const wid = getWaiterIdFromTableDoc(tableData);
-            if (wid) {
-              const staffSnap = await getDoc(doc(db, "staff", wid));
-              if (!cancelled && staffSnap.exists()) {
-                const sd = staffSnap.data() ?? {};
-                const n =
-                  (typeof sd.displayName === "string" && sd.displayName.trim()) ||
-                  (typeof sd.name === "string" && sd.name.trim()) ||
-                  null;
-                setStaffName(n);
-              }
-            }
+        const nested = await getDoc(doc(db, "venues", venueId, "tables", tableId));
+        if (cancelled) return;
+        if (!nested.exists()) {
+          setTableSettings(null);
+          setStaffName(null);
+          return;
+        }
+        const tableData = nested.data() as Record<string, unknown>;
+        setTableSettings(tableData);
+        const wid = getWaiterIdFromTableDoc(tableData);
+        if (wid) {
+          const staffSnap = await getDoc(doc(db, "staff", wid));
+          if (!cancelled && staffSnap.exists()) {
+            const sd = staffSnap.data() ?? {};
+            const n =
+              (typeof sd.displayName === "string" && sd.displayName.trim()) ||
+              (typeof sd.name === "string" && sd.name.trim()) ||
+              null;
+            setStaffName(n);
           }
         }
       } catch (e) {

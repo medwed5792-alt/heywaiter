@@ -2,8 +2,6 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Bell, Receipt } from "lucide-react";
-import { IS_GEO_DEBUG } from "@/lib/geo";
-import { useGeoFencing } from "@/hooks/useGeoFencing";
 import { createGuestEvent } from "@/lib/guest-events";
 
 const COOLDOWN_SEC = 30;
@@ -17,41 +15,12 @@ interface GuestModePanelProps {
 
 /**
  * Гостевой режим: «Вызвать официанта» и «Запросить счёт».
- * Гео не блокирует кнопки: статус определяется в фоне, перед отправкой — повторная проверка (кроме debug).
  */
 export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: GuestModePanelProps) {
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [lastAction, setLastAction] = useState<"call_waiter" | "request_bill" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [geoHint, setGeoHint] = useState<string | null>(null);
-
-  const { ensureInsideVenue } = useGeoFencing({
-    mode: "guest",
-    venueId,
-    tableId,
-    sessionOpen: true,
-    startAfterUserAction: true,
-  });
-
-  useEffect(() => {
-    if (IS_GEO_DEBUG) {
-      setGeoHint(null);
-      return;
-    }
-    let cancelled = false;
-    ensureInsideVenue().then((check) => {
-      if (cancelled) return;
-      if (!check.allowed) {
-        setGeoHint("Вы вне зоны заведения — вызов может быть отклонён системой");
-      } else {
-        setGeoHint(null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [ensureInsideVenue]);
 
   const disabled = cooldownLeft > 0 || loading;
 
@@ -102,11 +71,6 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
             <span className="text-sm text-slate-500">Отправка…</span>
           )}
         </button>
-        {geoHint && !error && (
-          <p className="text-center text-xs text-amber-700">
-            {geoHint}
-          </p>
-        )}
       </div>
 
       <button
@@ -142,9 +106,6 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
           <p className="text-sm text-slate-500">
             Стол №{tableNumber}
           </p>
-        )}
-        {IS_GEO_DEBUG && (
-          <p className="mt-2 text-xs text-slate-400">🛠 Debug: GPS-проверка отключена</p>
         )}
       </div>
     </div>

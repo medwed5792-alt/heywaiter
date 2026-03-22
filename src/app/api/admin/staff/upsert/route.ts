@@ -7,6 +7,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { findExistingUserIdByIdentities, findUserIdByIdentityKey } from "@/lib/auth-utils";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
+import { sanitizeAssignedTableIdsForVenue } from "@/lib/standards/assigned-tables";
 
 /** Синхронизирует назначение столов: в venues/VENUE_ID/tables у каждого выбранного стола — assignments.waiter = staffDocId; у снятых — удаляем waiter. */
 async function syncTableAssignments(
@@ -81,7 +82,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const staffId = body.staffId as string | undefined;
 
-    const assignedTableIds = Array.isArray(body.assignedTableIds) ? body.assignedTableIds : [];
     const identity = body.identity ?? {
       channel: "telegram",
       externalId: body.tgId ?? "",
@@ -93,6 +93,10 @@ export async function POST(request: NextRequest) {
     const medicalCardNormalized = normalizeMedicalCard(body.medicalCard);
 
     const firestore = getAdminFirestore();
+
+    const tablesSnap = await firestore.collection("venues").doc(VENUE_ID).collection("tables").get();
+    const allowedTableDocIds = new Set(tablesSnap.docs.map((d) => d.id));
+    const assignedTableIds = sanitizeAssignedTableIdsForVenue(body.assignedTableIds, allowedTableDocIds);
 
     if (staffId) {
       const staffRef = firestore.collection("staff").doc(staffId);

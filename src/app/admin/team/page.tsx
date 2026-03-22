@@ -1307,9 +1307,11 @@ function StaffFormModal({
       (prev ?? [])
         .map(String)
         .map((id) => {
-          if (tableIdSet.has(id)) return id;
-          const n = digits(id);
-          if (!n || !allowedNumbers.has(n)) return null;
+          const s = id.trim();
+          if (!s || s === "0") return null;
+          if (tableIdSet.has(s)) return s;
+          const n = digits(s);
+          if (!n || n === "0" || !allowedNumbers.has(n)) return null;
           return tableIdByNumber.get(n) ?? null;
         })
         .filter((x): x is string => typeof x === "string")
@@ -1354,9 +1356,11 @@ function StaffFormModal({
     const cleanedAssignedTableIds = (assignedTableIds ?? [])
       .map(String)
       .map((id) => {
-        if (tableIdSet.has(id)) return id;
-        const n = digits(id);
-        if (!n || !allowedNumbers.has(n)) return null;
+        const s = id.trim();
+        if (!s || s === "0") return null;
+        if (tableIdSet.has(s)) return s;
+        const n = digits(s);
+        if (!n || n === "0" || !allowedNumbers.has(n)) return null;
         return tableIdByNumber.get(n) ?? null;
       })
       .filter((x): x is string => typeof x === "string");
