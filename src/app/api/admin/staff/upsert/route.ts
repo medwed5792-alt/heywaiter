@@ -168,7 +168,7 @@ export async function POST(request: NextRequest) {
           status: (affiliations[idx] as Affiliation)?.status ?? "active",
           position: body.position ?? (affiliations[idx] as Affiliation)?.position,
           onShift: body.onShift ?? (affiliations[idx] as Affiliation)?.onShift ?? false,
-          assignedTableIds: assignedTableIds.length ? assignedTableIds : (affiliations[idx] as Affiliation)?.assignedTableIds,
+          assignedTableIds,
         };
         if (idx >= 0) affiliations[idx] = affPayload;
         else affiliations.push(affPayload);
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
             status: "active",
             position: body.position ?? null,
             onShift: body.onShift ?? false,
-            assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+            assignedTableIds,
           } as Affiliation],
         });
       }
@@ -246,7 +246,7 @@ export async function POST(request: NextRequest) {
       status: "active",
       position: body.position ?? undefined,
       onShift: false,
-      assignedTableIds: assignedTableIds.length ? assignedTableIds : undefined,
+      assignedTableIds,
     };
 
     let userId: string;

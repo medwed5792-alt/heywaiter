@@ -61,7 +61,7 @@ export async function GET() {
           position: aff?.position ?? data.position,
           group: data.group ?? undefined,
           call_category: data.call_category ?? undefined,
-          assignedTableIds: aff?.assignedTableIds ?? data.assignedTableIds ?? [],
+          assignedTableIds: data.assignedTableIds ?? [],
           globalScore: global.globalScore ?? data.globalScore,
           guestRating: global.guestRating ?? data.guestRating,
           venueRating: global.venueRating ?? data.venueRating,

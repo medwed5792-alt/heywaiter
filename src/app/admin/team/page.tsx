@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, serverTimestamp, updateDoc, where, writeBatch } from "firebase/firestore";
@@ -10,6 +10,7 @@ import type { Staff, StaffGroup, CallCategory, UnifiedIdentities, GlobalUser, Me
 import type { ServiceRole } from "@/lib/types";
 import { SERVICE_ROLE_GROUP, STAFF_GROUP_CALL_CATEGORY } from "@/lib/types";
 import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
+import { filterAssignedTableIdsToVenueDocIds } from "@/lib/standards/assigned-tables";
 
 const venueId = DEFAULT_VENUE_ID;
 const VENUE_ID = venueId;
@@ -313,11 +314,15 @@ export default function TeamPage() {
           getDocs(query(collection(db, "tables"), where("venueId", "==", VENUE_ID))),
         ]);
         setHalls(hallsSnap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) ?? "" })));
-        const fromSub = tablesFromSub.docs.map((d) => {
-          const data = d.data();
-          return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined };
-        });
-        const fromRoot = tablesFromRoot.docs.map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }));
+        const fromSub = tablesFromSub.docs
+          .map((d) => {
+            const data = d.data();
+            return { id: d.id, number: (data.number as number) ?? 0, hallId: data.hallId as string | undefined };
+          })
+          .filter((t) => t.number != null && t.number !== 0);
+        const fromRoot = tablesFromRoot.docs
+          .map((d) => ({ id: d.id, number: (d.data().number as number) ?? 0, hallId: undefined as string | undefined }))
+          .filter((t) => t.number != null && t.number !== 0);
         setTables(fromSub.length ? fromSub : fromRoot);
       } catch (_e) {
         // halls/tables optional
@@ -365,7 +370,7 @@ export default function TeamPage() {
               position: aff?.position ?? data.position,
               group: data.group ?? undefined,
               call_category: data.call_category ?? undefined,
-              assignedTableIds: aff?.assignedTableIds ?? data.assignedTableIds ?? [],
+              assignedTableIds: data.assignedTableIds ?? [],
               globalScore: global.globalScore ?? data.globalScore,
               guestRating: global.guestRating ?? data.guestRating,
               venueRating: global.venueRating ?? data.venueRating,
@@ -648,8 +653,7 @@ export default function TeamPage() {
 
       // oldDocId -> keepDocId
       const duplicatesMap = new Map<string, string>();
-      // keepDocId -> merged defaultTables/assignedTableIds
-      const mergedDefaultsByKeep = new Map<string, Set<string>>();
+      // keepDocId -> merged assignedTableIds
       const mergedAssignedByKeep = new Map<string, Set<string>>();
 
       let duplicatesFound = 0;
@@ -665,14 +669,10 @@ export default function TeamPage() {
         const keepId = keep.docId;
 
         // init sets
-        if (!mergedDefaultsByKeep.has(keepId)) mergedDefaultsByKeep.set(keepId, new Set());
         if (!mergedAssignedByKeep.has(keepId)) mergedAssignedByKeep.set(keepId, new Set());
 
         for (const item of arr) {
           if (item.docId !== keepId) duplicatesMap.set(item.docId, keepId);
-
-          const dt = Array.isArray(item.data?.defaultTables) ? item.data.defaultTables : [];
-          dt.forEach((x: unknown) => mergedDefaultsByKeep.get(keepId)?.add(String(x)));
 
           const at = Array.isArray(item.data?.assignedTableIds) ? item.data.assignedTableIds : [];
           at.forEach((x: unknown) => mergedAssignedByKeep.get(keepId)?.add(String(x)));
@@ -728,12 +728,10 @@ export default function TeamPage() {
       }
       await commitBatch();
 
-      // 2) Обновление keep-docs (слияние defaultTables/assignedTableIds)
-      for (const [keepId, setDt] of mergedDefaultsByKeep.entries()) {
-        const setAt = mergedAssignedByKeep.get(keepId) ?? new Set<string>();
+      // 2) Обновление keep-docs (слияние assignedTableIds)
+      for (const [keepId, mergedAt] of mergedAssignedByKeep.entries()) {
         await updateDoc(doc(db, "venues", venueId, "staff", keepId), {
-          defaultTables: Array.from(setDt),
-          assignedTableIds: Array.from(setAt),
+          assignedTableIds: Array.from(mergedAt),
           updatedAt: serverTimestamp(),
         });
       }
@@ -1167,6 +1165,7 @@ export default function TeamPage() {
 
       {editingStaff && (
         <StaffFormModal
+          key={editingStaff.id}
           staff={editingStaff}
           tables={tables}
           halls={halls}
@@ -1268,9 +1267,14 @@ function StaffFormModal({
   onClose: () => void;
   onSaved: (data: Partial<Staff> & { id?: string }) => void;
 }) {
-  const tablesByHall: HallWithTables[] = (() => {
-    const withHall = tables.filter((t) => t.hallId);
-    const withoutHall = tables.filter((t) => !t.hallId);
+  /** Только реальные столы из справочника (без «нулевых» артефактов). */
+  const displayTables = useMemo(
+    () => tables.filter((t) => t.number != null && t.number !== 0),
+    [tables]
+  );
+  const tablesByHall: HallWithTables[] = useMemo(() => {
+    const withHall = displayTables.filter((t) => t.hallId);
+    const withoutHall = displayTables.filter((t) => !t.hallId);
     const result: HallWithTables[] = [];
     for (const hall of halls) {
       const list = withHall.filter((t) => t.hallId === hall.id);
@@ -1278,7 +1282,7 @@ function StaffFormModal({
     }
     if (withoutHall.length) result.push({ hallId: "", hallName: "Без зала", tables: withoutHall });
     return result;
-  })();
+  }, [displayTables, halls]);
   const [firstName, setFirstName] = useState(staff.firstName ?? "");
   const [lastName, setLastName] = useState(staff.lastName ?? "");
   const [gender, setGender] = useState(staff.gender ?? "");
@@ -1293,30 +1297,21 @@ function StaffFormModal({
     return tg ? [{ type: "tg", value: String(tg).trim() }] : [];
   });
   const [position, setPosition] = useState(staff.position ?? "");
-  const [assignedTableIds, setAssignedTableIds] = useState<string[]>(staff.assignedTableIds ?? []);
-  // Cleanup «Столы по умолчанию» от фантомов:
-  // - если в assignedTableIds лежат doc-id — оставляем только существующие в текущей коллекции `tables`
-  // - если лежат номера столов (или строки с номерами) — матчим по `tables[].number` и оставляем только существующие
+  const allowedDocIds = useMemo(() => new Set(displayTables.map((t) => t.id)), [displayTables]);
+  const [assignedTableIds, setAssignedTableIds] = useState<string[]>(() =>
+    filterAssignedTableIdsToVenueDocIds(staff.assignedTableIds, allowedDocIds)
+  );
+  const seededFromVenueStaff = useRef(false);
   useEffect(() => {
-    const tableIdSet = new Set((tables ?? []).map((t) => t.id));
-    const tableIdByNumber = new Map((tables ?? []).map((t) => [String(t.number), t.id]));
-    const allowedNumbers = new Set((tables ?? []).map((t) => String(t.number)));
-    const digits = (v: string) => String(v).replace(/\D/g, "");
-
-    setAssignedTableIds((prev) =>
-      (prev ?? [])
-        .map(String)
-        .map((id) => {
-          const s = id.trim();
-          if (!s || s === "0") return null;
-          if (tableIdSet.has(s)) return s;
-          const n = digits(s);
-          if (!n || n === "0" || !allowedNumbers.has(n)) return null;
-          return tableIdByNumber.get(n) ?? null;
-        })
-        .filter((x): x is string => typeof x === "string")
-    );
-  }, [tables]);
+    if (displayTables.length === 0) return;
+    const allowed = new Set(displayTables.map((t) => t.id));
+    if (!seededFromVenueStaff.current) {
+      seededFromVenueStaff.current = true;
+      setAssignedTableIds(filterAssignedTableIdsToVenueDocIds(staff.assignedTableIds, allowed));
+      return;
+    }
+    setAssignedTableIds((prev) => filterAssignedTableIdsToVenueDocIds(prev, allowed));
+  }, [displayTables, staff.assignedTableIds, staff.id]);
   const [saving, setSaving] = useState(false);
   const groupAndCall = position ? getGroupAndCallCategory(position) : null;
   const group = groupAndCall?.group ?? (staff.group as StaffGroup | undefined);
@@ -1348,22 +1343,8 @@ function StaffFormModal({
       toast.error("Введите номер телефона");
       return;
     }
-    const tableIdSet = new Set((tables ?? []).map((t) => t.id));
-    const tableIdByNumber = new Map((tables ?? []).map((t) => [String(t.number), t.id]));
-    const allowedNumbers = new Set((tables ?? []).map((t) => String(t.number)));
-    const digits = (v: string) => String(v).replace(/\D/g, "");
-
-    const cleanedAssignedTableIds = (assignedTableIds ?? [])
-      .map(String)
-      .map((id) => {
-        const s = id.trim();
-        if (!s || s === "0") return null;
-        if (tableIdSet.has(s)) return s;
-        const n = digits(s);
-        if (!n || n === "0" || !allowedNumbers.has(n)) return null;
-        return tableIdByNumber.get(n) ?? null;
-      })
-      .filter((x): x is string => typeof x === "string");
+    const allowed = new Set(displayTables.map((t) => t.id));
+    const cleanedAssignedTableIds = filterAssignedTableIdsToVenueDocIds(assignedTableIds, allowed);
     setSaving(true);
     try {
       const res = await fetch("/api/admin/staff/upsert", {
@@ -1543,10 +1524,10 @@ function StaffFormModal({
             <label className="mt-2 block">
               <span className="block text-xs text-gray-600">Закреплённые столы (по залам)</span>
               <div className="mt-1 space-y-2">
-                {tables.length === 0 ? (
+                {displayTables.length === 0 ? (
                   <span className="text-xs text-gray-500">Нет столов. Добавьте залы и столы в Зал & QR.</span>
                 ) : tablesByHall.length === 0 ? (
-                  tables.map((t) => {
+                  displayTables.map((t) => {
                     const conflict = conflictByTableId[t.id];
                     const isConflict = conflict && conflict.length > 0;
                     const tooltip = isConflict ? `Уже закреплен за ${conflict.map((c) => c.displayName).join(", ")}` : undefined;
