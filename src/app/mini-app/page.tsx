@@ -33,9 +33,6 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
-const VISITOR_STORAGE_KEY = "heywaiter_visitor_id";
-const MINIAPP_CACHE_VENUE = "heywaiter_miniapp_venue_id";
-const MINIAPP_CACHE_TABLE = "heywaiter_miniapp_table_id";
 const VISIT_HISTORY_KEY = "heywaiter_mini_visit_history";
 const GUEST_CITY_KEY = "heywaiter_guest_city";
 
@@ -50,6 +47,7 @@ type VisitEntry = {
 const STAFF_BOT_USERNAME = "waitertalk_bot";
 
 type TelegramWebAppInit = {
+  initData?: string;
   initDataUnsafe?: {
     start_param?: string;
     user?: { id?: number };
@@ -60,32 +58,26 @@ type TelegramWebAppInit = {
   close?: () => void;
 };
 
+/** true только при реальном запуске в Telegram Mini App с непустым initData (без ложных «не в Telegram»). */
+function isTelegramContext(): boolean {
+  if (typeof window === "undefined") return false;
+  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  if (!tg) return false;
+  const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+  return initData.length > 0;
+}
+
+function getStartParamFromTelegramWebApp(): string {
+  if (typeof window === "undefined") return "";
+  const WebApp = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  return WebApp?.initDataUnsafe?.start_param?.trim() ?? "";
+}
+
 function isStaffBotContext(): boolean {
   if (typeof window === "undefined") return false;
   const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
   const username = tg?.initDataUnsafe?.receiver?.username ?? "";
   return username === STAFF_BOT_USERNAME;
-}
-
-function getTelegramStartParam(): string {
-  if (typeof window === "undefined") return "";
-  const WebApp = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
-  const fromUnsafe = WebApp?.initDataUnsafe?.start_param?.trim() ?? "";
-  if (fromUnsafe) return fromUnsafe;
-  try {
-    const q = new URLSearchParams(window.location.search);
-    const qp = q.get("tgWebAppStartParam")?.trim() ?? "";
-    if (qp) return qp;
-  } catch (_) {}
-  try {
-    const rawHash = window.location.hash?.replace(/^#/, "") ?? "";
-    if (rawHash) {
-      const hq = new URLSearchParams(rawHash);
-      const h = hq.get("tgWebAppStartParam")?.trim() ?? "";
-      if (h) return h;
-    }
-  } catch (_) {}
-  return "";
 }
 
 function MiniAppContent() {
@@ -99,6 +91,8 @@ function MiniAppContent() {
   const [staffName, setStaffName] = useState<string | null>(null);
   /** false — пока не определили: есть ли start_param / v+t (не показываем «Личный кабинет»). */
   const [entryRouteResolved, setEntryRouteResolved] = useState(false);
+  /** SDK вызвал ready(); дальше читаем start_param / URL без гонки с таймерами. */
+  const [isSdkReady, setIsSdkReady] = useState(false);
   const [firestoreDone, setFirestoreDone] = useState(false);
   const [forceStaffByBot, setForceStaffByBot] = useState(false);
   const [callLoading, setCallLoading] = useState(false);
@@ -112,9 +106,14 @@ function MiniAppContent() {
   >([]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.Telegram?.WebApp) {
-      (window.Telegram.WebApp as TelegramWebAppInit).ready?.();
+    if (typeof window === "undefined") return;
+    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    if (!tg) {
+      setIsSdkReady(true);
+      return;
     }
+    tg.ready?.();
+    queueMicrotask(() => setIsSdkReady(true));
   }, []);
 
   useEffect(() => {
@@ -142,6 +141,8 @@ function MiniAppContent() {
   }, [router]);
 
   useEffect(() => {
+    if (!isSdkReady) return;
+
     const role = searchParams.get("role") ?? "";
     const bot = searchParams.get("bot") ?? "";
     const fromQueryT = (searchParams.get("t") ?? "").trim();
@@ -154,14 +155,10 @@ function MiniAppContent() {
       return;
     }
 
-    let cancelled = false;
-    const delays = [0, 40, 120, 300, 700, 2000];
+    const inTg = isTelegramContext();
 
-    const tryBindSession = (): boolean => {
-      const sp = getTelegramStartParam();
-      const fromQueryV = (searchParams.get("v") ?? "").trim();
-      const fromQueryT = (searchParams.get("t") ?? "").trim();
-
+    if (inTg) {
+      const sp = getStartParamFromTelegramWebApp();
       if (sp) {
         const p = parseStartParamPayload(sp);
         if (p) {
@@ -171,41 +168,31 @@ function MiniAppContent() {
           setTableSettings(null);
           setStaffName(null);
           setFirestoreDone(false);
-          return true;
+          setEntryRouteResolved(true);
+          return;
         }
       }
-      if (fromQueryV && fromQueryT) {
-        setVenueId(fromQueryV);
-        setTableId(fromQueryT);
-        setVenueSettings(null);
-        setTableSettings(null);
-        setStaffName(null);
-        setFirestoreDone(false);
-        return true;
-      }
-      return false;
-    };
+      setFirestoreDone(true);
+      setEntryRouteResolved(true);
+      return;
+    }
 
-    let i = 0;
-    const step = () => {
-      if (cancelled) return;
-      if (tryBindSession()) {
-        setEntryRouteResolved(true);
-        return;
-      }
-      i += 1;
-      if (i < delays.length) {
-        window.setTimeout(step, delays[i] - delays[i - 1]);
-      } else {
-        setFirestoreDone(true);
-        setEntryRouteResolved(true);
-      }
-    };
-    step();
-    return () => {
-      cancelled = true;
-    };
-  }, [searchParams, forceStaffByBot]);
+    const fromQueryV = (searchParams.get("v") ?? "").trim();
+    const fromQueryTNonTg = (searchParams.get("t") ?? "").trim();
+    if (fromQueryV && fromQueryTNonTg) {
+      setVenueId(fromQueryV);
+      setTableId(fromQueryTNonTg);
+      setVenueSettings(null);
+      setTableSettings(null);
+      setStaffName(null);
+      setFirestoreDone(false);
+      setEntryRouteResolved(true);
+      return;
+    }
+
+    setFirestoreDone(true);
+    setEntryRouteResolved(true);
+  }, [isSdkReady, searchParams, forceStaffByBot]);
 
   useEffect(() => {
     if (!venueId && !tableId) {
@@ -450,20 +437,29 @@ function MiniAppContent() {
   ]);
 
   const openTableScanner = useCallback(() => {
+    const inTg = isTelegramContext();
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    if (tg?.showScanQrPopup) {
+    if (inTg && tg?.showScanQrPopup) {
       tg.showScanQrPopup({ text: "Наведите на QR стола" }, (text) => {
         const parsed = parseStartParamPayload(text?.trim() ?? "");
         if (parsed) {
-          router.push(
-            `/mini-app?v=${encodeURIComponent(parsed.venueId)}&t=${encodeURIComponent(parsed.tableId)}`
-          );
+          setVenueId(parsed.venueId);
+          setTableId(parsed.tableId);
+          setVenueSettings(null);
+          setTableSettings(null);
+          setStaffName(null);
+          setFirestoreDone(false);
+          setEntryRouteResolved(true);
           tg.close?.();
         } else {
           toast.error("Неверный QR");
         }
       });
+      return;
+    }
+    if (inTg) {
+      toast.error("Сканер QR недоступен в этой версии клиента. Обновите Telegram до последней версии.");
       return;
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
@@ -640,11 +636,21 @@ function MiniAppContent() {
                             <button
                               type="button"
                               className="mt-2 w-full rounded-lg py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
-                              onClick={() =>
+                              onClick={() => {
+                                if (isTelegramContext()) {
+                                  setVenueId(pl.venueId);
+                                  setTableId(pl.tableId);
+                                  setVenueSettings(null);
+                                  setTableSettings(null);
+                                  setStaffName(null);
+                                  setFirestoreDone(false);
+                                  setEntryRouteResolved(true);
+                                  return;
+                                }
                                 router.push(
                                   `/mini-app?v=${encodeURIComponent(pl.venueId)}&t=${encodeURIComponent(pl.tableId)}`
-                                )
-                              }
+                                );
+                              }}
                             >
                               Открыть стол
                             </button>
