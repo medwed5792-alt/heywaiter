@@ -14,13 +14,21 @@ type AdSpaceProps = {
   venueId?: string;
   /** Город/регион гостя; перекрывает venues.adRegion, если задан */
   location?: string;
+  /** Страна гостя; перекрывает venues.adCountry, если задана */
+  country?: string;
 };
 
-function buildSuperAdsUrl(placement: string, venueId?: string, location?: string): string {
+function buildSuperAdsUrl(
+  placement: string,
+  venueId?: string,
+  location?: string,
+  country?: string
+): string {
   const params = new URLSearchParams();
   params.set("placement", placement);
   if (venueId?.trim()) params.set("venueId", venueId.trim());
   if (location?.trim()) params.set("location", location.trim());
+  if (country?.trim()) params.set("country", country.trim());
   return `/api/public/super-ads?${params.toString()}`;
 }
 
@@ -40,7 +48,7 @@ async function trackAdEvent(adId: string, event: "impression" | "click"): Promis
  * Глобальный рекламный слот: данные только из `super_ads_catalog` (Супер-админ → /super/catalog → Реклама).
  * Передайте venueId и при необходимости location — подберётся таргетированный баннер, иначе глобальный резерв.
  */
-export function AdSpace({ placement, id, className = "", venueId, location }: AdSpaceProps) {
+export function AdSpace({ placement, id, className = "", venueId, location, country }: AdSpaceProps) {
   const [ad, setAd] = useState<SuperAdCatalogItem | null>(null);
 
   useEffect(() => {
@@ -63,7 +71,7 @@ export function AdSpace({ placement, id, className = "", venueId, location }: Ad
     return () => {
       cancelled = true;
     };
-  }, [placement, venueId, location]);
+  }, [placement, venueId, location, country]);
 
   useEffect(() => {
     if (!ad?.id || typeof sessionStorage === "undefined") return;

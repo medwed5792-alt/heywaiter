@@ -2,7 +2,8 @@
  * Глобальные рекламные слоты Mini App — источник: Firestore `super_ads_catalog`.
  *
  * Структура документа (таргетинг + доставка):
- * - regions: string[] — города/регионы (пусто = все)
+ * - regions: string[] — города/субнациональные регионы (пусто = без фильтра по городу)
+ * - countries: string[] — страны целиком (пусто = без фильтра по стране)
  * - venueLevels: number[] — уровни 1–5★ (пусто = любой)
  * - category: string — тип заведения: кафе, бар, ресторан (пусто = любой)
  * - schedule: { daysOfWeek?, startTime?, endTime?, timezone? } — окно показа
@@ -33,38 +34,6 @@ export const SUPER_AD_PLACEMENTS = [
 
 export type SuperAdPlacementId = (typeof SUPER_AD_PLACEMENTS)[number];
 
-/** Регионы/города для UI (значения хранятся в каталоге и в venues.adRegion). */
-export const SUPER_AD_TARGET_REGIONS: string[] = [
-  "Москва",
-  "Санкт-Петербург",
-  "Новосибирск",
-  "Екатеринбург",
-  "Казань",
-  "Нижний Новгород",
-  "Челябинск",
-  "Самара",
-  "Омск",
-  "Ростов-на-Дону",
-  "Уфа",
-  "Красноярск",
-  "Воронеж",
-  "Пермь",
-  "Волгоград",
-  "Краснодар",
-  "Саратов",
-  "Тюмень",
-  "Тольятти",
-  "Ижевск",
-  "Барнаул",
-  "Ульяновск",
-  "Иркутск",
-  "Хабаровск",
-  "Ярославль",
-  "Минск",
-  "Алматы",
-  "Астана",
-];
-
 export const SUPER_AD_CATEGORY_PRESETS = [
   { value: "", label: "Любой тип" },
   { value: "кафе", label: "Кафе" },
@@ -86,8 +55,10 @@ export interface SuperAdCatalogItem {
    */
   placements?: string[];
   sortOrder?: number;
-  /** Города/регионы; пусто = без ограничения по региону */
+  /** Города / субрегионы; пусто = без ограничения по городу */
   regions?: string[];
+  /** Страны (целиком); пусто = без ограничения по стране */
+  countries?: string[];
   /** Уровни заведений 1–5; пусто = любой уровень */
   venueLevels?: number[];
   /** Тип заведения: кафе, бар, ресторан; пусто = любой */
@@ -105,8 +76,10 @@ export interface SuperAdCatalogItem {
 
 /** Контекст для подбора рекламы (сервер собирает из venue + query). */
 export interface AdDeliveryContext {
-  /** Нормализованный город/регион */
+  /** Город/регион заведения (venues.adRegion) */
   region: string;
+  /** Страна заведения (venues.adCountry), если задана */
+  country?: string;
   venueLevel?: number;
   category?: string;
 }
@@ -202,6 +175,9 @@ export function superAdFromFirestoreDoc(
     placements: Array.isArray(data.placements) ? data.placements.map(String) : undefined,
     sortOrder: typeof data.sortOrder === "number" ? data.sortOrder : undefined,
     regions: Array.isArray(data.regions) ? data.regions.map((x) => String(x).trim()).filter(Boolean) : undefined,
+    countries: Array.isArray(data.countries)
+      ? data.countries.map((x) => String(x).trim()).filter(Boolean)
+      : undefined,
     venueLevels: venueLevels.length > 0 ? venueLevels : undefined,
     category: typeof data.category === "string" ? data.category.trim() : undefined,
     schedule:

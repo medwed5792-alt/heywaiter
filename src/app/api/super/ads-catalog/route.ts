@@ -50,6 +50,9 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore();
 
     const regions = Array.isArray(body.regions) ? body.regions.map((x) => String(x).trim()).filter(Boolean) : [];
+    const countries = Array.isArray(body.countries)
+      ? body.countries.map((x) => String(x).trim()).filter(Boolean)
+      : [];
     const venueLevels = Array.isArray(body.venueLevels)
       ? body.venueLevels
           .map((x) => Number(x))
@@ -66,6 +69,7 @@ export async function POST(request: NextRequest) {
       placements: Array.isArray(body.placements) ? body.placements.map(String) : [],
       sortOrder: typeof body.sortOrder === "number" ? body.sortOrder : 0,
       regions,
+      countries,
       venueLevels,
       category: typeof body.category === "string" ? body.category.trim() : "",
       ...(schedule ? { schedule } : {}),

@@ -20,7 +20,7 @@ import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
 import { useGeoFencing } from "@/hooks/useGeoFencing";
 import { IS_GEO_DEBUG } from "@/lib/geo";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
-import { SUPER_AD_TARGET_REGIONS } from "@/lib/super-ads";
+import { AD_CITY_HINTS } from "@/lib/ad-geo-hints";
 import {
   Bell,
   QrCode,
@@ -704,17 +704,18 @@ function MiniAppContent() {
               </h2>
               <label className="mb-3 block text-xs text-slate-500">
                 Населённый пункт
-                <select
+                <input
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
+                  list="mini-app-city-hints"
                   value={selectedCity}
                   onChange={(e) => persistCity(e.target.value)}
-                >
-                  {SUPER_AD_TARGET_REGIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
+                  placeholder="Любой город мира"
+                />
+                <datalist id="mini-app-city-hints">
+                  {AD_CITY_HINTS.map((c) => (
+                    <option key={c} value={c} />
                   ))}
-                </select>
+                </datalist>
               </label>
               <ul className="max-h-56 space-y-2 overflow-y-auto text-sm">
                 {promoRows.length === 0 ? (

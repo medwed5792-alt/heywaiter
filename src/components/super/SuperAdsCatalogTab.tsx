@@ -4,11 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import toast from "react-hot-toast";
 import { Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
 import type { SuperAdCatalogItem } from "@/lib/super-ads";
-import {
-  SUPER_AD_PLACEMENTS,
-  SUPER_AD_TARGET_REGIONS,
-  SUPER_AD_CATEGORY_PRESETS,
-} from "@/lib/super-ads";
+import { SUPER_AD_PLACEMENTS, SUPER_AD_CATEGORY_PRESETS } from "@/lib/super-ads";
+import { AdGeoTagFields } from "@/components/super/AdGeoTagFields";
 
 const PLACEMENT_LABELS: Record<string, string> = {
   main_ad: "Mini App гость: под кнопкой вызова (первый визит)",
@@ -66,6 +63,7 @@ const emptyForm = (): FormState => ({
   placements: [],
   sortOrder: 0,
   regions: [],
+  countries: [],
   venueLevels: [],
   category: "",
   isGlobalReserve: false,
@@ -99,6 +97,7 @@ function itemToForm(a: SuperAdCatalogItem): FormState {
     placements: a.placements ?? [],
     sortOrder: a.sortOrder ?? 0,
     regions: a.regions ?? [],
+    countries: a.countries ?? [],
     venueLevels: a.venueLevels ?? [],
     category: a.category ?? "",
     isGlobalReserve: a.isGlobalReserve === true,
@@ -188,6 +187,7 @@ export function SuperAdsCatalogTab() {
               placements: form.placements,
               sortOrder: form.sortOrder,
               regions: form.regions,
+              countries: form.countries,
               venueLevels: form.venueLevels,
               category: form.category,
               isGlobalReserve: form.isGlobalReserve,
@@ -202,6 +202,7 @@ export function SuperAdsCatalogTab() {
               placements: form.placements,
               sortOrder: form.sortOrder,
               regions: form.regions,
+              countries: form.countries,
               venueLevels: form.venueLevels,
               category: form.category,
               isGlobalReserve: form.isGlobalReserve,
@@ -271,7 +272,7 @@ export function SuperAdsCatalogTab() {
             Глобальный рекламный каталог
           </h2>
           <p className="mt-2 text-sm text-slate-600 max-w-2xl">
-            Коллекция <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code> (раздел «Система»): регионы,
+            Коллекция <code className="rounded bg-slate-100 px-1 text-xs">super_ads_catalog</code> (раздел «Система»): города/страны,
             уровень заведения (1–5★), тип (кафе/бар/ресторан), расписание. Баннер с флагом «Глобальный резерв»
             показывается только если нет подходящей таргетированной рекламы.
           </p>
@@ -413,25 +414,12 @@ export function SuperAdsCatalogTab() {
                 </span>
               </label>
 
-              <div>
-                <p className="text-xs font-medium text-slate-600">Регионы (пусто = все города)</p>
-                <select
-                  multiple
-                  className="mt-2 h-36 w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                  value={form.regions}
-                  onChange={(e) => {
-                    const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
-                    setForm((f) => ({ ...f, regions: opts }));
-                  }}
-                >
-                  {SUPER_AD_TARGET_REGIONS.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-1 text-[11px] text-slate-500">Ctrl/Cmd + клик для нескольких регионов</p>
-              </div>
+              <AdGeoTagFields
+                regions={form.regions}
+                countries={form.countries}
+                onRegionsChange={(regions) => setForm((f) => ({ ...f, regions }))}
+                onCountriesChange={(countries) => setForm((f) => ({ ...f, countries }))}
+              />
 
               <div>
                 <p className="text-xs font-medium text-slate-600">Уровень заведения (1–5★), пусто = любой</p>
