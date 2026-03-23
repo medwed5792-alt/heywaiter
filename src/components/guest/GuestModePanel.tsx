@@ -9,6 +9,8 @@ const COOLDOWN_SEC = 30;
 interface GuestModePanelProps {
   venueId: string;
   tableId: string;
+  customerUid?: string | null;
+  /** @deprecated use customerUid */
   visitorId?: string | null;
   tableNumber?: number;
 }
@@ -16,7 +18,7 @@ interface GuestModePanelProps {
 /**
  * Гостевой режим: «Вызвать официанта» и «Запросить счёт».
  */
-export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: GuestModePanelProps) {
+export function GuestModePanel({ venueId, tableId, customerUid, visitorId, tableNumber }: GuestModePanelProps) {
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [lastAction, setLastAction] = useState<"call_waiter" | "request_bill" | null>(null);
   const [loading, setLoading] = useState(false);
@@ -35,7 +37,7 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
           venueId,
           tableId,
           tableNumber,
-          visitorId: visitorId ?? undefined,
+          customerUid: customerUid ?? visitorId ?? undefined,
         });
         setLastAction(type);
         setCooldownLeft(COOLDOWN_SEC);
@@ -45,7 +47,7 @@ export function GuestModePanel({ venueId, tableId, visitorId, tableNumber }: Gue
         setLoading(false);
       }
     },
-    [venueId, tableId, tableNumber, visitorId, disabled]
+    [venueId, tableId, tableNumber, customerUid, visitorId, disabled]
   );
 
   useEffect(() => {

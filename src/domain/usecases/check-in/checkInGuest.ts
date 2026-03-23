@@ -5,6 +5,7 @@ import type {
 } from "@/lib/types";
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
@@ -36,7 +37,11 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
 
   const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid } = input;
   const guestExternalId = guestIdentity?.externalId ?? undefined;
-  const currentUid = (participantUid || guestId || guestExternalId || "").trim();
+  const uidFromIdentity =
+    guestIdentity?.channel === "telegram"
+      ? buildTelegramCustomerUid(guestExternalId)
+      : (guestExternalId || "").trim();
+  const currentUid = (participantUid || uidFromIdentity || guestId || "").trim();
 
   // API route historically routes "events" through a resolved default venue id.
   const VENUE_EVENTS_ID = resolveVenueId(venueId);

@@ -14,6 +14,8 @@ interface GuestCallPanelProps {
   venueId: string;
   tableId: string;
   sessionId?: string;
+  customerUid?: string | null;
+  /** @deprecated use customerUid */
   visitorId?: string | null;
   sessionOpen?: boolean;
   isPro?: boolean;
@@ -23,6 +25,7 @@ export function GuestCallPanel({
   venueId,
   tableId,
   sessionId,
+  customerUid,
   visitorId,
   sessionOpen: _sessionOpen = true,
   isPro = false,
@@ -40,7 +43,7 @@ export function GuestCallPanel({
             type: "call_waiter",
             venueId,
             tableId,
-            visitorId: visitorId ?? undefined,
+            customerUid: customerUid ?? visitorId ?? undefined,
           });
         } else {
           await createTargetedNotification(
@@ -58,7 +61,7 @@ export function GuestCallPanel({
         setCallingRole(null);
       }
     },
-    [venueId, tableId, sessionId, visitorId]
+    [venueId, tableId, sessionId, customerUid, visitorId]
   );
 
   const handleRequestBill = useCallback(async () => {
@@ -68,7 +71,7 @@ export function GuestCallPanel({
         type: "request_bill",
         venueId,
         tableId,
-        visitorId: visitorId ?? undefined,
+        customerUid: customerUid ?? visitorId ?? undefined,
       });
       setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
     } catch (e) {
@@ -76,7 +79,7 @@ export function GuestCallPanel({
     } finally {
       setCallingRole(null);
     }
-  }, [venueId, tableId, visitorId]);
+  }, [venueId, tableId, customerUid, visitorId]);
 
   useEffect(() => {
     if (cooldownLeft <= 0) return;

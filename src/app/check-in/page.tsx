@@ -18,6 +18,7 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
+import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 
 /** Фирменные цвета брендов мессенджеров для кнопок (строгий стиль) */
 const MESSENGER_BRAND_COLORS: Record<MessengerChannel, string> = {
@@ -52,6 +53,17 @@ function CheckInContent() {
   const [venueDisplayName, setVenueDisplayName] = useState<string>("");
   const [tableNumberResolved, setTableNumberResolved] = useState<number | null>(null);
   const [venueMetaLoaded, setVenueMetaLoaded] = useState(false);
+  const telegramWebAppUserId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const id = (
+      window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } }
+    ).Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    return id != null ? String(id) : null;
+  }, []);
+  const currentUid = resolveUnifiedCustomerUid({
+    telegramUserId: telegramWebAppUserId,
+    anonymousId: visitorId,
+  });
 
   useEffect(() => {
     setLocale(getBrowserLocale());
@@ -142,7 +154,7 @@ function CheckInContent() {
             venueId,
             tableId,
             tableNumber: tableNum,
-            participantUid: visitorId?.trim() || undefined,
+            participantUid: currentUid || undefined,
             // На этом экране мы не знаем конкретный guestId/messenger identity,
             // поэтому оставляем guestIdentity undefined (API сможет только проверить reservation conflict).
             guestIdentity: undefined,
@@ -178,7 +190,7 @@ function CheckInContent() {
         setStatus("idle");
       }
     },
-    [venueId, tableId, visitorId, tgClientUsername]
+    [venueId, tableId, currentUid, visitorId, tgClientUsername]
   );
 
   const copy = useMemo(() => getCheckInCopy(locale), [locale]);

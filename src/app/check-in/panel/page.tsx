@@ -11,6 +11,7 @@ import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { Order } from "@/lib/types";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
+import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 
 /**
  * Транзитный шлюз для ГОСТЯ. По ссылке /check-in/panel?v=...&t=... принудительно
@@ -25,6 +26,11 @@ function PanelContent() {
   const orderId = searchParams.get("orderId") ?? "";
   const chatId = searchParams.get("chatId") ?? "";
   const platform = searchParams.get("platform") ?? "telegram";
+  const { visitorId } = useVisitor();
+  const currentUid = resolveUnifiedCustomerUid({
+    telegramUserId: chatId || null,
+    anonymousId: visitorId,
+  });
 
   const isFastFood = Boolean(venueId && (orderId || chatId));
   const isFullService = Boolean(venueId && tableId);
@@ -59,9 +65,7 @@ function PanelContent() {
     if (orderId) {
       return <FastFoodOrderView venueId={venueId} orderId={orderId} chatId={chatId} platform={platform} />;
     }
-    return (
-      <FastFoodPrimitiveView venueId={venueId} chatId={chatId} platform={platform} />
-    );
+    return <FastFoodPrimitiveView venueId={venueId} chatId={chatId} platform={platform} customerUid={currentUid} />;
   }
 
   const visitorIdFromUrl = searchParams.get("vid") ?? null;
@@ -95,6 +99,10 @@ function FullServicePanel({
   const { visitorId } = useVisitor();
   const checkInDone = useRef(false);
   const effectiveVisitorId = visitorId || visitorIdFromUrl || null;
+  const currentUid = resolveUnifiedCustomerUid({
+    telegramUserId: chatId || null,
+    anonymousId: effectiveVisitorId,
+  });
   const [venueName, setVenueName] = useState<string>("");
   const [tableNumber, setTableNumber] = useState<number | null>(null);
   const [metaLoaded, setMetaLoaded] = useState(false);
@@ -148,12 +156,12 @@ function FullServicePanel({
         body: JSON.stringify({
           venueId,
           tableId,
-          participantUid: effectiveVisitorId ?? undefined,
+          participantUid: currentUid || undefined,
           guestIdentity,
         }),
       });
     })();
-  }, [venueId, tableId, chatId, platform, effectiveVisitorId]);
+  }, [venueId, tableId, chatId, platform, currentUid]);
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
@@ -192,7 +200,7 @@ function FullServicePanel({
           venueId={venueId}
           tableId={tableId}
           tableNumber={tableNumber != null ? tableNumber : undefined}
-          visitorId={effectiveVisitorId}
+          customerUid={currentUid || undefined}
         />
         {/* Гостевой режим (v+t): только 2 кнопки — Меню не показываем */}
       </div>
@@ -242,10 +250,12 @@ function FastFoodPrimitiveView({
   venueId,
   chatId,
   platform,
+  customerUid,
 }: {
   venueId: string;
   chatId: string;
   platform: string;
+  customerUid?: string;
 }) {
   const [orderNumber, setOrderNumber] = useState("");
   const [submittedOrderId, setSubmittedOrderId] = useState<string | null>(null);
@@ -275,7 +285,7 @@ function FastFoodPrimitiveView({
           orderNumber: n,
           guestChatId: chatId,
           guestPlatform: platform,
-          customerUid: chatId ? `chat:${chatId}` : undefined,
+          customerUid: customerUid || undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; orderId?: string };

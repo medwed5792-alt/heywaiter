@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
+import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
 
 const VENUE_ID = DEFAULT_VENUE_ID;
 
@@ -33,12 +34,13 @@ export async function POST(request: NextRequest) {
     const { doc, setDoc, serverTimestamp } = await import("firebase/firestore");
     const { db } = await import("@/lib/firebase");
     const orderId = `${venueId}_${orderNumber}`;
+    const fallbackUid = buildTelegramCustomerUid(guestChatId);
     await setDoc(doc(db, "orders", orderId), {
       orderNumber,
       venueId,
       guestChatId,
       guestPlatform,
-      customerUid: customerUid || guestChatId,
+      customerUid: customerUid || fallbackUid || guestChatId,
       ...(tableId ? { tableId } : {}),
       status: "pending",
       createdAt: serverTimestamp(),

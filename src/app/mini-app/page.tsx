@@ -9,6 +9,7 @@ import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
+import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -228,9 +229,12 @@ function MiniAppContent() {
     if (typeof window === "undefined") return "";
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
     const id = tg?.initDataUnsafe?.user?.id;
-    return id != null ? `tg:${String(id)}` : "";
+    return id != null ? String(id) : "";
   }, []);
-  const currentUid = (visitorId?.trim() || telegramUserId || "").trim();
+  const currentUid = resolveUnifiedCustomerUid({
+    telegramUserId: telegramUserId || null,
+    anonymousId: visitorId?.trim() || null,
+  });
   const isMaster = Boolean(sessionState?.masterId && currentUid && sessionState.masterId === currentUid);
   const myParticipant = sessionState?.participants?.find((p) => p.uid === currentUid) ?? null;
   const myStatus = myParticipant?.status ?? null;
@@ -250,7 +254,7 @@ function MiniAppContent() {
         venueId,
         tableId,
         tableNumber: tableNumberResolved ?? undefined,
-        visitorId: visitorId ?? undefined,
+        customerUid: currentUid || undefined,
       });
       toast.success("Официант уведомлён");
       setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
@@ -259,7 +263,7 @@ function MiniAppContent() {
     } finally {
       setCallLoading(false);
     }
-  }, [venueId, tableId, tableRecognized, tableNumberResolved, visitorId]);
+  }, [venueId, tableId, tableRecognized, tableNumberResolved, currentUid]);
 
   const refreshSessionState = useCallback(async () => {
     if (!venueId || !tableId) {

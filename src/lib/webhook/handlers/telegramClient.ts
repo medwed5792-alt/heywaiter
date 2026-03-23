@@ -17,6 +17,7 @@ import { getAppUrl } from "@/lib/webhook/utils";
 import { createGuestEvent } from "@/lib/guest-events";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { answerCallbackQuery, sendMessage, setChatMenuButton } from "@/adapters/telegram/telegramApi";
+import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
 
 /** Минимальные типы для входящего Update от Telegram Bot API */
 interface TelegramChat {
@@ -102,7 +103,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
       venueId,
       tableId,
       tableNumber: !Number.isNaN(tableIdNum) ? tableIdNum : undefined,
-      visitorId: from?.id != null ? String(from.id) : undefined,
+      customerUid: buildTelegramCustomerUid(from?.id),
     });
     await answerCallbackQuery(token, { callback_query_id: callbackId, text: "Официант уведомлён! Скоро подойдёт." });
     const chatId = message?.chat?.id;

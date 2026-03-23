@@ -65,7 +65,7 @@ async function getLprStaffIds(firestore: Firestore, venueId: string): Promise<st
 export interface PushCallWaiterInput {
   venueId: string;
   tableId: string;
-  visitorId?: string;
+  customerUid?: string;
   type?: PushCallWaiterType;
 }
 
@@ -149,7 +149,7 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
     read: false,
     targetUids,
     ...(isOrphan && { orphanTable: true }),
-    ...(input.visitorId && { visitorId: input.visitorId }),
+    ...(input.customerUid && { customerUid: input.customerUid, visitorId: input.customerUid }),
     createdAt: new Date(),
   });
 

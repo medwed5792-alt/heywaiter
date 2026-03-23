@@ -5,14 +5,15 @@ import { pushCallWaiterNotification } from "@/lib/notifications/push-call-waiter
 
 /**
  * POST /api/notifications/call-waiter
- * Тело: venueId, tableId, type?: "call_waiter" | "request_bill" | "sos", visitorId?
+ * Тело: venueId, tableId, type?: "call_waiter" | "request_bill" | "sos", customerUid?
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const venueId = (body.venueId as string)?.trim();
     const tableId = (body.tableId as string)?.trim();
-    const visitorId = (body.visitorId as string)?.trim() ?? undefined;
+    const customerUid =
+      (body.customerUid as string)?.trim() || (body.visitorId as string)?.trim() || undefined;
     const type = (body.type as string) || "call_waiter";
 
     if (!venueId || !tableId) {
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
     await pushCallWaiterNotification({
       venueId,
       tableId,
-      visitorId,
+      customerUid,
       type: type === "request_bill" ? "request_bill" : type === "sos" ? "sos" : "call_waiter",
     });
 

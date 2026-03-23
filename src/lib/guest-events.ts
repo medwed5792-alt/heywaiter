@@ -9,6 +9,9 @@ interface GuestEventPayload {
   type: GuestEventType;
   tableId: string;
   tableNumber?: number;
+  /** Unified UID for guest actions: telegram_user_id:* or anonymous_id:* */
+  customerUid?: string;
+  /** @deprecated use customerUid */
   visitorId?: string;
   /** Если не задан — используется дефолтное заведение (одна свая в текущей сборке). */
   venueId?: string;
@@ -39,7 +42,8 @@ export async function resolveAssignedStaffForCall(
 }
 
 export async function createGuestEvent(payload: GuestEventPayload): Promise<void> {
-  const { type, tableId, tableNumber, visitorId } = payload;
+  const { type, tableId, tableNumber } = payload;
+  const customerUid = payload.customerUid?.trim() || payload.visitorId?.trim() || undefined;
   const effectiveVenueId = resolveVenueId(payload.venueId);
 
   const baseMessage =
@@ -58,7 +62,8 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
     type,
     message: baseMessage,
     text: baseMessage,
-    visitorId: visitorId ?? null,
+    customerUid: customerUid ?? null,
+    ...(customerUid ? { visitorId: customerUid } : { visitorId: null }), // backward compatibility
     read: false,
     createdAt: serverTimestamp(),
     timestamp: serverTimestamp(),
@@ -75,7 +80,7 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
   const pushPayload = {
     venueId: effectiveVenueId,
     tableId,
-    visitorId,
+    customerUid,
     type: type as "call_waiter" | "request_bill" | "sos",
   };
   if (typeof window === "undefined") {
