@@ -1,4 +1,8 @@
-import type { MessengerIdentity } from "@/lib/types";
+import type {
+  ActiveSessionParticipant,
+  ActiveSessionParticipantStatus,
+  MessengerIdentity,
+} from "@/lib/types";
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { resolveVenueId } from "@/lib/standards/venue-default";
@@ -7,6 +11,7 @@ const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 export type CheckInGuestResult =
   | { status: "check_in_success"; sessionId: string; messageGuest: string }
+  | { status: "table_private"; sessionId: string; messageGuest: string }
   | { status: "table_conflict"; sessionId: string; messageGuest: string };
 
 export interface CheckInGuestInput {
@@ -14,6 +19,7 @@ export interface CheckInGuestInput {
   tableId: string;
   tableNumber?: number;
   guestId?: string;
+  participantUid?: string;
   guestIdentity?: MessengerIdentity | undefined;
 }
 
@@ -28,16 +34,44 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
   const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
 
-  const { venueId, tableId, tableNumber, guestId, guestIdentity } = input;
+  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid } = input;
   const guestExternalId = guestIdentity?.externalId ?? undefined;
+  const currentUid = (participantUid || guestId || guestExternalId || "").trim();
 
   // API route historically routes "events" through a resolved default venue id.
   const VENUE_EVENTS_ID = resolveVenueId(venueId);
 
   const firestore = getAdminFirestore();
 
-  // Idempotency for panel reloads: if a successful check-in already exists for this table,
-  // don't create another activeSessions/staffNotifications set.
+  function nowParticipant(status: ActiveSessionParticipantStatus): ActiveSessionParticipant {
+    return {
+      uid: currentUid,
+      status,
+      joinedAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function normalizeParticipants(raw: unknown): ActiveSessionParticipant[] {
+    if (!Array.isArray(raw)) return [];
+    const out: ActiveSessionParticipant[] = [];
+    for (const item of raw) {
+      const d = (item ?? {}) as Record<string, unknown>;
+      const uid = typeof d.uid === "string" ? d.uid.trim() : "";
+      if (!uid) continue;
+      const status = d.status as ActiveSessionParticipantStatus | undefined;
+      out.push({
+        uid,
+        status: status === "paid" || status === "exited" ? status : "active",
+        joinedAt: d.joinedAt ?? now,
+        updatedAt: d.updatedAt ?? now,
+      });
+    }
+    return out;
+  }
+
+  // Idempotency & collective session: if a successful check-in already exists for this table,
+  // apply master/private/participants rules instead of creating a new session.
   const existingSuccessSnap = await firestore
     .collection("activeSessions")
     .where("venueId", "==", venueId)
@@ -48,6 +82,64 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
 
   if (!existingSuccessSnap.empty) {
     const existing = existingSuccessSnap.docs[0];
+    const existingData = existing.data() as Record<string, unknown>;
+    const existingMasterId = (existingData.masterId as string | undefined)?.trim();
+    const isPrivate = typeof existingData.isPrivate === "boolean" ? (existingData.isPrivate as boolean) : true;
+    const participants = normalizeParticipants(existingData.participants);
+
+    if (!currentUid) {
+      if (isPrivate) {
+        return {
+          status: "table_private",
+          sessionId: existing.id,
+          messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
+        };
+      }
+      return {
+        status: "check_in_success",
+        sessionId: existing.id,
+        messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+      };
+    }
+
+    const existingParticipantIdx = participants.findIndex((p) => p.uid === currentUid);
+    const existingParticipant = existingParticipantIdx >= 0 ? participants[existingParticipantIdx] : null;
+
+    // Private table: only Master can join/rejoin.
+    if (isPrivate && existingMasterId && existingMasterId !== currentUid) {
+      return {
+        status: "table_private",
+        sessionId: existing.id,
+        messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
+      };
+    }
+
+    if (existingParticipant) {
+      // Re-activate exited participant, keep paid as paid.
+      const nextStatus: ActiveSessionParticipantStatus =
+        existingParticipant.status === "exited" ? "active" : existingParticipant.status;
+      if (nextStatus !== existingParticipant.status) {
+        participants[existingParticipantIdx] = {
+          ...existingParticipant,
+          status: nextStatus,
+          updatedAt: now,
+        };
+        await firestore.collection("activeSessions").doc(existing.id).update({
+          participants,
+          updatedAt: now,
+        });
+      }
+    } else if (!existingMasterId || !isPrivate || existingMasterId === currentUid) {
+      // Public table, master check-in, or legacy session without masterId: add participant.
+      participants.push(nowParticipant("active"));
+      await firestore.collection("activeSessions").doc(existing.id).update({
+        participants,
+        // Backward compatible write if master was missing in older sessions.
+        ...(existingMasterId ? {} : { masterId: currentUid }),
+        updatedAt: now,
+      });
+    }
+
     return {
       status: "check_in_success",
       sessionId: existing.id,
@@ -136,6 +228,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       guestId: matchedBooking.data()?.guestId,
       waiterId: undefined,
       waiterDisplayName: undefined,
+      masterId: currentUid || matchedBooking.data()?.guestId || guestExternalId || "",
+      participants: currentUid ? [nowParticipant("active")] : [],
+      isPrivate: true,
       status: "check_in_success",
       createdAt: now,
       updatedAt: now,
@@ -185,6 +280,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       tableId,
       tableNumber: tableNumber ?? 0,
       guestIdentity: guestIdentity ?? undefined,
+      masterId: currentUid || undefined,
+      participants: currentUid ? [nowParticipant("active")] : [],
+      isPrivate: true,
       status: "table_conflict",
       createdAt: now,
       updatedAt: now,
@@ -215,6 +313,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     guestIdentity: guestIdentity ?? undefined,
     waiterId: undefined,
     waiterDisplayName: undefined,
+    masterId: currentUid || undefined,
+    participants: currentUid ? [nowParticipant("active")] : [],
+    isPrivate: true,
     status: "check_in_success",
     createdAt: now,
     updatedAt: now,

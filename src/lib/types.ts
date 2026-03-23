@@ -202,8 +202,11 @@ export interface Order {
   id: string;
   orderNumber: number;
   venueId: string;
+  tableId?: string;
   guestChatId: string;
   guestPlatform: MessengerChannel;
+  /** Split Bill anchor: who created this order/position. */
+  customerUid?: string;
   status: OrderStatus;
   createdAt: unknown;
   updatedAt: unknown;
@@ -520,6 +523,15 @@ export interface Booking {
 }
 
 /** Активная сессия гостя за столом. guestChannel + guestChatId — куда слать thankYou при закрытии. */
+export type ActiveSessionParticipantStatus = "active" | "paid" | "exited";
+
+export interface ActiveSessionParticipant {
+  uid: string;
+  status: ActiveSessionParticipantStatus;
+  joinedAt: unknown;
+  updatedAt?: unknown;
+}
+
 export interface ActiveSession {
   id: string;
   venueId: string;
@@ -531,6 +543,12 @@ export interface ActiveSession {
   guestId?: string;
   waiterId?: string;
   waiterDisplayName?: string;
+  /** UID первого вошедшего гостя (Master). */
+  masterId?: string;
+  /** Участники стола (коллективная сессия). */
+  participants?: ActiveSessionParticipant[];
+  /** Приватность стола: true = подселение только с разрешения Master. */
+  isPrivate?: boolean;
   /** Закреплённые сотрудники по ролям за этим столом (для Stealth Routing) */
   assignments?: TableAssignments;
   status: "check_in_success" | "table_conflict" | "closed";

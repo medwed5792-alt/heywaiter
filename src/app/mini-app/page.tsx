@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense, useMemo, useRef } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
@@ -62,6 +62,15 @@ function MiniAppContent() {
   const [forceStaffByBot, setForceStaffByBot] = useState(false);
   const [callLoading, setCallLoading] = useState(false);
   const [cooldownLeft, setCooldownLeft] = useState(0);
+  const [sessionState, setSessionState] = useState<{
+    sessionId: string;
+    masterId: string;
+    isPrivate: boolean;
+    participants: { uid: string; status: "active" | "paid" | "exited" }[];
+  } | null>(null);
+  const [sessionUiError, setSessionUiError] = useState<string | null>(null);
+  const [sessionActionLoading, setSessionActionLoading] = useState(false);
+  const checkInSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -215,6 +224,16 @@ function MiniAppContent() {
   const role = searchParams.get("role") ?? "";
   const bot = searchParams.get("bot") ?? "";
   const isStaffEntry = bot === "staff" || role === "staff" || forceStaffByBot;
+  const telegramUserId = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const id = tg?.initDataUnsafe?.user?.id;
+    return id != null ? `tg:${String(id)}` : "";
+  }, []);
+  const currentUid = (visitorId?.trim() || telegramUserId || "").trim();
+  const isMaster = Boolean(sessionState?.masterId && currentUid && sessionState.masterId === currentUid);
+  const myParticipant = sessionState?.participants?.find((p) => p.uid === currentUid) ?? null;
+  const myStatus = myParticipant?.status ?? null;
 
   const sessionFirstVisit = Boolean(venueId && tableId) && !isStaffEntry;
   const isLoadingTable = Boolean(sessionFirstVisit && tableId && !firestoreDone);
@@ -241,6 +260,143 @@ function MiniAppContent() {
       setCallLoading(false);
     }
   }, [venueId, tableId, tableRecognized, tableNumberResolved, visitorId]);
+
+  const refreshSessionState = useCallback(async () => {
+    if (!venueId || !tableId) {
+      setSessionState(null);
+      return;
+    }
+    const res = await fetch("/api/session/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ venueId, tableId }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      state?: {
+        sessionId: string;
+        masterId: string;
+        isPrivate: boolean;
+        participants: { uid: string; status: "active" | "paid" | "exited" }[];
+      } | null;
+    };
+    if (!res.ok || !data.ok) return;
+    setSessionState(data.state ?? null);
+  }, [venueId, tableId]);
+
+  useEffect(() => {
+    if (!venueId || !tableId || isStaffEntry || !currentUid) return;
+    const key = `${venueId}:${tableId}:${currentUid}`;
+    if (checkInSyncRef.current === key) return;
+    checkInSyncRef.current = key;
+    (async () => {
+      const res = await fetch("/api/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          venueId,
+          tableId,
+          participantUid: currentUid,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { status?: string; messageGuest?: string };
+      if (data.status === "table_private") {
+        setSessionUiError("Стол приватный. Подселение запрещено без разрешения хозяина.");
+      } else {
+        setSessionUiError(null);
+      }
+      await refreshSessionState();
+    })();
+  }, [venueId, tableId, currentUid, isStaffEntry, refreshSessionState]);
+
+  useEffect(() => {
+    if (!venueId || !tableId || isStaffEntry) return;
+    void refreshSessionState();
+  }, [venueId, tableId, isStaffEntry, refreshSessionState]);
+
+  const onToggleAllowJoin = useCallback(async () => {
+    if (!sessionState || !isMaster || !currentUid) return;
+    setSessionActionLoading(true);
+    try {
+      const allowJoin = sessionState.isPrivate;
+      const res = await fetch("/api/session/privacy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, tableId, actorUid: currentUid, allowJoin }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        toast.error(data.error || "Не удалось изменить приватность");
+        return;
+      }
+      await refreshSessionState();
+    } finally {
+      setSessionActionLoading(false);
+    }
+  }, [sessionState, isMaster, currentUid, venueId, tableId, refreshSessionState]);
+
+  const onPayMyBill = useCallback(async () => {
+    if (!currentUid || !venueId || !tableId) return;
+    setSessionActionLoading(true);
+    try {
+      const res = await fetch("/api/session/pay-my-bill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, tableId, uid: currentUid }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updatedOrders?: number };
+      if (!res.ok || !data.ok) {
+        toast.error(data.error || "Не удалось оплатить ваш счёт");
+        return;
+      }
+      toast.success(`Оплачено позиций: ${data.updatedOrders ?? 0}`);
+      await refreshSessionState();
+    } finally {
+      setSessionActionLoading(false);
+    }
+  }, [currentUid, venueId, tableId, refreshSessionState]);
+
+  const onCloseWholeTable = useCallback(async () => {
+    if (!currentUid || !venueId || !tableId || !isMaster) return;
+    setSessionActionLoading(true);
+    try {
+      const res = await fetch("/api/session/close-table", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, tableId, masterUid: currentUid }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updatedOrders?: number };
+      if (!res.ok || !data.ok) {
+        toast.error(data.error || "Не удалось закрыть стол");
+        return;
+      }
+      toast.success(`Стол закрыт, оплачено позиций: ${data.updatedOrders ?? 0}`);
+      await refreshSessionState();
+    } finally {
+      setSessionActionLoading(false);
+    }
+  }, [currentUid, venueId, tableId, isMaster, refreshSessionState]);
+
+  const onExitSession = useCallback(async () => {
+    if (!currentUid || !venueId || !tableId) return;
+    setSessionActionLoading(true);
+    try {
+      const res = await fetch("/api/session/exit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueId, tableId, uid: currentUid }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        toast.error(data.error || "Не удалось выйти из сессии");
+        return;
+      }
+      toast.success("Вы вышли из сессии стола");
+      await refreshSessionState();
+    } finally {
+      setSessionActionLoading(false);
+    }
+  }, [currentUid, venueId, tableId, refreshSessionState]);
 
   const openTableScanner = useCallback(() => {
     const inTg = isTelegramContext();
@@ -340,7 +496,60 @@ function MiniAppContent() {
               Стол не найден в системе — вызов недоступен
             </p>
           )}
+          {sessionUiError && (
+            <p className="mt-2 text-center text-sm text-red-700">{sessionUiError}</p>
+          )}
         </header>
+
+        {sessionState && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-sm font-semibold text-slate-900">
+              Режим стола: {isMaster ? "Master (хозяин)" : "Участник"}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Подселение: {sessionState.isPrivate ? "запрещено" : "разрешено"} · ваш статус: {myStatus ?? "unknown"}
+            </p>
+            {isMaster && (
+              <button
+                type="button"
+                disabled={sessionActionLoading}
+                onClick={() => void onToggleAllowJoin()}
+                className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {sessionState.isPrivate ? "Разрешить подселение" : "Запретить подселение"}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={sessionActionLoading || !currentUid}
+              onClick={() => void onPayMyBill()}
+              className="mt-2 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Оплатить мой счет
+            </button>
+            {isMaster && (
+              <button
+                type="button"
+                disabled={sessionActionLoading}
+                onClick={() => void onCloseWholeTable()}
+                className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                Закрыть весь стол
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={sessionActionLoading || !currentUid}
+              onClick={() => void onExitSession()}
+              className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Выйти из сессии
+            </button>
+            <p className="mt-2 text-[11px] text-slate-500">
+              table closed, partial paid, already joined и table_private обрабатываются серверной сессией.
+            </p>
+          </section>
+        )}
 
         <button
           type="button"

@@ -46,7 +46,7 @@ function CheckInContent() {
   const { visitorId, recordVisitorSession } = useVisitor();
 
   const [locale, setLocale] = useState(getBrowserLocale());
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict" | "private">("idle");
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [tgClientUsername, setTgClientUsername] = useState<string | null>(null);
   const [venueDisplayName, setVenueDisplayName] = useState<string>("");
@@ -142,6 +142,7 @@ function CheckInContent() {
             venueId,
             tableId,
             tableNumber: tableNum,
+            participantUid: visitorId?.trim() || undefined,
             // На этом экране мы не знаем конкретный guestId/messenger identity,
             // поэтому оставляем guestIdentity undefined (API сможет только проверить reservation conflict).
             guestIdentity: undefined,
@@ -156,8 +157,10 @@ function CheckInContent() {
           throw new Error((data as { error?: string }).error || "check-in failed");
         }
 
-        const apiStatus = (data as { status?: "check_in_success" | "table_conflict" }).status;
-        setStatus(apiStatus === "table_conflict" ? "conflict" : "success");
+        const apiStatus = (data as { status?: "check_in_success" | "table_conflict" | "table_private" }).status;
+        if (apiStatus === "table_conflict") setStatus("conflict");
+        else if (apiStatus === "table_private") setStatus("private");
+        else setStatus("success");
 
         if (apiStatus === "check_in_success") {
           window.location.href = buildDeepLink(
@@ -222,6 +225,11 @@ function CheckInContent() {
         {status === "conflict" && (
           <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
             Извините, стол забронирован. К вам уже идут.
+          </p>
+        )}
+        {status === "private" && (
+          <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+            Стол приватный. Подселение запрещено без разрешения хозяина.
           </p>
         )}
         {status === "success" && (

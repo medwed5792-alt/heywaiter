@@ -5,7 +5,14 @@ const VENUE_ID = DEFAULT_VENUE_ID;
 
 /**
  * POST /api/guest/wait-order
- * Тело: { venueId?: string, orderNumber: number, guestChatId: string, guestPlatform: string }
+ * Тело: {
+ *   venueId?: string,
+ *   orderNumber: number,
+ *   guestChatId: string,
+ *   guestPlatform: string,
+ *   customerUid?: string,
+ *   tableId?: string
+ * }
  * Примитив Fast Food: гость ввёл номер заказа/чека и жмёт «Ждать готовности». Создаём/обновляем запись для пульта выдачи.
  */
 export async function POST(request: NextRequest) {
@@ -15,6 +22,8 @@ export async function POST(request: NextRequest) {
     const orderNumber = Number(body.orderNumber);
     const guestChatId = body.guestChatId as string;
     const guestPlatform = (body.guestPlatform as string) || "telegram";
+    const customerUid = (body.customerUid as string | undefined)?.trim();
+    const tableId = (body.tableId as string | undefined)?.trim();
     if (!Number.isFinite(orderNumber) || orderNumber < 1 || !guestChatId) {
       return Response.json(
         { ok: false, error: "orderNumber (число) и guestChatId обязательны" },
@@ -29,6 +38,8 @@ export async function POST(request: NextRequest) {
       venueId,
       guestChatId,
       guestPlatform,
+      customerUid: customerUid || guestChatId,
+      ...(tableId ? { tableId } : {}),
       status: "pending",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),

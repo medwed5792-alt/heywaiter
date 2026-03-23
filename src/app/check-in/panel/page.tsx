@@ -145,10 +145,15 @@ function FullServicePanel({
       await fetch("/api/check-in", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ venueId, tableId, guestIdentity }),
+        body: JSON.stringify({
+          venueId,
+          tableId,
+          participantUid: effectiveVisitorId ?? undefined,
+          guestIdentity,
+        }),
       });
     })();
-  }, [venueId, tableId, chatId, platform]);
+  }, [venueId, tableId, chatId, platform, effectiveVisitorId]);
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
@@ -270,6 +275,7 @@ function FastFoodPrimitiveView({
           orderNumber: n,
           guestChatId: chatId,
           guestPlatform: platform,
+          customerUid: chatId ? `chat:${chatId}` : undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; orderId?: string };
