@@ -63,6 +63,23 @@ function parseLegacyUnderscorePayload(
   return { venueId, tableId: tablePart };
 }
 
+function parseShortUnderscorePayload(
+  payload: string
+): { venueId: string; tableId: string } | null {
+  // Short legacy format from Telegram:
+  //   /start venueId_tableId
+  // Example: test_1 => { venueId: "test", tableId: "1" }
+  const s = payload?.trim() ?? "";
+  if (!s) return null;
+
+  // Avoid capturing the "v_venueId_t_tableId" style which contains "_t_".
+  if (s.includes("_t_")) return null;
+
+  const short = s.match(/^([^_\s]+)_(\d+)$/);
+  if (!short) return null;
+  return { venueId: short[1], tableId: short[2] };
+}
+
 export function parseStartParamPayload(
   payload: string
 ): { venueId: string; tableId: string; visitorId?: string } | null {
@@ -70,5 +87,7 @@ export function parseStartParamPayload(
   if (!s) return null;
   const colon = parseColonPayload(s);
   if (colon) return colon;
-  return parseLegacyUnderscorePayload(s);
+  const legacy = parseLegacyUnderscorePayload(s);
+  if (legacy) return legacy;
+  return parseShortUnderscorePayload(s);
 }

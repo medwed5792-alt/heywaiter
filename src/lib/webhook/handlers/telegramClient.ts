@@ -56,10 +56,8 @@ function parseStartPayload(text: string): { venueId: string; tableId: string } |
   const afterStart = raw.replace(/^\/start\s+/i, "").trim();
   if (!afterStart) return null;
   const parsed = parseStartParamPayload(afterStart);
-  if (parsed) return { venueId: parsed.venueId, tableId: parsed.tableId };
-  const short = raw.match(/\/start\s+([^_\s]+)_(\d+)/);
-  if (short) return { venueId: short[1], tableId: short[2] };
-  return null;
+  if (!parsed) return null;
+  return { venueId: parsed.venueId, tableId: parsed.tableId };
 }
 
 function parseCallbackData(data: string): { venueId: string; tableId: string } | null {
