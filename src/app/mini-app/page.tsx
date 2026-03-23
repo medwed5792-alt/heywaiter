@@ -2,7 +2,7 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback, Suspense, useMemo, useRef } from "react";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, limit, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -238,6 +238,8 @@ function MiniAppContent() {
   const isMaster = Boolean(sessionState?.masterId && currentUid && sessionState.masterId === currentUid);
   const myParticipant = sessionState?.participants?.find((p) => p.uid === currentUid) ?? null;
   const myStatus = myParticipant?.status ?? null;
+  const isParticipant = Boolean(myParticipant);
+  const allowJoin = Boolean(sessionState && !sessionState.isPrivate);
 
   const sessionFirstVisit = Boolean(venueId && tableId) && !isStaffEntry;
   const isLoadingTable = Boolean(sessionFirstVisit && tableId && !firestoreDone);
@@ -265,29 +267,6 @@ function MiniAppContent() {
     }
   }, [venueId, tableId, tableRecognized, tableNumberResolved, currentUid]);
 
-  const refreshSessionState = useCallback(async () => {
-    if (!venueId || !tableId) {
-      setSessionState(null);
-      return;
-    }
-    const res = await fetch("/api/session/state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ venueId, tableId }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      state?: {
-        sessionId: string;
-        masterId: string;
-        isPrivate: boolean;
-        participants: { uid: string; status: "active" | "paid" | "exited" }[];
-      } | null;
-    };
-    if (!res.ok || !data.ok) return;
-    setSessionState(data.state ?? null);
-  }, [venueId, tableId]);
-
   useEffect(() => {
     if (!venueId || !tableId || isStaffEntry || !currentUid) return;
     const key = `${venueId}:${tableId}:${currentUid}`;
@@ -309,35 +288,72 @@ function MiniAppContent() {
       } else {
         setSessionUiError(null);
       }
-      await refreshSessionState();
     })();
-  }, [venueId, tableId, currentUid, isStaffEntry, refreshSessionState]);
+  }, [venueId, tableId, currentUid, isStaffEntry]);
 
   useEffect(() => {
-    if (!venueId || !tableId || isStaffEntry) return;
-    void refreshSessionState();
-  }, [venueId, tableId, isStaffEntry, refreshSessionState]);
+    if (!venueId || !tableId || isStaffEntry) {
+      setSessionState(null);
+      return;
+    }
+    const q = query(
+      collection(db, "activeSessions"),
+      where("venueId", "==", venueId),
+      where("tableId", "==", tableId),
+      where("status", "==", "check_in_success"),
+      limit(1)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        if (snap.empty) {
+          setSessionState(null);
+          return;
+        }
+        const d = (snap.docs[0].data() ?? {}) as Record<string, unknown>;
+        const participantsRaw = Array.isArray(d.participants) ? d.participants : [];
+        const participants = participantsRaw
+          .map((p) => {
+            const x = (p ?? {}) as Record<string, unknown>;
+            const uid = typeof x.uid === "string" ? x.uid.trim() : "";
+            const status = x.status === "paid" || x.status === "exited" ? x.status : "active";
+            return uid ? { uid, status: status as "active" | "paid" | "exited" } : null;
+          })
+          .filter(Boolean) as { uid: string; status: "active" | "paid" | "exited" }[];
+        setSessionState({
+          sessionId: snap.docs[0].id,
+          masterId: typeof d.masterId === "string" ? d.masterId.trim() : "",
+          isPrivate: typeof d.isPrivate === "boolean" ? d.isPrivate : true,
+          participants,
+        });
+      },
+      (err) => {
+        console.warn("[mini-app] session snapshot error:", err);
+      }
+    );
+    return () => unsub();
+  }, [venueId, tableId, isStaffEntry]);
+
+  const isAccessDenied = Boolean(
+    sessionState &&
+      sessionState.isPrivate &&
+      currentUid &&
+      !isMaster &&
+      !isParticipant
+  );
 
   const onToggleAllowJoin = useCallback(async () => {
-    if (!sessionState || !isMaster || !currentUid) return;
+    if (!sessionState || !isMaster) return;
     setSessionActionLoading(true);
     try {
-      const allowJoin = sessionState.isPrivate;
-      const res = await fetch("/api/session/privacy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ venueId, tableId, actorUid: currentUid, allowJoin }),
+      await updateDoc(doc(db, "activeSessions", sessionState.sessionId), {
+        isPrivate: !sessionState.isPrivate,
+        updatedAt: serverTimestamp(),
       });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        toast.error(data.error || "Не удалось изменить приватность");
-        return;
-      }
-      await refreshSessionState();
     } finally {
       setSessionActionLoading(false);
     }
-  }, [sessionState, isMaster, currentUid, venueId, tableId, refreshSessionState]);
+  }, [sessionState, isMaster]);
 
   const onPayMyBill = useCallback(async () => {
     if (!currentUid || !venueId || !tableId) return;
@@ -354,11 +370,10 @@ function MiniAppContent() {
         return;
       }
       toast.success(`Оплачено позиций: ${data.updatedOrders ?? 0}`);
-      await refreshSessionState();
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, refreshSessionState]);
+  }, [currentUid, venueId, tableId]);
 
   const onCloseWholeTable = useCallback(async () => {
     if (!currentUid || !venueId || !tableId || !isMaster) return;
@@ -375,11 +390,10 @@ function MiniAppContent() {
         return;
       }
       toast.success(`Стол закрыт, оплачено позиций: ${data.updatedOrders ?? 0}`);
-      await refreshSessionState();
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, isMaster, refreshSessionState]);
+  }, [currentUid, venueId, tableId, isMaster]);
 
   const onExitSession = useCallback(async () => {
     if (!currentUid || !venueId || !tableId) return;
@@ -396,11 +410,10 @@ function MiniAppContent() {
         return;
       }
       toast.success("Вы вышли из сессии стола");
-      await refreshSessionState();
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, refreshSessionState]);
+  }, [currentUid, venueId, tableId]);
 
   const openTableScanner = useCallback(() => {
     const inTg = isTelegramContext();
@@ -510,19 +523,73 @@ function MiniAppContent() {
             <p className="text-sm font-semibold text-slate-900">
               Режим стола: {isMaster ? "Master (хозяин)" : "Участник"}
             </p>
-            <p className="mt-1 text-xs text-slate-600">
-              Подселение: {sessionState.isPrivate ? "запрещено" : "разрешено"} · ваш статус: {myStatus ?? "unknown"}
-            </p>
+            <p className="mt-1 text-xs text-slate-600">Ваш статус: {myStatus ?? "unknown"}</p>
+
+            <div className="mt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Кто за столом</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {sessionState.participants.map((p) => {
+                  const short = p.uid.slice(0, 10);
+                  const isOwner = Boolean(sessionState.masterId && p.uid === sessionState.masterId);
+                  return (
+                    <div
+                      key={p.uid}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700"
+                    >
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-semibold text-slate-700">
+                        {short[0]?.toUpperCase() ?? "G"}
+                      </span>
+                      <span className="max-w-[130px] truncate">{short}</span>
+                      {isOwner && <span title="Хозяин">👑</span>}
+                    </div>
+                  );
+                })}
+                {sessionState.participants.length === 0 && (
+                  <p className="text-xs text-slate-500">Пока только вы за столом.</p>
+                )}
+              </div>
+            </div>
+
             {isMaster && (
-              <button
-                type="button"
-                disabled={sessionActionLoading}
-                onClick={() => void onToggleAllowJoin()}
-                className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {sessionState.isPrivate ? "Разрешить подселение" : "Запретить подселение"}
-              </button>
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <label className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-medium text-slate-800">Разрешить подселение</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={allowJoin}
+                    disabled={sessionActionLoading}
+                    onClick={() => void onToggleAllowJoin()}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                      allowJoin ? "bg-emerald-500" : "bg-slate-300"
+                    } disabled:opacity-50`}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+                        allowJoin ? "translate-x-5" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </label>
+                <p className="mt-2 text-xs text-slate-600">
+                  Сейчас другие гости {allowJoin ? "могут" : "не могут"} подсесть к вам по QR-коду.
+                </p>
+              </div>
             )}
+
+            {isAccessDenied && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm font-medium text-amber-900">
+                  Стол №{tableNumberResolved ?? tableId} сейчас в приватном режиме.
+                </p>
+                <p className="mt-1 text-xs text-amber-800">
+                  Попросите Мастера открыть доступ или выберите другой стол.
+                </p>
+              </div>
+            )}
+
+            {!isAccessDenied && (
+              <>
             <button
               type="button"
               disabled={sessionActionLoading || !currentUid}
@@ -552,25 +619,29 @@ function MiniAppContent() {
             <p className="mt-2 text-[11px] text-slate-500">
               table closed, partial paid, already joined и table_private обрабатываются серверной сессией.
             </p>
+              </>
+            )}
           </section>
         )}
 
-        <button
-          type="button"
-          disabled={callDisabled}
-          onClick={() => void handleCallWaiter()}
-          className="flex min-h-[180px] w-full flex-col items-center justify-center gap-4 rounded-3xl border-2 border-emerald-300 bg-gradient-to-b from-white to-emerald-50/80 py-10 shadow-lg transition-all hover:border-emerald-400 disabled:pointer-events-none disabled:opacity-45"
-        >
-          <span className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md">
-            <Bell className="h-10 w-10" />
-          </span>
-          <span className="text-xl font-bold tracking-tight text-slate-900">
-            {callLoading ? "Отправка…" : "Вызвать официанта"}
-          </span>
-          {cooldownLeft > 0 && (
-            <span className="text-sm text-slate-500">Повтор через {cooldownLeft} с</span>
-          )}
-        </button>
+        {!isAccessDenied && (
+          <button
+            type="button"
+            disabled={callDisabled}
+            onClick={() => void handleCallWaiter()}
+            className="flex min-h-[180px] w-full flex-col items-center justify-center gap-4 rounded-3xl border-2 border-emerald-300 bg-gradient-to-b from-white to-emerald-50/80 py-10 shadow-lg transition-all hover:border-emerald-400 disabled:pointer-events-none disabled:opacity-45"
+          >
+            <span className="flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-md">
+              <Bell className="h-10 w-10" />
+            </span>
+            <span className="text-xl font-bold tracking-tight text-slate-900">
+              {callLoading ? "Отправка…" : "Вызвать официанта"}
+            </span>
+            {cooldownLeft > 0 && (
+              <span className="text-sm text-slate-500">Повтор через {cooldownLeft} с</span>
+            )}
+          </button>
+        )}
       </div>
     </main>
   );
