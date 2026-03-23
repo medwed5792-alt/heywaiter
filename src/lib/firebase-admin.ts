@@ -68,8 +68,9 @@ function getFirebaseAdmin(): { firestore: Firestore } {
     }
   }
   if (!adminFirestore) {
-    adminFirestore = admin.firestore();
-    adminFirestore.settings({ ignoreUndefinedProperties: true });
+    const firestore = admin.firestore() as Firestore;
+    firestore.settings({ ignoreUndefinedProperties: true });
+    adminFirestore = firestore;
   }
   return { firestore: adminFirestore! };
 }

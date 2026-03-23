@@ -248,7 +248,7 @@ export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<BookingWithMeta[]>([]);
   const [bookingSwitch, setBookingSwitch] = useState<{ enabled: boolean; until: string | null }>({ enabled: true, until: null });
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Partial<Booking> & { id?: string; bookingNote?: string } | null>(null);
+  const [editing, setEditing] = useState<Partial<BookingWithMeta> & { id?: string; bookingNote?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [notifyCooldown, setNotifyCooldown] = useState<Record<string, number>>({});
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -424,7 +424,7 @@ export default function AdminBookingsPage() {
   }, []);
 
   const saveBooking = useCallback(
-    async (payload: Partial<Booking> & { id?: string; bookingNote?: string }) => {
+    async (payload: Partial<BookingWithMeta> & { id?: string; bookingNote?: string }) => {
       setConflictError(null);
       setSaving(true);
       try {
@@ -478,6 +478,7 @@ export default function AdminBookingsPage() {
         const seatsNum = Number(payload.seats ?? editing?.seats ?? 2) || 2;
         const nowMs = Date.now();
         const isUrgent = startAtDate.getTime() < nowMs;
+        const payloadMeta = payload as Partial<BookingWithMeta>;
 
         // Если гостя нет в базе — создаём запись в коллекции guests с type "regular" (Новый), чтобы не слать undefined в Firestore
         let guestIdResolved: string | null = payload.guestId != null && payload.guestId !== "" ? String(payload.guestId) : null;
@@ -506,8 +507,8 @@ export default function AdminBookingsPage() {
           status: payload.status ?? "pending",
           startAt,
           endAt,
-          notifyWaiter: payload.notifyWaiter ?? editing?.notifyWaiter ?? false,
-          flashDashboard: payload.flashDashboard ?? editing?.flashDashboard ?? false,
+          notifyWaiter: payloadMeta.notifyWaiter ?? editing?.notifyWaiter ?? false,
+          flashDashboard: payloadMeta.flashDashboard ?? editing?.flashDashboard ?? false,
           isUrgent,
           updatedAt: serverTimestamp(),
         };
@@ -706,7 +707,7 @@ export default function AdminBookingsPage() {
       const toDelete: string[] = [];
       for (const b of bookings) {
         if (!b.id) continue;
-        if ((b as Booking).status === "seated") continue;
+        if (b.status === "cancelled") continue;
         const endDate =
           b.endAt && typeof (b.endAt as any)?.toDate === "function"
             ? (b.endAt as { toDate: () => Date }).toDate()
@@ -779,7 +780,7 @@ export default function AdminBookingsPage() {
                       <button
                         type="button"
                         onClick={() => b.id && sendLateReminder(b.id)}
-                        disabled={notifyCooldown[b.id!] && Date.now() - notifyCooldown[b.id!] < LATE_NOTIFY_INTERVAL_MS}
+                        disabled={Boolean(b.id && notifyCooldown[b.id] && Date.now() - notifyCooldown[b.id] < LATE_NOTIFY_INTERVAL_MS)}
                         className="rounded bg-amber-600 px-2 py-1 text-xs text-white disabled:opacity-50"
                       >
                         Напомнить ЛПР
@@ -899,11 +900,11 @@ export default function AdminBookingsPage() {
                 onChange={(e) => {
                   const id = e.target.value;
                   if (!id) {
-                    setEditing((p) => ({ ...p, guestId: undefined, guestName: p.guestName ?? "", guestContact: p.guestContact ?? "" }));
+                    setEditing((p) => (p ? { ...p, guestId: undefined, guestName: p.guestName ?? "", guestContact: p.guestContact ?? "" } : p));
                     return;
                   }
                   const g = venueGuests.find((x) => x.id === id);
-                  if (g) setEditing((p) => ({ ...p, guestId: g.id, guestName: g.name ?? "", guestContact: g.phone ?? "" }));
+                  if (g) setEditing((p) => (p ? { ...p, guestId: g.id, guestName: g.name ?? "", guestContact: g.phone ?? "" } : p));
                 }}
               >
                 <option value="">— Ввести вручную —</option>

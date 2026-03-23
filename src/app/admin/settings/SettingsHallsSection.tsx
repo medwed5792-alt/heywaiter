@@ -329,7 +329,7 @@ export function SettingsHallsSection() {
           name: (d.data().name as string) ?? "",
           order: (d.data().order as number) ?? 0,
         }));
-        hallList.sort((a, b) => a.order - b.order);
+        hallList.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         setHalls(hallList);
       } catch {
         // залы не загрузились — не блокируем столы
@@ -364,7 +364,7 @@ export function SettingsHallsSection() {
       name: (d.data().name as string) ?? "",
       order: (d.data().order as number) ?? 0,
     }));
-    hallList.sort((a, b) => a.order - b.order);
+    hallList.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     setHalls(hallList);
     setTables(tablesSnap.docs.map(parseVenueTableDoc).filter((t): t is VenueTable => Boolean(t)));
   };

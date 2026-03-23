@@ -45,6 +45,7 @@ type FormState = {
   placements: string[];
   sortOrder: number;
   regions: string[];
+  countries: string[];
   venueLevels: number[];
   category: string;
   isGlobalReserve: boolean;

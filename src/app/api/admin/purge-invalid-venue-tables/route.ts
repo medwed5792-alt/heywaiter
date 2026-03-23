@@ -11,7 +11,7 @@ import { resolveVenueId } from "@/lib/standards/venue-default";
  * - number — пустая строка или строка "0";
  * - number — число 0 или не конечное.
  */
-export function isInvalidVenueTableNumber(data: Record<string, unknown>): boolean {
+function isInvalidVenueTableNumber(data: Record<string, unknown>): boolean {
   if (!("number" in data)) return true;
   const n = data.number;
   if (n === null || n === undefined) return true;

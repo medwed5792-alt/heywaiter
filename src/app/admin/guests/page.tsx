@@ -210,7 +210,7 @@ export default function AdminGuestsPage() {
                     {newGuests.map((g) => (
                       <tr key={g.id} className="border-b border-gray-100">
                         <td className="p-3 text-sm flex items-center gap-1.5">
-                          {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
+                          {g.note?.trim() ? <span title="Есть примечание"><StickyNote className="h-4 w-4 shrink-0 text-amber-600" /></span> : null}
                           {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                         </td>
                         <td className="p-3 text-xs text-gray-700">{globalScores[g.id] != null ? String(globalScores[g.id]) : "—"}</td>
@@ -245,7 +245,7 @@ export default function AdminGuestsPage() {
                     {ownGuests.map((g) => (
                       <tr key={g.id} className="border-b border-gray-100">
                         <td className="p-3 text-sm flex items-center gap-1.5">
-                          {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
+                          {g.note?.trim() ? <span title="Есть примечание"><StickyNote className="h-4 w-4 shrink-0 text-amber-600" /></span> : null}
                           {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                         </td>
                         <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>
@@ -276,7 +276,7 @@ export default function AdminGuestsPage() {
               {visibleGuests.map((g) => (
                 <tr key={g.id} className="border-b border-gray-100">
                   <td className="p-3 text-sm flex items-center gap-1.5">
-                    {g.note?.trim() ? <StickyNote className="h-4 w-4 shrink-0 text-amber-600" title="Есть примечание" /> : null}
+                    {g.note?.trim() ? <span title="Есть примечание"><StickyNote className="h-4 w-4 shrink-0 text-amber-600" /></span> : null}
                     {g.name || g.nickname || g.phone || g.id.slice(0, 8)}
                   </td>
                   <td className="p-3 text-xs text-gray-600">{GUEST_TYPES.find((t) => t.value === g.type)?.label ?? g.type}</td>

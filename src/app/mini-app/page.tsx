@@ -666,9 +666,9 @@ function MiniAppContent() {
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
         <div className="mx-auto max-w-sm text-center">
           <QrCode className="mx-auto mb-4 h-16 w-16 text-slate-400" aria-hidden />
-          <h1 className="text-lg font-semibold text-slate-900">Откройте стол по QR</h1>
+          <h1 className="text-lg font-semibold text-slate-900">Личный кабинет</h1>
           <p className="mt-2 text-sm text-slate-600">
-            Наведите камеру на QR-код на столе или отсканируйте его в Telegram, чтобы вызвать официанта.
+            Режим без стола: откройте стол по QR, чтобы включить вызов официанта.
           </p>
           <button
             type="button"

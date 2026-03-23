@@ -83,11 +83,19 @@ function parseShortUnderscorePayload(
 export function parseStartParamPayload(
   payload: string
 ): { venueId: string; tableId: string; visitorId?: string } | null {
-  const s = payload?.trim();
-  if (!s) return null;
-  const colon = parseColonPayload(s);
+  const raw = payload?.trim();
+  if (!raw) return null;
+  let s = raw;
+  try {
+    s = decodeURIComponent(raw);
+  } catch {
+    // keep raw value if it is not a valid URI component
+  }
+  const normalized = s.trim();
+  if (!normalized) return null;
+  const colon = parseColonPayload(normalized);
   if (colon) return colon;
-  const legacy = parseLegacyUnderscorePayload(s);
+  const legacy = parseLegacyUnderscorePayload(normalized);
   if (legacy) return legacy;
-  return parseShortUnderscorePayload(s);
+  return parseShortUnderscorePayload(normalized);
 }

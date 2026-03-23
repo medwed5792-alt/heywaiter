@@ -33,6 +33,7 @@ type LookupByIdentityResult = {
   medicalCard: MedicalCard | null;
   careerHistory: { venueId: string; position: string; joinDate: unknown; exitDate: unknown; exitReason: string; rating?: number; comment?: string }[];
   affiliations: { venueId: string; role?: string; status?: string }[];
+  identity?: { displayName?: string };
 };
 
 /** Иерархия должностей v2: группа → список ролей с подписями. */
@@ -180,7 +181,7 @@ function StaffRow({
 }) {
   const fullName = (staff.firstName || staff.lastName)
     ? [staff.firstName, staff.lastName].filter(Boolean).join(" ")
-    : (staff.identity?.displayName ?? staff.identity?.name ?? "");
+    : (staff.identity?.displayName ?? "");
   const name = fullName.trim() ? fullName.split(' ')[0] : "Сотрудник";
   const isActive = staff.active !== false;
   const onShift = staff.onShift === true;
@@ -420,7 +421,7 @@ export default function TeamPage() {
   }, []);
 
   const filteredStaff = staffList.filter((s) => {
-    const name = (s.firstName ?? "") + " " + (s.lastName ?? "") + " " + (s.identity?.displayName ?? "") + " " + (s.identity?.name ?? "");
+    const name = (s.firstName ?? "") + " " + (s.lastName ?? "") + " " + (s.identity?.displayName ?? "");
     if (nameSearch.trim() && !name.toLowerCase().includes(nameSearch.trim().toLowerCase())) return false;
     if (groupFilter) {
       const sGroup = getStaffGroup(s);
@@ -813,6 +814,7 @@ export default function TeamPage() {
       onShift: false,
       phone: lookupType === "phone" && digitsOnly ? digitsOnly : undefined,
       identities: Object.keys(identities).length > 0 ? identities : undefined,
+      updatedAt: new Date().toISOString(),
     };
     resetLookupResults();
     setEditingStaff(staffNew);
@@ -856,7 +858,7 @@ export default function TeamPage() {
 
   const dismissNameRaw = (dismissModal?.firstName || dismissModal?.lastName)
     ? [dismissModal.firstName, dismissModal.lastName].filter(Boolean).join(" ")
-    : (dismissModal?.identity?.name ?? dismissModal?.identity?.displayName ?? "");
+    : (dismissModal?.identity?.displayName ?? "");
   const dismissName = String(dismissNameRaw ?? "").trim() ? String(dismissNameRaw).trim().split(' ')[0] : "Сотрудник";
 
   return (
@@ -940,7 +942,6 @@ export default function TeamPage() {
                   {String(
                     [lookupResult.firstName, lookupResult.lastName].filter(Boolean).join(" ") ||
                       lookupResult.identity?.displayName ||
-                      lookupResult.identity?.name ||
                       ""
                   )
                     .trim()

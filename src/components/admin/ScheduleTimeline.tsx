@@ -77,7 +77,7 @@ export function ScheduleTimeline({
     const s = staffList.find((x) => x.id === staffId);
     if (!s) return "Сотрудник";
     const full =
-      (s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? s.identity?.name ?? "");
+      (s.firstName ?? s.lastName) ? [s.firstName, s.lastName].filter(Boolean).join(" ") : (s.identity?.displayName ?? "");
     const cleaned = String(full ?? "").trim();
     if (!cleaned) return "Сотрудник";
     return cleaned.split(' ')[0] || "Сотрудник";
