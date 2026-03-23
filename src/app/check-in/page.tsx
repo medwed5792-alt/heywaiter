@@ -8,18 +8,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, Suspense, useState, useCallback } from "react";
 import { MessageCircle } from "lucide-react";
-import {
-  collection,
-  doc,
-  getDoc,
-  query,
-  where,
-  getDocs,
-  addDoc,
-  serverTimestamp,
-  limit,
-  Timestamp,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { getCheckInCopy } from "@/lib/i18n-checkin";
@@ -29,8 +18,6 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
-
-const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 мин
 
 /** Фирменные цвета брендов мессенджеров для кнопок (строгий стиль) */
 const MESSENGER_BRAND_COLORS: Record<MessengerChannel, string> = {
@@ -145,67 +132,34 @@ function CheckInContent() {
       // например коллекция checkInChoices { venueId, tableId, channel, createdAt }
       // или поле guestChannel в документе activeSessions после создания сессии.
 
-      const now = new Date();
-      const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
-      const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
-
       try {
-        const reservationsRef = collection(db, "reservations");
-        const q = query(
-          reservationsRef,
-          where("venueId", "==", venueId),
-          where("tableId", "==", tableId),
-          where("reservedAt", ">=", Timestamp.fromDate(windowStart)),
-          where("reservedAt", "<=", Timestamp.fromDate(windowEnd)),
-          limit(1)
-        );
-        const snap = await getDocs(q);
-        const hasReservation = !snap.empty;
-
         const tableNum = Number.isNaN(Number(tableId)) ? 0 : Number(tableId);
 
-        if (hasReservation) {
-          const conflictRef = await addDoc(collection(db, "activeSessions"), {
+        const res = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             venueId,
             tableId,
             tableNumber: tableNum,
-            guestIdentity: null,
-            status: "table_conflict",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-          await addDoc(collection(db, "staffNotifications"), {
-            venueId,
-            tableId,
-            type: "table_conflict",
-            sessionId: conflictRef.id,
-            message: `Конфликт брони: стол ${tableId}. К вам уже идут.`,
-            read: false,
-            createdAt: serverTimestamp(),
-          });
-          setStatus("conflict");
-        } else {
-          const sessionRef = await addDoc(collection(db, "activeSessions"), {
-            venueId,
-            tableId,
-            tableNumber: tableNum,
-            guestIdentity: null,
-            waiterId: null,
-            waiterDisplayName: null,
-            status: "check_in_success",
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-          await addDoc(collection(db, "staffNotifications"), {
-            venueId,
-            tableId,
-            sessionId: sessionRef.id,
-            type: "new_guest",
-            message: `Новый гость, Стол №${tableNum || tableId}`,
-            read: false,
-            createdAt: serverTimestamp(),
-          });
-          setStatus("success");
+            // На этом экране мы не знаем конкретный guestId/messenger identity,
+            // поэтому оставляем guestIdentity undefined (API сможет только проверить reservation conflict).
+            guestIdentity: undefined,
+          }),
+        });
+
+        const data = (await res.json().catch(() => ({}))) as
+          | { status?: string; error?: string }
+          | Record<string, unknown>;
+
+        if (!res.ok || (data as { error?: string }).error) {
+          throw new Error((data as { error?: string }).error || "check-in failed");
+        }
+
+        const apiStatus = (data as { status?: "check_in_success" | "table_conflict" }).status;
+        setStatus(apiStatus === "table_conflict" ? "conflict" : "success");
+
+        if (apiStatus === "check_in_success") {
           window.location.href = buildDeepLink(
             channel,
             venueId,
@@ -214,6 +168,7 @@ function CheckInContent() {
             { telegramUsername: tgClientUsername ?? undefined }
           );
         }
+
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
       } catch (err) {
         console.error("check-in error:", err);
