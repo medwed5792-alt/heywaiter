@@ -1,6 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import type { ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
 
 type SessionDocShape = {
   masterId?: string;
@@ -155,25 +156,42 @@ async function completeOrdersForTable(
   customerUid?: string
 ): Promise<{ updatedCount: number }> {
   const firestore = getAdminFirestore();
-  let q = firestore
+  const base = firestore
     .collection("orders")
     .where("venueId", "==", venueId)
     .where("tableId", "==", tableId)
     .where("status", "in", ["pending", "ready"]);
-  if (customerUid) {
-    q = q.where("customerUid", "==", customerUid);
+
+  const legacyTelegramId =
+    customerUid && customerUid.startsWith("telegram_user_id:")
+      ? customerUid.slice("telegram_user_id:".length).trim()
+      : "";
+
+  const [primarySnap, legacySnap] = await Promise.all([
+    customerUid ? base.where("customerUid", "==", customerUid).get() : base.get(),
+    legacyTelegramId ? base.where("guestChatId", "==", legacyTelegramId).get() : Promise.resolve(null),
+  ]);
+
+  const docs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  for (const d of primarySnap.docs) docs.set(d.id, d);
+  if (legacySnap) {
+    for (const d of legacySnap.docs) docs.set(d.id, d);
   }
-  const snap = await q.get();
-  if (snap.empty) return { updatedCount: 0 };
+  if (docs.size === 0) return { updatedCount: 0 };
+
   const batch = firestore.batch();
-  for (const doc of snap.docs) {
+  for (const doc of docs.values()) {
+    const normalizedUid =
+      customerUid ||
+      buildTelegramCustomerUid((doc.data() as Record<string, unknown>).guestChatId as string | undefined);
     batch.update(doc.ref, {
       status: "completed",
+      ...(normalizedUid ? { customerUid: normalizedUid } : {}),
       updatedAt: FieldValue.serverTimestamp(),
     });
   }
   await batch.commit();
-  return { updatedCount: snap.size };
+  return { updatedCount: docs.size };
 }
 
 export async function payMyBill(

@@ -203,6 +203,7 @@ export interface Order {
   orderNumber: number;
   venueId: string;
   tableId?: string;
+  /** @deprecated Legacy delivery channel field. Use customerUid for ownership/billing. */
   guestChatId: string;
   guestPlatform: MessengerChannel;
   /** Split Bill anchor: who created this order/position. */
@@ -538,8 +539,11 @@ export interface ActiveSession {
   tableId: string;
   tableNumber: number;
   guestIdentity?: MessengerIdentity;
+  /** @deprecated Legacy channel-level identity. Use masterId/participants/customerUid. */
   guestChannel?: MessengerChannel;
+  /** @deprecated Legacy chat identifier. Use customerUid contract. */
   guestChatId?: string;
+  /** @deprecated Legacy guest profile id. Use customerUid contract. */
   guestId?: string;
   waiterId?: string;
   waiterDisplayName?: string;
@@ -587,6 +591,8 @@ export interface StaffNotification {
   role?: ServiceRole;
   message: string;
   read: boolean;
+  /** @deprecated Legacy actor field; prefer customerUid in payload for guest origin. */
+  visitorId?: string;
   /** Только эти сотрудники видят уведомление в Staff-боте (изоляция) */
   targetUids: string[];
   createdAt: unknown;
