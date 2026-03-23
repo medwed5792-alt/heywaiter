@@ -36,6 +36,25 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
 
   const firestore = getAdminFirestore();
 
+  // Idempotency for panel reloads: if a successful check-in already exists for this table,
+  // don't create another activeSessions/staffNotifications set.
+  const existingSuccessSnap = await firestore
+    .collection("activeSessions")
+    .where("venueId", "==", venueId)
+    .where("tableId", "==", tableId)
+    .where("status", "==", "check_in_success")
+    .limit(1)
+    .get();
+
+  if (!existingSuccessSnap.empty) {
+    const existing = existingSuccessSnap.docs[0];
+    return {
+      status: "check_in_success",
+      sessionId: existing.id,
+      messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+    };
+  }
+
   // 1) Try to match a booking (±30 min) by guest identity (tgId/guestId or external id).
   const bookingsSnap = await firestore
     .collection("bookings")

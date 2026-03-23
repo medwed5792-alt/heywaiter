@@ -2,7 +2,7 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useMemo, useState, useEffect, useRef } from "react";
-import { collection, doc, getDoc, getDocs, query, where, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { GuestModePanel } from "@/components/guest/GuestModePanel";
 import { GuestMainMenu } from "@/components/guest/GuestMainMenu";
@@ -139,14 +139,6 @@ function FullServicePanel({
     if (checkInDone.current || !venueId || !tableId) return;
     checkInDone.current = true;
     (async () => {
-      const q = query(
-        collection(db, "activeSessions"),
-        where("venueId", "==", venueId),
-        where("tableId", "==", tableId),
-        where("status", "==", "check_in_success")
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) return;
       const guestIdentity = chatId
         ? { channel: platform as "telegram", externalId: chatId, locale: "ru" as const }
         : undefined;
