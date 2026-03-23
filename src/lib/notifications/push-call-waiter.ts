@@ -7,8 +7,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { ServiceRole } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
-
-const TELEGRAM_API = "https://api.telegram.org/bot";
+import { sendMessage } from "@/adapters/telegram/telegramApi";
 
 export type PushCallWaiterType = "call_waiter" | "request_bill" | "sos";
 
@@ -33,29 +32,6 @@ async function getTelegramIdsForStaff(
     if (tgId && tgId.trim()) tgIds.add(tgId.trim());
   }
   return tgIds;
-}
-
-async function sendTelegramMessage(
-  token: string,
-  chatId: string,
-  text: string,
-  withQuickOk: boolean
-): Promise<void> {
-  const body: Record<string, unknown> = { chat_id: chatId, text };
-  if (withQuickOk) {
-    body.reply_markup = {
-      inline_keyboard: [[{ text: "✅ ОК", callback_data: "read_notify" }]],
-    };
-  }
-  const res = await fetch(`${TELEGRAM_API}${token}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Telegram API: ${res.status} ${err}`);
-  }
 }
 
 /** ID официанта со стола — та же логика, что getWaiterIdFromTablePayload. */
@@ -146,7 +122,17 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
   if (token && tgIds.size > 0) {
     for (const chatId of tgIds) {
       try {
-        await sendTelegramMessage(token, chatId, message, isRegularCall);
+        await sendMessage(token, {
+          chat_id: chatId,
+          text: message,
+          ...(isRegularCall
+            ? {
+                reply_markup: {
+                  inline_keyboard: [[{ text: "✅ ОК", callback_data: "read_notify" }]],
+                },
+              }
+            : {}),
+        });
       } catch (err) {
         console.error("[push-call-waiter] Telegram send to", chatId, err);
       }

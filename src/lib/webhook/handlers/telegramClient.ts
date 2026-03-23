@@ -16,8 +16,7 @@ import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
 import { getAppUrl } from "@/lib/webhook/utils";
 import { createGuestEvent } from "@/lib/guest-events";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
-
-const TELEGRAM_API = "https://api.telegram.org/bot";
+import { answerCallbackQuery, sendMessage, setChatMenuButton } from "@/adapters/telegram/telegramApi";
 
 /** Минимальные типы для входящего Update от Telegram Bot API */
 interface TelegramChat {
@@ -68,24 +67,6 @@ function parseCallbackData(data: string): { venueId: string; tableId: string } |
   return parsed ? { venueId: parsed.venueId, tableId: parsed.tableId } : null;
 }
 
-async function sendTelegram(
-  token: string,
-  method: string,
-  body: Record<string, unknown>
-): Promise<unknown> {
-  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
-  if (!res.ok || !data.ok) {
-    console.error("[webhook telegram/client] API error:", method, res.status, data);
-    throw new Error(data.description || "Telegram API error");
-  }
-  return data;
-}
-
 /** Устанавливает кнопку «Меню» слева от поля ввода — открывает Mini App по URL */
 async function setMenuButton(
   token: string,
@@ -94,14 +75,7 @@ async function setMenuButton(
   buttonText: string = "Пульт"
 ): Promise<void> {
   try {
-    await sendTelegram(token, "setChatMenuButton", {
-      chat_id: chatId,
-      menu_button: {
-        type: "web_app",
-        text: buttonText,
-        web_app: { url: webAppUrl },
-      },
-    });
+    await setChatMenuButton(token, { chat_id: chatId, webAppUrl, buttonText });
   } catch (e) {
     console.warn("[webhook telegram/client] setChatMenuButton failed (optional):", e);
   }
@@ -117,7 +91,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     const { id: callbackId, data, message, from } = update.callback_query;
     const parsed = parseCallbackData(data || "");
     if (!parsed) {
-      await sendTelegram(token, "answerCallbackQuery", {
+      await answerCallbackQuery(token, {
         callback_query_id: callbackId,
         text: "Ошибка: неверные данные.",
       });
@@ -132,16 +106,10 @@ export async function handleTelegramClient(request: NextRequest, token: string):
       tableNumber: !Number.isNaN(tableIdNum) ? tableIdNum : undefined,
       visitorId: from?.id != null ? String(from.id) : undefined,
     });
-    await sendTelegram(token, "answerCallbackQuery", {
-      callback_query_id: callbackId,
-      text: "Официант уведомлён! Скоро подойдёт.",
-    });
+    await answerCallbackQuery(token, { callback_query_id: callbackId, text: "Официант уведомлён! Скоро подойдёт." });
     const chatId = message?.chat?.id;
     if (chatId) {
-      await sendTelegram(token, "sendMessage", {
-        chat_id: chatId,
-        text: "✅ Официант вызван. Ожидайте.",
-      });
+      await sendMessage(token, { chat_id: chatId, text: "✅ Официант вызван. Ожидайте." });
     }
     return;
   }
@@ -153,21 +121,15 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const tgId = String(message.from?.id ?? "");
   if (!chatId) return;
 
-  await sendTelegram(token, "sendMessage", {
-    chat_id: chatId,
-    text: "\u200b",
-    reply_markup: { remove_keyboard: true },
-  });
+  await sendMessage(token, { chat_id: chatId, text: "\u200b", reply_markup: { remove_keyboard: true } });
 
   const parsed = parseStartPayload(message.text);
   if (!parsed) {
     const webAppUrl = `${baseUrl}/mini-app?chatId=${chatId}&platform=telegram`;
-    await sendTelegram(token, "sendMessage", {
+    await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
-      reply_markup: {
-        inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]],
-      },
+      reply_markup: { inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]] },
     });
     await setMenuButton(token, chatId, webAppUrl, "Меню");
     return;
@@ -178,10 +140,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const { guest, kind } = await identifyGuest(tgId, "tg");
 
   if (guest?.type === "blacklisted") {
-    await sendTelegram(token, "sendMessage", {
-      chat_id: chatId,
-      text: "Доступ ограничен. Обратитесь к администрации.",
-    });
+    await sendMessage(token, { chat_id: chatId, text: "Доступ ограничен. Обратитесь к администрации." });
     return;
   }
 
@@ -191,12 +150,10 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   if (venueType === "fast_food") {
     const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&chatId=${chatId}&platform=telegram`;
-    await sendTelegram(token, "sendMessage", {
+    await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
-      reply_markup: {
-        inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]],
-      },
+      reply_markup: { inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]] },
     });
     await setMenuButton(token, chatId, webAppUrl, "Пульт");
     return;
@@ -204,10 +161,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   const { reserved, isOwner } = await getReservationForTable(venueId, tableId, guest?.tgId ?? tgId);
   if (reserved && !isOwner) {
-    await sendTelegram(token, "sendMessage", {
-      chat_id: chatId,
-      text: "Стол забронирован. Обратитесь к хостес.",
-    });
+    await sendMessage(token, { chat_id: chatId, text: "Стол забронирован. Обратитесь к хостес." });
     return;
   }
 
@@ -257,7 +211,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const welcomeText =
     "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.";
 
-  await sendTelegram(token, "sendMessage", {
+  await sendMessage(token, {
     chat_id: chatId,
     text: welcomeText,
     reply_markup: {
@@ -267,6 +221,6 @@ export async function handleTelegramClient(request: NextRequest, token: string):
       ],
     },
   });
-  await setMenuButton(token, chatId, webAppUrl, "Пульт");
+  await setChatMenuButton(token, { chat_id: chatId, webAppUrl, buttonText: "Пульт" });
 }
 

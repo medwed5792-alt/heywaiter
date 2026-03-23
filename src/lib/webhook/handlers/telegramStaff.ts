@@ -10,24 +10,8 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { closeTableAndNotifyGuest, sosFanOut } from "@/lib/bot-router";
 import { getAppUrl } from "@/lib/webhook/utils";
-
-const TELEGRAM_API = "https://api.telegram.org/bot";
+import { answerCallbackQuery, sendMessage } from "@/adapters/telegram/telegramApi";
 const todayISO = () => new Date().toISOString().slice(0, 10);
-
-async function sendTelegram(
-  token: string,
-  method: string,
-  body: Record<string, unknown>
-): Promise<unknown> {
-  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as { ok?: boolean };
-  if (!res.ok || !data.ok) throw new Error("Telegram API error");
-  return data;
-}
 
 /** Определить venueId по Telegram ID сотрудника */
 async function getVenueIdByStaffTgId(tgId: string): Promise<string | null> {
@@ -91,15 +75,12 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     const venueId = await getVenueIdByStaffTgId(String(fromId));
     if (venueId) {
       await sosFanOut(venueId, text, "telegram");
-      await sendTelegram(token, "sendMessage", {
+      await sendMessage(token, {
         chat_id: chatId,
         text: `🚨 SOS по столу №${text} отправлен. Охрана и менеджер уведомлены.`,
       });
     } else {
-      await sendTelegram(token, "sendMessage", {
-        chat_id: chatId,
-        text: "Ошибка: не удалось определить заведение.",
-      });
+      await sendMessage(token, { chat_id: chatId, text: "Ошибка: не удалось определить заведение." });
     }
     return;
   }
@@ -108,8 +89,8 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
   if (update.callback_query) {
     const { id: callbackId, data } = update.callback_query;
     if (data === "sos") {
-      await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId });
-      await sendTelegram(token, "sendMessage", {
+      await answerCallbackQuery(token, { callback_query_id: callbackId });
+      await sendMessage(token, {
         chat_id: update.callback_query.message?.chat?.id,
         text: "Укажите номер стола для вызова охраны.",
         reply_markup: { force_reply: true },
@@ -123,7 +104,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
           await deleteDoc(doc(db, "staffNotifications", notificationId));
         } catch (_) {}
       }
-      await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "OK" });
+      await answerCallbackQuery(token, { callback_query_id: callbackId, text: "OK" });
       return;
     }
     // Цифровой контракт: Принять — СРАЗУ answerCallbackQuery (кнопка не висит), затем единая логика acceptOffer().
@@ -132,7 +113,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       const chatId = update.callback_query.message?.chat?.id;
       console.log("ACCEPT OFFER: staffId:", staffDocId, "chatId:", chatId);
       try {
-        await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ожидайте…" });
+        await answerCallbackQuery(token, { callback_query_id: callbackId, text: "Ожидайте…" });
       } catch (e) {
         console.error("[telegramStaff] answerCallbackQuery failed:", e);
       }
@@ -142,7 +123,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       const errorText = "⚠️ Ошибка при зачислении в штат. Попробуйте еще раз или обратитесь к админу.";
       if (chatId) {
         try {
-          await sendTelegram(token, "sendMessage", {
+          await sendMessage(token, {
             chat_id: chatId,
             text: result.ok ? successText : errorText,
           });
@@ -164,7 +145,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
         if (answered) return;
         answered = true;
         try {
-          await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text });
+          await answerCallbackQuery(token, { callback_query_id: callbackId, text });
         } catch (e) {
           console.error("[telegramStaff] answerCallbackQuery decline failed:", e);
         }
@@ -184,7 +165,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
           });
         }
         await answerOnce("Предложение отклонено");
-        await sendTelegram(token, "sendMessage", {
+        await sendMessage(token, {
           chat_id: chatId,
           text: "Вы отклонили предложение. Если передумаете — обратитесь к администратору заведения.",
         });
@@ -194,7 +175,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       } finally {
         if (!answered) {
           try {
-            await sendTelegram(token, "answerCallbackQuery", { callback_query_id: callbackId, text: "Ошибка" });
+            await answerCallbackQuery(token, { callback_query_id: callbackId, text: "Ошибка" });
           } catch (e) {
             console.error("[telegramStaff] answerCallbackQuery decline finally failed:", e);
           }
@@ -210,7 +191,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
   if (tableNum) {
     const venueId = await getVenueIdByStaffTgId(String(fromId));
     if (!venueId) {
-      await sendTelegram(token, "sendMessage", {
+      await sendMessage(token, {
         chat_id: chatId,
         text: "Ошибка: вы не привязаны к заведению. Обратитесь к администратору.",
       });
@@ -232,12 +213,12 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
         staffChatId: chatId,
         createdAt: serverTimestamp(),
       });
-      await sendTelegram(token, "sendMessage", {
+      await sendMessage(token, {
         chat_id: chatId,
         text: `Стол №${tableNum} закрыт. Гостю отправлено благодарствие.`,
       });
     } else {
-      await sendTelegram(token, "sendMessage", {
+      await sendMessage(token, {
         chat_id: chatId,
         text: result.error || "Не удалось закрыть стол.",
       });
@@ -261,7 +242,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     }
   }
 
-  await sendTelegram(token, "sendMessage", {
+  await sendMessage(token, {
     chat_id: chatId,
     text: replyText,
     reply_markup: { inline_keyboard: inlineKeyboard },

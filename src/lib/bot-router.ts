@@ -16,23 +16,7 @@ import {
 import { db } from "@/lib/firebase";
 import { getBotToken } from "@/lib/webhook/channels";
 import type { MessengerChannel } from "@/lib/types";
-
-const TELEGRAM_API = "https://api.telegram.org/bot";
-
-async function sendTelegram(
-  token: string,
-  method: string,
-  body: Record<string, unknown>
-): Promise<unknown> {
-  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = (await res.json().catch(() => ({}))) as { ok?: boolean };
-  if (!res.ok || !data.ok) throw new Error("Telegram API error");
-  return data;
-}
+import { sendMessage } from "@/adapters/telegram/telegramApi";
 
 /** Отправка сообщения гостю в Client-бот по каналу (сейчас реализован только Telegram) */
 async function sendToGuestInChannel(
@@ -52,10 +36,7 @@ async function sendToGuestInChannel(
     return;
   }
   if (channel === "telegram") {
-    await sendTelegram(token as string, "sendMessage", {
-      chat_id: chatId,
-      text,
-    });
+    await sendMessage(token as string, { chat_id: chatId, text });
     return;
   }
   if (channel === "vk") {
@@ -248,10 +229,7 @@ export async function sosFanOut(
     const tgId = s.tgId || s.identity?.externalId;
     if (tgId) {
       try {
-        await sendTelegram(staffToken as string, "sendMessage", {
-          chat_id: tgId,
-          text: message,
-        });
+        await sendMessage(staffToken as string, { chat_id: tgId, text: message });
       } catch (err) {
         console.error("[bot-router] SOS send to staff error:", err);
       }
