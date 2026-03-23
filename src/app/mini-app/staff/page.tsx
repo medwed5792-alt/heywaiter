@@ -4,11 +4,23 @@ import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";
-import { addDoc, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, where } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  where,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
 import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
 import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
+import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 
 const NOTIFICATIONS_POLL_MS = 5000;
 const GEO_OPTIONS: PositionOptions = {
@@ -49,6 +61,20 @@ interface ScheduleEntryItem {
   checkIn?: string | null;
   checkOut?: string | null;
   role?: string;
+}
+
+interface ActiveTableGuest {
+  uid: string;
+  name: string;
+  isMaster: boolean;
+}
+
+interface ActiveTableItem {
+  sessionId: string;
+  tableId: string;
+  tableNumber?: number | null;
+  masterName: string;
+  participants: ActiveTableGuest[];
 }
 
 function formatTime(iso: string | null): string {
@@ -255,6 +281,7 @@ function StaffContentInner() {
   const [sosTablesLoadError, setSosTablesLoadError] = useState<string | null>(null);
   const [allowedTableDocIds, setAllowedTableDocIds] = useState<Set<string>>(new Set());
   const [allowedTableNumbers, setAllowedTableNumbers] = useState<Set<number>>(new Set());
+  const [activeTables, setActiveTables] = useState<ActiveTableItem[]>([]);
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
   const { userId, staffId, onShift } = safeStaffData;
@@ -285,6 +312,66 @@ function StaffContentInner() {
       // ignore
     }
   }, [staffId, venueId]);
+
+  useEffect(() => {
+    if (!venueId) {
+      setActiveTables([]);
+      return;
+    }
+    const q = query(
+      collection(db, "activeSessions"),
+      where("venueId", "==", venueId),
+      where("status", "==", "check_in_success")
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows: ActiveTableItem[] = snap.docs.map((d) => {
+          const x = (d.data() ?? {}) as Record<string, unknown>;
+          const tableId = String(x.tableId ?? "").trim();
+          const tableNumberRaw = x.tableNumber;
+          const tableNumber =
+            typeof tableNumberRaw === "number"
+              ? tableNumberRaw
+              : typeof tableNumberRaw === "string"
+                ? Number(tableNumberRaw)
+                : null;
+          const masterId = String(x.masterId ?? "").trim();
+          const participantsRaw = Array.isArray(x.participants) ? x.participants : [];
+          const knownNamesByUid: Record<string, string | undefined> = {};
+          const legacyName =
+            ((x.guestIdentity as { displayName?: string } | undefined)?.displayName ?? "").trim() || undefined;
+          if (legacyName && masterId) knownNamesByUid[masterId] = legacyName;
+          const participants: ActiveTableGuest[] = participantsRaw
+            .map((p) => {
+              const k = (p ?? {}) as Record<string, unknown>;
+              const uid = String(k.uid ?? "").trim();
+              if (!uid) return null;
+              const name = resolveGuestDisplayName({ uid, knownNamesByUid });
+              return { uid, name, isMaster: Boolean(masterId && uid === masterId) };
+            })
+            .filter(Boolean) as ActiveTableGuest[];
+          const masterName = resolveGuestDisplayName({
+            uid: masterId,
+            knownNamesByUid,
+          });
+          return {
+            sessionId: d.id,
+            tableId,
+            tableNumber: Number.isFinite(tableNumber as number) ? (tableNumber as number) : null,
+            masterName,
+            participants,
+          };
+        });
+        rows.sort((a, b) => (a.tableNumber ?? Number.MAX_SAFE_INTEGER) - (b.tableNumber ?? Number.MAX_SAFE_INTEGER));
+        setActiveTables(rows);
+      },
+      (err) => {
+        console.warn("[mini-app/staff] activeSessions snapshot error:", err);
+      }
+    );
+    return () => unsub();
+  }, [venueId]);
 
   useEffect(() => {
     fetchNotifications();
@@ -470,7 +557,7 @@ function StaffContentInner() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [venueId]);
 
   // Валидация введённого номера столов по загруженному справочнику.
   useEffect(() => {
@@ -924,6 +1011,45 @@ function StaffContentInner() {
                         </p>
                       </li>
                     ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
+                <User className="h-4 w-4 text-slate-500" />
+                <h2 className="text-sm font-medium text-slate-700">Активные столы</h2>
+              </div>
+              <div className="max-h-[48vh] overflow-y-auto">
+                {activeTables.length === 0 ? (
+                  <p className="p-4 text-sm text-slate-500 text-center">Сейчас нет активных столов</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {activeTables.map((s) => {
+                      const extra = Math.max(s.participants.length - 1, 0);
+                      return (
+                        <li key={s.sessionId} className="px-4 py-3">
+                          <p className="text-sm font-semibold text-slate-800">
+                            Стол №{s.tableNumber ?? s.tableId}
+                          </p>
+                          <p className="mt-0.5 text-sm text-slate-700">
+                            {s.masterName} 👑{extra > 0 ? ` + ${extra} гостя` : ""}
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {s.participants.map((p) => (
+                              <span
+                                key={p.uid}
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700"
+                              >
+                                {p.name}
+                                {p.isMaster ? " 👑" : ""}
+                              </span>
+                            ))}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>

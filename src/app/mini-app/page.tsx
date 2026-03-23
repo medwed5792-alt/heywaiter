@@ -10,6 +10,7 @@ import { useVisitor } from "@/components/providers/VisitorProvider";
 import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
+import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -19,7 +20,7 @@ type TelegramWebAppInit = {
   initData?: string;
   initDataUnsafe?: {
     start_param?: string;
-    user?: { id?: number };
+    user?: { id?: number; first_name?: string; last_name?: string };
     receiver?: { username?: string };
   };
   ready?: () => void;
@@ -230,6 +231,13 @@ function MiniAppContent() {
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
     const id = tg?.initDataUnsafe?.user?.id;
     return id != null ? String(id) : "";
+  }, []);
+  const telegramUserName = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const first = tg?.initDataUnsafe?.user?.first_name?.trim() ?? "";
+    const last = tg?.initDataUnsafe?.user?.last_name?.trim() ?? "";
+    return [first, last].filter(Boolean).join(" ").trim();
   }, []);
   const currentUid = resolveUnifiedCustomerUid({
     telegramUserId: telegramUserId || null,
@@ -529,17 +537,25 @@ function MiniAppContent() {
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Кто за столом</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {sessionState.participants.map((p) => {
-                  const short = p.uid.slice(0, 10);
+                  const displayName = resolveGuestDisplayName({
+                    uid: p.uid,
+                    currentUid,
+                    currentUserName: telegramUserName || undefined,
+                  });
                   const isOwner = Boolean(sessionState.masterId && p.uid === sessionState.masterId);
+                  const isMe = Boolean(currentUid && p.uid === currentUid);
                   return (
                     <div
                       key={p.uid}
                       className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700"
                     >
                       <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-semibold text-slate-700">
-                        {short[0]?.toUpperCase() ?? "G"}
+                        {displayName[0]?.toUpperCase() ?? "G"}
                       </span>
-                      <span className="max-w-[130px] truncate">{short}</span>
+                      <span className="max-w-[150px] truncate">
+                        {displayName}
+                        {isMe ? " (Вы)" : ""}
+                      </span>
                       {isOwner && <span title="Хозяин">👑</span>}
                     </div>
                   );
