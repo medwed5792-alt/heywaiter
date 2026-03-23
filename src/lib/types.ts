@@ -591,6 +591,10 @@ export interface StaffNotification {
   role?: ServiceRole;
   message: string;
   read: boolean;
+  status?: "pending" | "processing" | "completed";
+  amount?: number;
+  guestName?: string;
+  items?: string[];
   /** @deprecated Legacy actor field; prefer customerUid in payload for guest origin. */
   visitorId?: string;
   /** Только эти сотрудники видят уведомление в Staff-боте (изоляция) */

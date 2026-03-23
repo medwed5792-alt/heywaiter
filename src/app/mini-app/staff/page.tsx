@@ -42,6 +42,11 @@ interface NotificationItem {
   tableId: string | null;
   venueId: string | null;
   type: string | null;
+  status?: "pending" | "processing" | "completed" | null;
+  title?: string | null;
+  guestName?: string | null;
+  amount?: number | null;
+  items?: string[] | null;
   read: boolean;
   createdAt: string | null;
 }
@@ -282,6 +287,7 @@ function StaffContentInner() {
   const [allowedTableDocIds, setAllowedTableDocIds] = useState<Set<string>>(new Set());
   const [allowedTableNumbers, setAllowedTableNumbers] = useState<Set<number>>(new Set());
   const [activeTables, setActiveTables] = useState<ActiveTableItem[]>([]);
+  const [notificationActionLoading, setNotificationActionLoading] = useState<string | null>(null);
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
   const { userId, staffId, onShift } = safeStaffData;
@@ -312,6 +318,30 @@ function StaffContentInner() {
       // ignore
     }
   }, [staffId, venueId]);
+
+  const acceptNotification = useCallback(
+    async (notificationId: string) => {
+      if (!staffId) return;
+      setNotificationActionLoading(notificationId);
+      try {
+        const res = await fetch("/api/staff/notifications/accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notificationId, staffId }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || !data.ok) {
+          throw new Error(data.error || "Не удалось принять уведомление");
+        }
+        await fetchNotifications();
+      } catch (e) {
+        console.warn("[staff] accept notification:", e);
+      } finally {
+        setNotificationActionLoading(null);
+      }
+    },
+    [staffId, fetchNotifications]
+  );
 
   useEffect(() => {
     if (!venueId) {
@@ -1005,10 +1035,46 @@ function StaffContentInner() {
                   <ul className="divide-y divide-slate-100">
                     {notifications.map((n) => (
                       <li key={n.id} className="px-4 py-3">
-                        <p className="text-sm font-medium text-slate-800">{n.message}</p>
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          {n.tableId ? `Стол №${n.tableId}` : ""} · {formatTime(n.createdAt)}
-                        </p>
+                        {(n.type === "split_bill_request" || n.type === "full_bill_request") ? (
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                            <p className="text-sm font-semibold text-emerald-900">
+                              {n.type === "split_bill_request" ? "💰 Запрос раздельного счета" : "👑 Закрытие всего стола"}
+                            </p>
+                            <p className="mt-1 text-sm text-emerald-900">{n.message}</p>
+                            {Array.isArray(n.items) && n.items.length > 0 && (
+                              <ul className="mt-2 list-inside list-disc text-xs text-emerald-800">
+                                {n.items.slice(0, 5).map((item, idx) => (
+                                  <li key={`${n.id}-${idx}`}>{item}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="mt-2 flex items-center justify-between">
+                              <span className="text-xs text-emerald-800">
+                                Статус: {n.status === "processing" ? "processing" : n.status === "completed" ? "completed" : "pending"}
+                              </span>
+                              {n.status !== "processing" && n.status !== "completed" && (
+                                <button
+                                  type="button"
+                                  onClick={() => void acceptNotification(n.id)}
+                                  disabled={notificationActionLoading === n.id}
+                                  className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  {notificationActionLoading === n.id ? "..." : "Принять"}
+                                </button>
+                              )}
+                            </div>
+                            <p className="mt-1 text-[11px] text-emerald-800/80">
+                              {n.tableId ? `Стол №${n.tableId}` : ""} · {formatTime(n.createdAt)}
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-slate-800">{n.message}</p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {n.tableId ? `Стол №${n.tableId}` : ""} · {formatTime(n.createdAt)}
+                            </p>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>

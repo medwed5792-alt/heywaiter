@@ -2,7 +2,19 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback, Suspense, useMemo, useRef } from "react";
-import { collection, doc, getDoc, limit, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -49,6 +61,44 @@ function isStaffBotContext(): boolean {
   return username === STAFF_BOT_USERNAME;
 }
 
+type BillItemInfo = { label: string; amount: number };
+
+function parseNumber(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const n = Number(raw.replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function extractOrderBillInfo(data: Record<string, unknown>): { amount: number; items: BillItemInfo[] } {
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  const items: BillItemInfo[] = [];
+  for (const i of rawItems) {
+    const x = (i ?? {}) as Record<string, unknown>;
+    const label =
+      String(x.name ?? x.title ?? x.dishName ?? x.itemName ?? "").trim() || "Позиция";
+    const qty = Math.max(parseNumber(x.qty ?? x.quantity), 1);
+    const unit = parseNumber(x.price ?? x.unitPrice);
+    const row = parseNumber(x.amount ?? x.total);
+    const amount = row > 0 ? row : unit > 0 ? unit * qty : 0;
+    items.push({ label: qty > 1 ? `${label} x${qty}` : label, amount });
+  }
+
+  if (items.length === 0) {
+    const single =
+      parseNumber(data.amount) ||
+      parseNumber(data.total) ||
+      parseNumber(data.sum) ||
+      parseNumber(data.price);
+    if (single > 0) items.push({ label: `Заказ #${String(data.orderNumber ?? "").trim() || "—"}`, amount: single });
+  }
+
+  const amount = items.reduce((acc, i) => acc + i.amount, 0);
+  return { amount, items };
+}
+
 function MiniAppContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -72,6 +122,7 @@ function MiniAppContent() {
   } | null>(null);
   const [sessionUiError, setSessionUiError] = useState<string | null>(null);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
+  const [billRequestStatus, setBillRequestStatus] = useState<"pending" | "processing" | "completed" | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -342,6 +393,39 @@ function MiniAppContent() {
     return () => unsub();
   }, [venueId, tableId, isStaffEntry]);
 
+  useEffect(() => {
+    if (!sessionState?.sessionId || !currentUid || !venueId) {
+      setBillRequestStatus(null);
+      return;
+    }
+    const q = query(
+      collection(db, "staffNotifications"),
+      where("venueId", "==", venueId),
+      where("sessionId", "==", sessionState.sessionId),
+      where("requesterUid", "==", currentUid),
+      limit(20)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs
+        .map((d) => {
+          const x = (d.data() ?? {}) as Record<string, unknown>;
+          const type = String(x.type ?? "");
+          const status = String(x.status ?? "");
+          const createdAt = (x.createdAt as { toDate?: () => Date } | undefined)?.toDate?.()?.getTime?.() ?? 0;
+          return { type, status, createdAt };
+        })
+        .filter((x) => x.type === "split_bill_request" || x.type === "full_bill_request")
+        .sort((a, b) => b.createdAt - a.createdAt);
+      const latest = list[0];
+      if (latest?.status === "pending" || latest?.status === "processing" || latest?.status === "completed") {
+        setBillRequestStatus(latest.status);
+      } else {
+        setBillRequestStatus(null);
+      }
+    });
+    return () => unsub();
+  }, [sessionState?.sessionId, currentUid, venueId]);
+
   const isAccessDenied = Boolean(
     sessionState &&
       sessionState.isPrivate &&
@@ -367,41 +451,102 @@ function MiniAppContent() {
     if (!currentUid || !venueId || !tableId) return;
     setSessionActionLoading(true);
     try {
-      const res = await fetch("/api/session/pay-my-bill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ venueId, tableId, uid: currentUid }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updatedOrders?: number };
-      if (!res.ok || !data.ok) {
-        toast.error(data.error || "Не удалось оплатить ваш счёт");
-        return;
+      const ordersSnap = await getDocs(
+        query(
+          collection(db, "orders"),
+          where("venueId", "==", venueId),
+          where("tableId", "==", tableId),
+          where("customerUid", "==", currentUid),
+          where("status", "in", ["pending", "ready"])
+        )
+      );
+      const billItems: BillItemInfo[] = [];
+      for (const d of ordersSnap.docs) {
+        const info = extractOrderBillInfo((d.data() ?? {}) as Record<string, unknown>);
+        billItems.push(...info.items);
       }
-      toast.success(`Оплачено позиций: ${data.updatedOrders ?? 0}`);
+      const amount = billItems.reduce((acc, i) => acc + i.amount, 0);
+      const guestName = resolveGuestDisplayName({
+        uid: currentUid,
+        currentUid,
+        currentUserName: telegramUserName || undefined,
+      });
+      await addDoc(collection(db, "staffNotifications"), {
+        type: "split_bill_request",
+        title: "💰 Запрос раздельного счета",
+        message: `Стол №${tableNumberResolved ?? tableId}: ${guestName} хочет оплатить свою часть (${Math.round(amount)} руб.).`,
+        venueId,
+        tableId,
+        tableNumber: tableNumberResolved ?? null,
+        sessionId: sessionState?.sessionId ?? null,
+        requesterUid: currentUid,
+        guestName,
+        amount: Math.round(amount),
+        items: billItems.map((i) => `${i.label}${i.amount > 0 ? ` — ${Math.round(i.amount)} руб.` : ""}`),
+        status: "pending",
+        read: false,
+        targetUids:
+          tableSettings && typeof tableSettings.currentWaiterId === "string" && tableSettings.currentWaiterId.trim()
+            ? [tableSettings.currentWaiterId.trim()]
+            : [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast.success(`Запрос отправлен официанту: ${Math.round(amount)} руб.`);
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId]);
+  }, [currentUid, venueId, tableId, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings]);
 
   const onCloseWholeTable = useCallback(async () => {
     if (!currentUid || !venueId || !tableId || !isMaster) return;
     setSessionActionLoading(true);
     try {
-      const res = await fetch("/api/session/close-table", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ venueId, tableId, masterUid: currentUid }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; updatedOrders?: number };
-      if (!res.ok || !data.ok) {
-        toast.error(data.error || "Не удалось закрыть стол");
-        return;
+      const allOrdersSnap = await getDocs(
+        query(
+          collection(db, "orders"),
+          where("venueId", "==", venueId),
+          where("tableId", "==", tableId),
+          where("status", "in", ["pending", "ready"])
+        )
+      );
+      const items: BillItemInfo[] = [];
+      for (const d of allOrdersSnap.docs) {
+        const info = extractOrderBillInfo((d.data() ?? {}) as Record<string, unknown>);
+        items.push(...info.items);
       }
-      toast.success(`Стол закрыт, оплачено позиций: ${data.updatedOrders ?? 0}`);
+      const total = items.reduce((acc, i) => acc + i.amount, 0);
+      const masterName = resolveGuestDisplayName({
+        uid: currentUid,
+        currentUid,
+        currentUserName: telegramUserName || undefined,
+      });
+      await addDoc(collection(db, "staffNotifications"), {
+        type: "full_bill_request",
+        title: "👑 Закрытие всего стола",
+        message: `👑 Мастер стола ${masterName} закрывает весь стол №${tableNumberResolved ?? tableId}. Сумма: ${Math.round(total)} руб.`,
+        venueId,
+        tableId,
+        tableNumber: tableNumberResolved ?? null,
+        sessionId: sessionState?.sessionId ?? null,
+        requesterUid: currentUid,
+        guestName: masterName,
+        amount: Math.round(total),
+        items: items.map((i) => `${i.label}${i.amount > 0 ? ` — ${Math.round(i.amount)} руб.` : ""}`),
+        status: "pending",
+        read: false,
+        targetUids:
+          tableSettings && typeof tableSettings.currentWaiterId === "string" && tableSettings.currentWaiterId.trim()
+            ? [tableSettings.currentWaiterId.trim()]
+            : [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast.success(`Запрос на закрытие стола отправлен: ${Math.round(total)} руб.`);
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, isMaster]);
+  }, [currentUid, venueId, tableId, isMaster, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings]);
 
   const onExitSession = useCallback(async () => {
     if (!currentUid || !venueId || !tableId) return;
@@ -532,6 +677,21 @@ function MiniAppContent() {
               Режим стола: {isMaster ? "Master (хозяин)" : "Участник"}
             </p>
             <p className="mt-1 text-xs text-slate-600">Ваш статус: {myStatus ?? "unknown"}</p>
+            {billRequestStatus === "pending" && (
+              <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Запрос отправлен. Ожидайте подтверждение официанта.
+              </p>
+            )}
+            {billRequestStatus === "processing" && (
+              <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                Официант в пути со счетом.
+              </p>
+            )}
+            {billRequestStatus === "completed" && (
+              <p className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
+                Запрос обработан.
+              </p>
+            )}
 
             <div className="mt-3">
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Кто за столом</p>
@@ -621,7 +781,7 @@ function MiniAppContent() {
                 onClick={() => void onCloseWholeTable()}
                 className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                Закрыть весь стол
+                Оплатить всё
               </button>
             )}
             <button

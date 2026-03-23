@@ -51,6 +51,11 @@ export async function GET(request: NextRequest) {
       tableId: string | null;
       venueId: string | null;
       type: string | null;
+      status: "pending" | "processing" | "completed" | null;
+      title: string | null;
+      guestName: string | null;
+      amount: number | null;
+      items: string[] | null;
       read: boolean;
       createdAt: string | null;
       createdAtMs: number;
@@ -76,6 +81,14 @@ export async function GET(request: NextRequest) {
         tableId: data.tableId ?? null,
         venueId: data.venueId ?? venueIdToUse ?? null,
         type: data.type ?? null,
+        status:
+          data.status === "pending" || data.status === "processing" || data.status === "completed"
+            ? data.status
+            : null,
+        title: typeof data.title === "string" ? data.title : null,
+        guestName: typeof data.guestName === "string" ? data.guestName : null,
+        amount: typeof data.amount === "number" ? data.amount : null,
+        items: Array.isArray(data.items) ? data.items.filter((x: unknown) => typeof x === "string") : null,
         read: data.read === true,
         createdAt: toIsoOrNull(data.createdAt),
         createdAtMs,
@@ -105,6 +118,50 @@ export async function GET(request: NextRequest) {
         tableId: data.tableId ?? null,
         venueId: data.venueId ?? null,
         type: data.type ?? null,
+        status:
+          data.status === "pending" || data.status === "processing" || data.status === "completed"
+            ? data.status
+            : null,
+        title: typeof data.title === "string" ? data.title : null,
+        guestName: typeof data.guestName === "string" ? data.guestName : null,
+        amount: typeof data.amount === "number" ? data.amount : null,
+        items: Array.isArray(data.items) ? data.items.filter((x: unknown) => typeof x === "string") : null,
+        read: data.read === true,
+        createdAt: toIsoOrNull(data.createdAt),
+        createdAtMs,
+      });
+    });
+
+    // 3) Broadcast split/full bill requests without explicit targetUids (fallback delivery)
+    const broadcastSnap = await firestore
+      .collection("staffNotifications")
+      .where("venueId", "==", venueIdToUse)
+      .orderBy("createdAt", "desc")
+      .limit(fetchLimit)
+      .get();
+
+    broadcastSnap.docs.forEach((d) => {
+      const data = d.data();
+      const type = data.type as string | undefined;
+      const targetUids = Array.isArray(data.targetUids) ? data.targetUids : [];
+      if (type !== "split_bill_request" && type !== "full_bill_request") return;
+      if (targetUids.length > 0 && !targetUids.includes(staffId)) return;
+      if (listWithMeta.some((x) => x.id === d.id)) return;
+      const createdAtMs = toMs(data.createdAt) ?? 0;
+      listWithMeta.push({
+        id: d.id,
+        message: data.message ?? "",
+        tableId: data.tableId ?? null,
+        venueId: data.venueId ?? null,
+        type: data.type ?? null,
+        status:
+          data.status === "pending" || data.status === "processing" || data.status === "completed"
+            ? data.status
+            : null,
+        title: typeof data.title === "string" ? data.title : null,
+        guestName: typeof data.guestName === "string" ? data.guestName : null,
+        amount: typeof data.amount === "number" ? data.amount : null,
+        items: Array.isArray(data.items) ? data.items.filter((x: unknown) => typeof x === "string") : null,
         read: data.read === true,
         createdAt: toIsoOrNull(data.createdAt),
         createdAtMs,
