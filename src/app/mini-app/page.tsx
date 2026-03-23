@@ -123,6 +123,7 @@ function MiniAppContent() {
   const [sessionUiError, setSessionUiError] = useState<string | null>(null);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [billRequestStatus, setBillRequestStatus] = useState<"pending" | "processing" | "completed" | null>(null);
+  const [debugError, setDebugError] = useState<string | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -134,6 +135,32 @@ function MiniAppContent() {
     }
     tg.ready?.();
     queueMicrotask(() => setIsSdkReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onError = (event: ErrorEvent) => {
+      const text = event.error instanceof Error ? event.error.stack || event.error.message : event.message || "Unknown error";
+      console.error("[mini-app] window error:", event.error ?? event.message);
+      setDebugError(text);
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const text =
+        reason instanceof Error
+          ? reason.stack || reason.message
+          : typeof reason === "string"
+            ? reason
+            : JSON.stringify(reason);
+      console.error("[mini-app] unhandled rejection:", reason);
+      setDebugError(text || "Unhandled rejection without details");
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
   }, []);
 
   useEffect(() => {
@@ -174,6 +201,8 @@ function MiniAppContent() {
           setEntryRouteResolved(true);
           return;
         }
+        console.warn("[mini-app] start_param parse failed:", sp);
+        setDebugError(`Не удалось распарсить start_param: "${sp}"`);
       }
       setVenueId("");
       setTableId("");
@@ -202,6 +231,7 @@ function MiniAppContent() {
   }, [isSdkReady, searchParams, forceStaffByBot]);
 
   useEffect(() => {
+    if (!isSdkReady) return;
     if (!venueId || !tableId) {
       setVenueSettings(null);
       setTableSettings(null);
@@ -250,7 +280,7 @@ function MiniAppContent() {
     return () => {
       cancelled = true;
     };
-  }, [venueId, tableId]);
+  }, [venueId, tableId, isSdkReady]);
 
   useEffect(() => {
     if (!entryRouteResolved) return;
@@ -290,6 +320,16 @@ function MiniAppContent() {
     const last = tg?.initDataUnsafe?.user?.last_name?.trim() ?? "";
     return [first, last].filter(Boolean).join(" ").trim();
   }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isTelegramContext()) return;
+    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    if (!tg?.initDataUnsafe?.user) {
+      const text = "Telegram user отсутствует в initDataUnsafe.user";
+      console.warn("[mini-app] " + text, tg?.initDataUnsafe);
+      setDebugError((prev) => prev ?? text);
+    }
+  }, []);
   const currentUid = resolveUnifiedCustomerUid({
     telegramUserId: telegramUserId || null,
     anonymousId: visitorId?.trim() || null,
@@ -327,31 +367,37 @@ function MiniAppContent() {
   }, [venueId, tableId, tableRecognized, tableNumberResolved, currentUid]);
 
   useEffect(() => {
-    if (!venueId || !tableId || isStaffEntry || !currentUid) return;
+    if (!isSdkReady || !venueId || !tableId || isStaffEntry || !currentUid) return;
     const key = `${venueId}:${tableId}:${currentUid}`;
     if (checkInSyncRef.current === key) return;
     checkInSyncRef.current = key;
     (async () => {
-      const res = await fetch("/api/check-in", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          venueId,
-          tableId,
-          participantUid: currentUid,
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { status?: string; messageGuest?: string };
-      if (data.status === "table_private") {
-        setSessionUiError("Стол приватный. Подселение запрещено без разрешения хозяина.");
-      } else {
-        setSessionUiError(null);
+      try {
+        const res = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            venueId,
+            tableId,
+            participantUid: currentUid,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { status?: string; messageGuest?: string };
+        if (data.status === "table_private") {
+          setSessionUiError("Стол приватный. Подселение запрещено без разрешения хозяина.");
+        } else {
+          setSessionUiError(null);
+        }
+      } catch (e) {
+        const text = e instanceof Error ? e.stack || e.message : String(e);
+        console.error("[mini-app] check-in request failed:", e);
+        setDebugError(text);
       }
     })();
-  }, [venueId, tableId, currentUid, isStaffEntry]);
+  }, [venueId, tableId, currentUid, isStaffEntry, isSdkReady]);
 
   useEffect(() => {
-    if (!venueId || !tableId || isStaffEntry) {
+    if (!isSdkReady || !venueId || !tableId || isStaffEntry) {
       setSessionState(null);
       return;
     }
@@ -391,10 +437,10 @@ function MiniAppContent() {
       }
     );
     return () => unsub();
-  }, [venueId, tableId, isStaffEntry]);
+  }, [venueId, tableId, isStaffEntry, isSdkReady]);
 
   useEffect(() => {
-    if (!sessionState?.sessionId || !currentUid || !venueId) {
+    if (!isSdkReady || !sessionState?.sessionId || !currentUid || !venueId) {
       setBillRequestStatus(null);
       return;
     }
@@ -424,7 +470,7 @@ function MiniAppContent() {
       }
     });
     return () => unsub();
-  }, [sessionState?.sessionId, currentUid, venueId]);
+  }, [sessionState?.sessionId, currentUid, venueId, isSdkReady]);
 
   const isAccessDenied = Boolean(
     sessionState &&
@@ -435,7 +481,7 @@ function MiniAppContent() {
   );
 
   const onToggleAllowJoin = useCallback(async () => {
-    if (!sessionState || !isMaster) return;
+    if (!isSdkReady || !sessionState || !isMaster) return;
     setSessionActionLoading(true);
     try {
       await updateDoc(doc(db, "activeSessions", sessionState.sessionId), {
@@ -445,10 +491,10 @@ function MiniAppContent() {
     } finally {
       setSessionActionLoading(false);
     }
-  }, [sessionState, isMaster]);
+  }, [sessionState, isMaster, isSdkReady]);
 
   const onPayMyBill = useCallback(async () => {
-    if (!currentUid || !venueId || !tableId) return;
+    if (!isSdkReady || !currentUid || !venueId || !tableId) return;
     setSessionActionLoading(true);
     try {
       const ordersSnap = await getDocs(
@@ -496,10 +542,10 @@ function MiniAppContent() {
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings]);
+  }, [currentUid, venueId, tableId, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings, isSdkReady]);
 
   const onCloseWholeTable = useCallback(async () => {
-    if (!currentUid || !venueId || !tableId || !isMaster) return;
+    if (!isSdkReady || !currentUid || !venueId || !tableId || !isMaster) return;
     setSessionActionLoading(true);
     try {
       const allOrdersSnap = await getDocs(
@@ -546,7 +592,7 @@ function MiniAppContent() {
     } finally {
       setSessionActionLoading(false);
     }
-  }, [currentUid, venueId, tableId, isMaster, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings]);
+  }, [currentUid, venueId, tableId, isMaster, tableNumberResolved, sessionState?.sessionId, telegramUserName, tableSettings, isSdkReady]);
 
   const onExitSession = useCallback(async () => {
     if (!currentUid || !venueId || !tableId) return;
@@ -639,6 +685,12 @@ function MiniAppContent() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
       <div className="mx-auto flex max-w-md flex-col gap-5">
+        {debugError && (
+          <section className="rounded-xl border border-red-300 bg-red-50 p-3">
+            <p className="text-xs font-semibold text-red-900">DEBUG ERROR (temporary)</p>
+            <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-red-800">{debugError}</pre>
+          </section>
+        )}
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-center text-lg font-bold text-slate-900">
             {isLoadingTable ? "Загрузка…" : `Добро пожаловать в ${venueDisplayName}`}
