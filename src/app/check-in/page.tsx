@@ -49,7 +49,6 @@ function CheckInContent() {
   const [locale, setLocale] = useState(getBrowserLocale());
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict" | "private">("idle");
   const [cooldownLeft, setCooldownLeft] = useState(0);
-  const [tgClientUsername, setTgClientUsername] = useState<string | null>(null);
   const [venueDisplayName, setVenueDisplayName] = useState<string>("");
   const [tableNumberResolved, setTableNumberResolved] = useState<number | null>(null);
   const [venueMetaLoaded, setVenueMetaLoaded] = useState(false);
@@ -101,18 +100,6 @@ function CheckInContent() {
       cancelled = true;
     };
   }, [venueId, tableId]);
-
-  useEffect(() => {
-    getDoc(doc(db, "system_settings", "bots"))
-      .then((snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          const username = data?.tg_client_username;
-          setTgClientUsername(typeof username === "string" ? username : null);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   // При первом визите на /check-in с валидными v и t — записать сессию в Firestore
   useEffect(() => {
@@ -179,8 +166,7 @@ function CheckInContent() {
             channel,
             venueId,
             tableId,
-            visitorId?.trim() || undefined,
-            { telegramUsername: tgClientUsername ?? undefined }
+            visitorId?.trim() || undefined
           );
         }
 
@@ -190,7 +176,7 @@ function CheckInContent() {
         setStatus("idle");
       }
     },
-    [venueId, tableId, currentUid, visitorId, tgClientUsername]
+    [venueId, tableId, currentUid, visitorId]
   );
 
   const copy = useMemo(() => getCheckInCopy(locale), [locale]);

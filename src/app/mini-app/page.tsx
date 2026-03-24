@@ -26,8 +26,6 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 
-const STAFF_BOT_USERNAME = "waitertalk_bot";
-
 type TelegramWebAppInit = {
   initData?: string;
   initDataUnsafe?: {
@@ -52,13 +50,6 @@ function getStartParamFromTelegramWebApp(): string {
   if (typeof window === "undefined") return "";
   const WebApp = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
   return WebApp?.initDataUnsafe?.start_param?.trim() ?? "";
-}
-
-function isStaffBotContext(): boolean {
-  if (typeof window === "undefined") return false;
-  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
-  const username = tg?.initDataUnsafe?.receiver?.username ?? "";
-  return username === STAFF_BOT_USERNAME;
 }
 
 type BillItemInfo = { label: string; amount: number };
@@ -111,7 +102,6 @@ function MiniAppContent() {
   const [entryRouteResolved, setEntryRouteResolved] = useState(false);
   const [isSdkReady, setIsSdkReady] = useState(false);
   const [firestoreDone, setFirestoreDone] = useState(false);
-  const [forceStaffByBot, setForceStaffByBot] = useState(false);
   const [callLoading, setCallLoading] = useState(false);
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [sessionState, setSessionState] = useState<{
@@ -164,26 +154,7 @@ function MiniAppContent() {
   }, []);
 
   useEffect(() => {
-    if (isStaffBotContext()) {
-      setForceStaffByBot(true);
-      router.replace("/mini-app/staff?v=current");
-    }
-  }, [router]);
-
-  useEffect(() => {
     if (!isSdkReady) return;
-
-    const role = searchParams.get("role") ?? "";
-    const bot = searchParams.get("bot") ?? "";
-    const fromQueryT = (searchParams.get("t") ?? "").trim();
-    const isStaffByUrl = (bot === "staff" || role === "staff") && !fromQueryT;
-    const isStaffEntry = isStaffByUrl || forceStaffByBot;
-
-    if (isStaffEntry) {
-      setFirestoreDone(true);
-      setEntryRouteResolved(true);
-      return;
-    }
 
     const inTg = isTelegramContext();
 
@@ -228,7 +199,7 @@ function MiniAppContent() {
     setTableId("");
     setFirestoreDone(true);
     setEntryRouteResolved(true);
-  }, [isSdkReady, searchParams, forceStaffByBot]);
+  }, [isSdkReady, searchParams]);
 
   useEffect(() => {
     if (!isSdkReady) return;
@@ -283,18 +254,6 @@ function MiniAppContent() {
   }, [venueId, tableId, isSdkReady]);
 
   useEffect(() => {
-    if (!entryRouteResolved) return;
-    const role = searchParams.get("role") ?? "";
-    const bot = searchParams.get("bot") ?? "";
-    const urlT = (searchParams.get("t") ?? "").trim();
-    const isStaffEntry = bot === "staff" || role === "staff" || forceStaffByBot;
-    if (isStaffEntry && !urlT) {
-      const v = (venueId || searchParams.get("v")) ?? "";
-      router.replace(`/mini-app/staff?${new URLSearchParams({ v: v || "current" }).toString()}`);
-    }
-  }, [entryRouteResolved, searchParams, venueId, router, forceStaffByBot]);
-
-  useEffect(() => {
     if (cooldownLeft <= 0) return;
     const t = setInterval(() => setCooldownLeft((s) => (s <= 1 ? 0 : s - 1)), 1000);
     return () => clearInterval(t);
@@ -304,9 +263,6 @@ function MiniAppContent() {
   const tableNumberResolved =
     tableSettings != null ? resolveTableNumberFromDoc(tableSettings as Record<string, unknown>) : null;
 
-  const role = searchParams.get("role") ?? "";
-  const bot = searchParams.get("bot") ?? "";
-  const isStaffEntry = bot === "staff" || role === "staff" || forceStaffByBot;
   const telegramUserId = useMemo(() => {
     if (typeof window === "undefined") return "";
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
@@ -340,7 +296,7 @@ function MiniAppContent() {
   const isParticipant = Boolean(myParticipant);
   const allowJoin = Boolean(sessionState && !sessionState.isPrivate);
 
-  const sessionFirstVisit = Boolean(venueId && tableId) && !isStaffEntry;
+  const sessionFirstVisit = Boolean(venueId && tableId);
   const isLoadingTable = Boolean(sessionFirstVisit && tableId && !firestoreDone);
   const tableRecognized = Boolean(sessionFirstVisit && firestoreDone && tableSettings !== null);
   const callDisabled =
@@ -367,7 +323,7 @@ function MiniAppContent() {
   }, [venueId, tableId, tableRecognized, tableNumberResolved, currentUid]);
 
   useEffect(() => {
-    if (!isSdkReady || !venueId || !tableId || isStaffEntry || !currentUid) return;
+    if (!isSdkReady || !venueId || !tableId || !currentUid) return;
     const key = `${venueId}:${tableId}:${currentUid}`;
     if (checkInSyncRef.current === key) return;
     checkInSyncRef.current = key;
@@ -394,10 +350,10 @@ function MiniAppContent() {
         setDebugError(text);
       }
     })();
-  }, [venueId, tableId, currentUid, isStaffEntry, isSdkReady]);
+  }, [venueId, tableId, currentUid, isSdkReady]);
 
   useEffect(() => {
-    if (!isSdkReady || !venueId || !tableId || isStaffEntry) {
+    if (!isSdkReady || !venueId || !tableId) {
       setSessionState(null);
       return;
     }
@@ -437,7 +393,7 @@ function MiniAppContent() {
       }
     );
     return () => unsub();
-  }, [venueId, tableId, isStaffEntry, isSdkReady]);
+  }, [venueId, tableId, isSdkReady]);
 
   useEffect(() => {
     if (!isSdkReady || !sessionState?.sessionId || !currentUid || !venueId) {
@@ -643,15 +599,6 @@ function MiniAppContent() {
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push(`${origin}/check-in`);
   }, [router]);
-
-  const urlTStaff = (searchParams.get("t") ?? "").trim();
-  if (isStaffEntry && !urlTStaff) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500 text-sm">Открытие кабинета персонала…</p>
-      </main>
-    );
-  }
 
   if (!entryRouteResolved) {
     return (

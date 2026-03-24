@@ -5,19 +5,20 @@
 
 import type { MessengerChannel } from "./types";
 
-const BOT_TELEGRAM = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "HeyWaiter_bot";
+/**
+ * Единственный гостевой Telegram-бот для шлюза и Mini App.
+ * Ссылки «Открыть в Telegram» / startapp ведут только сюда, без подмены из env или Firestore.
+ */
+export const GUEST_TELEGRAM_BOT_USERNAME = "SotaGuestBot";
+
 /** Короткое имя Mini App в Telegram (например "waiter") — открытие без перехода в чат. */
 const TELEGRAM_MINIAPP_NAME = process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter";
 const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
 const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
 const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
 
-/** Без @ для URL (если передано @username — убираем @). */
-function telegramBotUsername(override?: string | null): string {
-  if (override && override.trim()) {
-    return override.trim().replace(/^@/, "");
-  }
-  return BOT_TELEGRAM.replace(/^@/, "");
+function guestTelegramBotForUrl(): string {
+  return GUEST_TELEGRAM_BOT_USERNAME.replace(/^@/, "");
 }
 
 function buildStartPayload(venueId: string, tableId: string, visitorId?: string | null): string {
@@ -26,21 +27,20 @@ function buildStartPayload(venueId: string, tableId: string, visitorId?: string 
 }
 
 /**
- * Ссылка для открытия Telegram Mini App (короткое имя "waiter").
+ * Ссылка для открытия Telegram Mini App у гостевого бота @SotaGuestBot.
  * startapp — лимит Telegram ~64 символа; гость идентифицируется локально (VisitorProvider).
  */
-export function buildTelegramStartAppLink(
-  venueId: string,
-  tableId: string,
-  telegramUsername?: string | null
-): string {
+export function buildTelegramStartAppLink(venueId: string, tableId: string): string {
   const payload = buildStartPayload(venueId, tableId);
-  const bot = telegramBotUsername(telegramUsername);
+  const bot = guestTelegramBotForUrl();
   return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
 }
 
 export interface BuildDeepLinkOptions {
-  /** @username бота из Firestore (system_settings/bots.tg_client_username). */
+  /**
+   * @deprecated Игнорируется для Telegram: гостевой шлюз всегда использует @SotaGuestBot.
+   * Оставлено для обратной совместимости вызовов buildDeepLink(..., { telegramUsername }).
+   */
   telegramUsername?: string | null;
 }
 
@@ -49,13 +49,13 @@ export function buildDeepLink(
   venueId: string,
   tableId: string,
   visitorId?: string | null,
-  options?: BuildDeepLinkOptions
+  _options?: BuildDeepLinkOptions
 ): string {
   const payloadWithOptionalVisitor = buildStartPayload(venueId, tableId, visitorId);
 
   switch (channel) {
     case "telegram": {
-      const bot = telegramBotUsername(options?.telegramUsername);
+      const bot = guestTelegramBotForUrl();
       const startPayload = buildStartPayload(venueId, tableId);
       return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(startPayload)}`;
     }

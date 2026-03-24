@@ -37,7 +37,7 @@ function PanelContent() {
   const isValid = isFastFood || isFullService;
   const isDirectAccess = !venueId && !tableId && !orderId;
 
-  // Персонал сюда не попадает: при role=staff и отсутствии t mini-app редиректит на /mini-app/staff
+  // Гостевой шлюз: только интерфейс гостя; персонал открывает отдельное приложение staff-бота.
   const sessionId = useMemo(() => searchParams.get("sessionId") ?? undefined, [searchParams]);
 
   if (isDirectAccess) {
