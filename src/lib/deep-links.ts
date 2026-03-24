@@ -1,25 +1,23 @@
 /**
  * Deep Links для мессенджеров (QR & Social Bridge).
  * Основной формат: `v:venueId:t:tableId` (короче, чем v_…_t_…).
+ *
+ * Гостевой Telegram: t.me/<NEXT_PUBLIC_GUEST_BOT_USERNAME>/<NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME>?startapp=...
  */
 
 import type { MessengerChannel } from "./types";
 
-/**
- * Единственный гостевой Telegram-бот для шлюза и Mini App.
- * Ссылки «Открыть в Telegram» / startapp ведут только сюда, без подмены из env или Firestore.
- */
-export const GUEST_TELEGRAM_BOT_USERNAME = "SotaGuestBot";
+/** Без @ — для URL и сравнения с initDataUnsafe.receiver.username */
+export const GUEST_TELEGRAM_BOT_USERNAME = (
+  process.env.NEXT_PUBLIC_GUEST_BOT_USERNAME ?? "HeyWaiter_bot"
+)
+  .trim()
+  .replace(/^@/, "");
 
-/** Короткое имя Mini App в Telegram (например "waiter") — открытие без перехода в чат. */
-const TELEGRAM_MINIAPP_NAME = process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter";
+const TELEGRAM_MINIAPP_NAME = (process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter").trim();
 const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
 const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
 const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
-
-function guestTelegramBotForUrl(): string {
-  return GUEST_TELEGRAM_BOT_USERNAME.replace(/^@/, "");
-}
 
 function buildStartPayload(venueId: string, tableId: string, visitorId?: string | null): string {
   const base = `v:${venueId}:t:${tableId}`;
@@ -27,20 +25,16 @@ function buildStartPayload(venueId: string, tableId: string, visitorId?: string 
 }
 
 /**
- * Ссылка для открытия Telegram Mini App у гостевого бота @SotaGuestBot.
- * startapp — лимит Telegram ~64 символа; гость идентифицируется локально (VisitorProvider).
+ * Ссылка для открытия гостевого Mini App: `t.me/HeyWaiter_bot/waiter?startapp=...`
+ * (значения из NEXT_PUBLIC_*).
  */
 export function buildTelegramStartAppLink(venueId: string, tableId: string): string {
   const payload = buildStartPayload(venueId, tableId);
-  const bot = guestTelegramBotForUrl();
-  return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
+  return `https://t.me/${GUEST_TELEGRAM_BOT_USERNAME}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(payload)}`;
 }
 
 export interface BuildDeepLinkOptions {
-  /**
-   * @deprecated Игнорируется для Telegram: гостевой шлюз всегда использует @SotaGuestBot.
-   * Оставлено для обратной совместимости вызовов buildDeepLink(..., { telegramUsername }).
-   */
+  /** @deprecated Не используется: гостевой бот задаётся только через NEXT_PUBLIC_GUEST_BOT_USERNAME. */
   telegramUsername?: string | null;
 }
 
@@ -55,9 +49,8 @@ export function buildDeepLink(
 
   switch (channel) {
     case "telegram": {
-      const bot = guestTelegramBotForUrl();
       const startPayload = buildStartPayload(venueId, tableId);
-      return `https://t.me/${bot}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(startPayload)}`;
+      return `https://t.me/${GUEST_TELEGRAM_BOT_USERNAME}/${TELEGRAM_MINIAPP_NAME}?startapp=${encodeURIComponent(startPayload)}`;
     }
     case "whatsapp":
       const text = encodeURIComponent(`start ${payloadWithOptionalVisitor}`);

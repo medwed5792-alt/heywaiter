@@ -25,6 +25,22 @@ import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
+/** Staff Mini App: `initDataUnsafe.receiver.username` === waitertalk_bot → /mini-app/staff. Гость: HeyWaiter_bot (см. NEXT_PUBLIC_GUEST_BOT_USERNAME). */
+const STAFF_TELEGRAM_BOT_USERNAME = "waitertalk_bot";
+
+function normalizeTelegramBotUsername(raw: string | undefined): string {
+  return (raw ?? "").trim().replace(/^@/, "").toLowerCase();
+}
+
+function getTelegramReceiverUsername(): string {
+  if (typeof window === "undefined") return "";
+  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  return normalizeTelegramBotUsername(tg?.initDataUnsafe?.receiver?.username);
+}
+
+function isStaffTelegramMiniApp(): boolean {
+  return getTelegramReceiverUsername() === STAFF_TELEGRAM_BOT_USERNAME;
+}
 
 type TelegramWebAppInit = {
   initData?: string;
@@ -113,7 +129,8 @@ function MiniAppContent() {
   const [sessionUiError, setSessionUiError] = useState<string | null>(null);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [billRequestStatus, setBillRequestStatus] = useState<"pending" | "processing" | "completed" | null>(null);
-  const [debugError, setDebugError] = useState<string | null>(null);
+  /** pending → ждём tg.ready; guest → гостевой сценарий; staff → редирект в /mini-app/staff */
+  const [bootKind, setBootKind] = useState<"pending" | "guest" | "staff">("pending");
   const checkInSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -128,33 +145,23 @@ function MiniAppContent() {
   }, []);
 
   useEffect(() => {
+    if (!isSdkReady) return;
     if (typeof window === "undefined") return;
-    const onError = (event: ErrorEvent) => {
-      const text = event.error instanceof Error ? event.error.stack || event.error.message : event.message || "Unknown error";
-      console.error("[mini-app] window error:", event.error ?? event.message);
-      setDebugError(text);
-    };
-    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason;
-      const text =
-        reason instanceof Error
-          ? reason.stack || reason.message
-          : typeof reason === "string"
-            ? reason
-            : JSON.stringify(reason);
-      console.error("[mini-app] unhandled rejection:", reason);
-      setDebugError(text || "Unhandled rejection without details");
-    };
-    window.addEventListener("error", onError);
-    window.addEventListener("unhandledrejection", onUnhandledRejection);
-    return () => {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onUnhandledRejection);
-    };
-  }, []);
+    const inTg = isTelegramContext();
+    if (!inTg) {
+      setBootKind("guest");
+      return;
+    }
+    if (isStaffTelegramMiniApp()) {
+      setBootKind("staff");
+      router.replace("/mini-app/staff?v=current");
+      return;
+    }
+    setBootKind("guest");
+  }, [isSdkReady, router]);
 
   useEffect(() => {
-    if (!isSdkReady) return;
+    if (!isSdkReady || bootKind !== "guest") return;
 
     const inTg = isTelegramContext();
 
@@ -173,7 +180,6 @@ function MiniAppContent() {
           return;
         }
         console.warn("[mini-app] start_param parse failed:", sp);
-        setDebugError(`Не удалось распарсить start_param: "${sp}"`);
       }
       setVenueId("");
       setTableId("");
@@ -199,7 +205,7 @@ function MiniAppContent() {
     setTableId("");
     setFirestoreDone(true);
     setEntryRouteResolved(true);
-  }, [isSdkReady, searchParams]);
+  }, [isSdkReady, searchParams, bootKind]);
 
   useEffect(() => {
     if (!isSdkReady) return;
@@ -281,9 +287,7 @@ function MiniAppContent() {
     if (!isTelegramContext()) return;
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
     if (!tg?.initDataUnsafe?.user) {
-      const text = "Telegram user отсутствует в initDataUnsafe.user";
-      console.warn("[mini-app] " + text, tg?.initDataUnsafe);
-      setDebugError((prev) => prev ?? text);
+      console.warn("[mini-app] Telegram user отсутствует в initDataUnsafe.user", tg?.initDataUnsafe);
     }
   }, []);
   const currentUid = resolveUnifiedCustomerUid({
@@ -345,9 +349,7 @@ function MiniAppContent() {
           setSessionUiError(null);
         }
       } catch (e) {
-        const text = e instanceof Error ? e.stack || e.message : String(e);
         console.error("[mini-app] check-in request failed:", e);
-        setDebugError(text);
       }
     })();
   }, [venueId, tableId, currentUid, isSdkReady]);
@@ -600,6 +602,22 @@ function MiniAppContent() {
     router.push(`${origin}/check-in`);
   }, [router]);
 
+  if (!isSdkReady || bootKind === "pending") {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-slate-500 text-sm">Загрузка…</p>
+      </main>
+    );
+  }
+
+  if (bootKind === "staff") {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-slate-500 text-sm">Открытие приложения персонала…</p>
+      </main>
+    );
+  }
+
   if (!entryRouteResolved) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
@@ -632,12 +650,6 @@ function MiniAppContent() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
       <div className="mx-auto flex max-w-md flex-col gap-5">
-        {debugError && (
-          <section className="rounded-xl border border-red-300 bg-red-50 p-3">
-            <p className="text-xs font-semibold text-red-900">DEBUG ERROR (temporary)</p>
-            <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-red-800">{debugError}</pre>
-          </section>
-        )}
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-center text-lg font-bold text-slate-900">
             {isLoadingTable ? "Загрузка…" : `Добро пожаловать в ${venueDisplayName}`}
