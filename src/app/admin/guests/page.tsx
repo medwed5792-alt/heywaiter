@@ -8,6 +8,7 @@ import { db } from "@/lib/firebase";
 import type { Guest, GuestType } from "@/lib/types";
 import type { MessengerChannel } from "@/lib/types";
 import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
+import { generateSotaId, type GuestSubtype } from "@/lib/sota-id";
 const GLOBAL_GUESTS_BATCH = 30;
 const DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -44,6 +45,12 @@ const OWN_TYPES: GuestType[] = ["constant", "favorite", "vip", "blacklisted"];
 
 function isOwnType(g: Guest): boolean {
   return OWN_TYPES.includes(g.type ?? "regular");
+}
+
+function guestSubtypeForSota(t: GuestType): GuestSubtype {
+  if (t === "vip") return "V";
+  if (t === "regular") return "N";
+  return "P";
 }
 
 function lastVisitWithin7Days(g: Guest): boolean {
@@ -378,9 +385,13 @@ function GuestCardModal({
         updatedAt: serverTimestamp(),
       };
       if (guest?.id) {
+        if (!guest.sotaId?.trim()) {
+          payload.sotaId = generateSotaId("G", guestSubtypeForSota(type));
+        }
         await updateDoc(doc(db, "venues", venueId, "guests", guest.id), payload);
         toast.success("Гость сохранён");
       } else {
+        payload.sotaId = generateSotaId("G", guestSubtypeForSota(type));
         await addDoc(collection(db, "venues", venueId, "guests"), { ...payload, createdAt: serverTimestamp() });
         toast.success("Гость добавлен");
       }
@@ -420,6 +431,11 @@ function GuestCardModal({
       <div className="w-full max-w-lg rounded-xl bg-white shadow-lg">
         <div className="border-b border-gray-200 p-4">
           <h3 className="font-semibold text-gray-900">{guest ? "Редактировать гостя" : "Новый гость"}</h3>
+          {guest?.sotaId?.trim() ? (
+            <p className="mt-1 font-mono text-xs text-violet-700" title="SOTA-ID">
+              {guest.sotaId.trim()}
+            </p>
+          ) : null}
         </div>
         <form onSubmit={handleSave} className="p-4 space-y-4">
           <label className="block">

@@ -440,7 +440,17 @@ export function SettingsHallsSection() {
   const addTable = async (hallId: string, number: number, name: string, description: string, seats: number) => {
     if (!number && number !== 0) return;
     try {
-      await addDoc(tablesRef, { hallId, number: Number(number), name: name.trim() || null, description: description.trim() || null, seats: seats > 0 ? seats : null, updatedAt: serverTimestamp() });
+      const n = Number(number);
+      const sotaTableCode = Number.isFinite(n) ? String(n) : String(number);
+      await addDoc(tablesRef, {
+        hallId,
+        number: n,
+        sotaTableCode,
+        name: name.trim() || null,
+        description: description.trim() || null,
+        seats: seats > 0 ? seats : null,
+        updatedAt: serverTimestamp(),
+      });
       setAddingTableHallId(null);
       await loadHallsAndTables();
       toast.success("Стол добавлен");
@@ -451,9 +461,12 @@ export function SettingsHallsSection() {
 
   const updateTable = async (t: VenueTable, hallId: string, number: number, name: string, description: string, seats: number) => {
     try {
+      const n = Number(number);
+      const sotaTableCode = Number.isFinite(n) ? String(n) : String(number);
       await updateDoc(doc(db, "venues", VENUE_ID, "tables", t.id), {
         hallId: hallId || null,
-        number: Number(number),
+        number: n,
+        sotaTableCode,
         name: name.trim() || null,
         description: description.trim() || null,
         seats: seats > 0 ? seats : null,

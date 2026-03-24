@@ -47,10 +47,17 @@ export async function GET() {
       if (!isActive) continue;
 
       if (global) {
+        const sotaId =
+          typeof data.sotaId === "string" && data.sotaId.trim()
+            ? data.sotaId.trim()
+            : typeof global.sotaId === "string" && global.sotaId.trim()
+              ? global.sotaId.trim()
+              : undefined;
         staffList.push({
           id: d.id,
           userId: global.id,
           venueId: VENUE_ID,
+          ...(sotaId ? { sotaId } : {}),
           role: (data.role as Staff["role"]) ?? "waiter",
           primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
           identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
@@ -73,9 +80,12 @@ export async function GET() {
           updatedAt: global.updatedAt ?? data.updatedAt,
         } as Staff);
       } else {
+        const sotaId =
+          typeof data.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : undefined;
         staffList.push({
           id: d.id,
           venueId: VENUE_ID,
+          ...(sotaId ? { sotaId } : {}),
           role: (data.role as Staff["role"]) ?? "waiter",
           primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
           identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },

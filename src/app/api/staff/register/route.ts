@@ -6,6 +6,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { findUserByIdentity, toIdentityKey } from "@/lib/auth/unifiedSearch";
 import type { Affiliation, UnifiedIdentities } from "@/lib/types";
 import { resolveVenueId } from "@/lib/standards/venue-default";
+import { generateSotaId } from "@/lib/sota-id";
 
 /**
  * POST /api/staff/register
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
     const identities: UnifiedIdentities = { [key]: platformId };
     const newRef = firestore.collection("global_users").doc();
     const userId = newRef.id;
+    const sotaId = generateSotaId("S", "W");
     const affiliation: Affiliation = {
       venueId,
       role: "waiter",
@@ -59,6 +61,7 @@ export async function POST(request: NextRequest) {
     await newRef.set({
       firstName: firstName || null,
       lastName: lastName || null,
+      sotaId,
       identities,
       affiliations: [affiliation],
       careerHistory: [],
@@ -70,6 +73,7 @@ export async function POST(request: NextRequest) {
     await staffRef.set({
       venueId,
       userId,
+      sotaId,
       role: "waiter",
       primaryChannel: "telegram",
       identity: { channel: "telegram", externalId: platformId, locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },

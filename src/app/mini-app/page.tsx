@@ -18,6 +18,8 @@ import {
 import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
+import { parseSotaStartappPayload } from "@/lib/sota-id";
+import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
@@ -168,7 +170,56 @@ function MiniAppContent() {
     if (inTg) {
       const sp = getStartParamFromTelegramWebApp();
       if (sp) {
-        const p = parseStartParamPayload(sp);
+        let decoded = sp;
+        try {
+          decoded = decodeURIComponent(sp.trim());
+        } catch {
+          decoded = sp.trim();
+        }
+        const sota = parseSotaStartappPayload(decoded);
+        if (sota) {
+          let cancelled = false;
+          (async () => {
+            try {
+              const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
+              if (cancelled) return;
+              if (resolved) {
+                setVenueId(resolved.venueId);
+                setTableId(resolved.tableId);
+                setVenueSettings(null);
+                setTableSettings(null);
+                setStaffName(null);
+                setFirestoreDone(false);
+                setEntryRouteResolved(true);
+                return;
+              }
+            } catch (e) {
+              console.warn("[mini-app] SOTA resolve error:", e);
+            }
+            const p = parseStartParamPayload(decoded);
+            if (!cancelled && p) {
+              setVenueId(p.venueId);
+              setTableId(p.tableId);
+              setVenueSettings(null);
+              setTableSettings(null);
+              setStaffName(null);
+              setFirestoreDone(false);
+              setEntryRouteResolved(true);
+              return;
+            }
+            if (!cancelled) {
+              console.warn("[mini-app] start_param parse failed:", decoded);
+              setVenueId("");
+              setTableId("");
+              setFirestoreDone(true);
+              setEntryRouteResolved(true);
+            }
+          })();
+          return () => {
+            cancelled = true;
+          };
+        }
+        const p = parseStartParamPayload(decoded);
         if (p) {
           setVenueId(p.venueId);
           setTableId(p.tableId);
@@ -179,7 +230,7 @@ function MiniAppContent() {
           setEntryRouteResolved(true);
           return;
         }
-        console.warn("[mini-app] start_param parse failed:", sp);
+        console.warn("[mini-app] start_param parse failed:", decoded);
       }
       setVenueId("");
       setTableId("");

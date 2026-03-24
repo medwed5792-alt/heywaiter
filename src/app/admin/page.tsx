@@ -23,6 +23,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { generateSotaId } from "@/lib/sota-id";
 import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
 import type { GlobalUser } from "@/lib/types";
@@ -278,6 +279,7 @@ function AdminDashboardContent() {
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [venueLoading, setVenueLoading] = useState(true);
   const [venueName, setVenueName] = useState<string>("");
+  const [venueSotaId, setVenueSotaId] = useState<string>("");
   const [tables, setTables] = useState<TableRow[]>([]);
   // Lookup для быстрой валидации SOS (не даём фантомным столам открывать модалку).
   const knownTablesLookupRef = useRef<{ idSet: Set<string>; numberSet: Set<string> }>({
@@ -413,6 +415,13 @@ function AdminDashboardContent() {
         const data = snap.data();
         setVenueType((data?.venueType as VenueType) || "full_service");
         setVenueName((data?.name as string) ?? "");
+        setVenueSotaId(typeof data?.sotaId === "string" ? data.sotaId : "");
+        if (typeof data?.sotaId !== "string" || !String(data.sotaId).trim()) {
+          updateDoc(doc(db, "venues", venueId), {
+            sotaId: generateSotaId("V", "R"),
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
         setOperatingHours((data?.operatingHours ?? null) as OperatingHours | null);
         const ms = data?.manualStatus as unknown;
         // Если manualStatus не задан — строго следуем графику.
@@ -426,7 +435,7 @@ function AdminDashboardContent() {
       setVenueLoading(false);
     });
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
@@ -454,7 +463,37 @@ function AdminDashboardContent() {
     });
 
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
+
+  useEffect(() => {
+    if (!venueId || venueType !== "full_service") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "venues", venueId, "tables"));
+        const batch = writeBatch(db);
+        let ops = 0;
+        for (const d of snap.docs) {
+          const data = d.data();
+          if (data.sotaTableCode != null && String(data.sotaTableCode).trim() !== "") continue;
+          const rawNumber = data.number as unknown;
+          const num =
+            typeof rawNumber === "string" ? Number(rawNumber.trim()) : (rawNumber as number | undefined);
+          const code =
+            num != null && Number.isFinite(num) && num !== 0 ? String(num) : d.id.replace(/[^0-9A-Z]/gi, "").slice(0, 4).toUpperCase() || "T";
+          batch.update(d.ref, { sotaTableCode: code, updatedAt: serverTimestamp() });
+          ops++;
+          if (ops >= 450) break;
+        }
+        if (ops > 0 && !cancelled) await batch.commit();
+      } catch {
+        // ignore backfill errors (permissions)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [venueId, venueType]);
 
   useEffect(() => {
     // Live-гео сотрудников: staffLiveGeos по venueId
@@ -1446,6 +1485,11 @@ function AdminDashboardContent() {
           <h2 className="text-lg font-semibold text-gray-900">Центр управления полётами</h2>
           <p className="mt-1 text-sm text-gray-700">
             Заведение: {venueName.trim() ? venueName : venueId}
+            {venueSotaId ? (
+              <span className="ml-2 font-mono text-xs text-violet-700" title="SOTA-ID">
+                {venueSotaId}
+              </span>
+            ) : null}
           </p>
           <p className="mt-1 text-sm text-gray-600">Живой зал, брони, смена и события в реальном времени.</p>
         </div>

@@ -159,6 +159,8 @@ export type VenueType = "full_service" | "fast_food";
 /** Заведение */
 export interface Venue {
   id: string;
+  /** Публичный SOTA-ID (8 символов): поиск и QR startapp. */
+  sotaId?: string;
   name: string;
   address?: string;
   tablesCount: number;
@@ -383,11 +385,15 @@ export interface GlobalUser {
   guestRating?: number;
   venueRating?: number;
   updatedAt?: unknown;
+  /** SOTA-ID сотрудника (S + подтип + 6 Base36), дублируется в staff при необходимости. */
+  sotaId?: string;
 }
 
 /** Цифровой паспорт сотрудника (вид в контексте заведения). Для /admin/team собирается из global_users + staff. */
 export interface Staff {
   id: string;
+  /** SOTA-ID сотрудника (S + подтип + 6 Base36). */
+  sotaId?: string;
   /** ID в global_users (при новой схеме). id может быть составным venueId_userId. */
   userId?: string;
   venueId: string;
@@ -452,6 +458,8 @@ export type GuestTier = "free" | "pro";
 /** Цифровой профиль гостя — сквозной поиск по всем 7 ID (identifyGuest) */
 export interface Guest {
   id: string;
+  /** SOTA-ID профиля гостя (G + подтип + 6 Base36). */
+  sotaId?: string;
   phone?: string;
   tgId?: string;
   waId?: string;

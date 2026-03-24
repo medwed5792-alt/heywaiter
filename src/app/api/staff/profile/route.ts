@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       userId: doc.id,
+      sotaId: typeof data.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : null,
       firstName: data.firstName ?? null,
       lastName: data.lastName ?? null,
       phone: data.phone ?? null,

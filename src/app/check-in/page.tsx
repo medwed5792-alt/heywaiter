@@ -13,6 +13,7 @@ import { db } from "@/lib/firebase";
 import { resolveVenueDisplayName, resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { getCheckInCopy } from "@/lib/i18n-checkin";
 import { buildDeepLink, messengerLabels } from "@/lib/deep-links";
+import { buildTelegramStartAppLinkResolved } from "@/lib/guest-telegram-link";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
@@ -162,12 +163,16 @@ function CheckInContent() {
         else setStatus("success");
 
         if (apiStatus === "check_in_success") {
-          window.location.href = buildDeepLink(
-            channel,
-            venueId,
-            tableId,
-            visitorId?.trim() || undefined
-          );
+          if (channel === "telegram") {
+            window.location.href = await buildTelegramStartAppLinkResolved(db, venueId, tableId);
+          } else {
+            window.location.href = buildDeepLink(
+              channel,
+              venueId,
+              tableId,
+              visitorId?.trim() || undefined
+            );
+          }
         }
 
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));

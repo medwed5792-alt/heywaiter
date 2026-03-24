@@ -43,6 +43,7 @@ function platformKeyFromUrl(raw: string | null): string | null {
 
 interface ProfileData {
   userId: string;
+  sotaId?: string | null;
   firstName: string | null;
   lastName: string | null;
   phone: string | null;
@@ -347,6 +348,11 @@ function StaffCabinetPageInner() {
           </div>
           <div>
             <p className="font-medium text-slate-900">{fullName}</p>
+            {profile?.sotaId ? (
+              <p className="mt-0.5 font-mono text-xs text-violet-700" title="SOTA-ID">
+                {profile.sotaId}
+              </p>
+            ) : null}
             <p className="mt-0.5 text-sm text-slate-500">
               Статус: <span className="font-medium text-amber-700">Свободный агент</span>
             </p>

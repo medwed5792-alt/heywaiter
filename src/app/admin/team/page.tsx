@@ -200,6 +200,11 @@ function StaffRow({
       <td className="p-3">
         <div>
           <p className="text-sm font-medium text-gray-900">{name}</p>
+          {staff.sotaId?.trim() ? (
+            <p className="mt-0.5 font-mono text-[10px] text-violet-700" title="SOTA-ID">
+              {staff.sotaId.trim()}
+            </p>
+          ) : null}
           <div className="mt-1 flex flex-wrap gap-1">
             {IDENTITY_OPTIONS.filter((o) => o.value !== "email").map((opt) => {
               const linked = !!(staff.identities?.[opt.value] ?? (opt.value === "tg" && staff.tgId));
@@ -1419,6 +1424,11 @@ function StaffFormModal({
           <h3 className="font-semibold text-gray-900">
             {staff.id ? "Редактировать сотрудника" : "Новый сотрудник"}
           </h3>
+          {staff.sotaId?.trim() ? (
+            <p className="mt-1 font-mono text-xs text-violet-700" title="SOTA-ID">
+              {staff.sotaId.trim()}
+            </p>
+          ) : null}
         </div>
         <div className="max-h-[70vh] overflow-y-auto p-4 space-y-4">
           <section>

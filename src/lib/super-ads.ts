@@ -43,6 +43,8 @@ export const SUPER_AD_CATEGORY_PRESETS = [
 
 export interface SuperAdCatalogItem {
   id: string;
+  /** SOTA-ID записи (A + подтип + 6 Base36). */
+  sotaId?: string;
   title?: string;
   body?: string;
   imageUrl?: string;
