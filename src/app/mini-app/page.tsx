@@ -28,7 +28,7 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 /** Staff Mini App: `initDataUnsafe.receiver.username` === waitertalk_bot → /mini-app/staff. Гость: HeyWaiter_bot (см. NEXT_PUBLIC_GUEST_BOT_USERNAME). */
-const STAFF_TELEGRAM_BOT_USERNAME = "waitertalk_bot";
+const STAFF_TELEGRAM_BOT_USERNAME = process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME ?? "waitertalk_bot";
 
 function normalizeTelegramBotUsername(raw: string | undefined): string {
   return (raw ?? "").trim().replace(/^@/, "").toLowerCase();

@@ -1,8 +1,16 @@
 /**
  * Firebase Admin — только для сервера (API routes, Server Actions).
  * Инициализация по требованию; credentials из env или default (GCP).
+ *
+ * Идея стандартизации конфигурации:
+ * - сначала читаем `.env`
+ * - затем (опционально) `.env.local` (если он всё ещё существует)
  */
-require("dotenv").config({ path: ".env.local" });
+const fs = require("fs");
+require("dotenv").config({ path: ".env" });
+if (fs.existsSync(".env.local")) {
+  require("dotenv").config({ path: ".env.local" });
+}
 
 import type { Firestore } from "firebase-admin/firestore";
 
@@ -24,7 +32,7 @@ function buildCredentialFromEnv(): { projectId: string; clientEmail: string; pri
     if (!_warnedMissingCredential && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       _warnedMissingCredential = true;
       console.warn(
-        "[Firebase Admin] Запись в Firestore требует FIREBASE_CLIENT_EMAIL и FIREBASE_PRIVATE_KEY в .env.local (или GOOGLE_APPLICATION_CREDENTIALS)."
+        "[Firebase Admin] Запись в Firestore требует FIREBASE_CLIENT_EMAIL и FIREBASE_PRIVATE_KEY в .env (или GOOGLE_APPLICATION_CREDENTIALS)."
       );
     }
     return null;
