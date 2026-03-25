@@ -27,6 +27,7 @@ import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
+import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 
 /** Разделение staff/guest — только в `MiniAppBotRoleDispatcher` (root layout). Эта страница — гостевой сценарий. */
 
@@ -97,6 +98,7 @@ function extractOrderBillInfo(data: Record<string, unknown>): { amount: number; 
 function MiniAppContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { role: miniAppBotRole } = useMiniAppBotRole();
   const { visitorId } = useVisitor();
   const [venueId, setVenueId] = useState<string>("");
   const [tableId, setTableId] = useState<string>("");
@@ -621,20 +623,16 @@ function MiniAppContent() {
     router.push(`${origin}/check-in`);
   }, [router]);
 
+  if (miniAppBotRole !== "guest") {
+    return null;
+  }
+
   if (!isSdkReady) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500 text-sm">Загрузка…</p>
-      </main>
-    );
+    return <MiniAppIdentifyingFallback />;
   }
 
   if (!entryRouteResolved) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500 text-sm">Загрузка…</p>
-      </main>
-    );
+    return <MiniAppIdentifyingFallback />;
   }
 
   if (!sessionFirstVisit) {
@@ -847,13 +845,7 @@ function MiniAppContent() {
 
 export default function MiniAppPage() {
   return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-screen items-center justify-center bg-slate-50">
-          <p className="text-gray-500">Загрузка…</p>
-        </main>
-      }
-    >
+    <Suspense fallback={<MiniAppIdentifyingFallback />}>
       <MiniAppContent />
     </Suspense>
   );

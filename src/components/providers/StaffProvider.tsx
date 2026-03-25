@@ -146,6 +146,7 @@ export interface StaffData {
   userId: string | null;
   staffId: string | null;
   onShift: boolean;
+  sotaId: string | null;
 }
 
 export interface VenueOption {

@@ -24,6 +24,7 @@ import {
   HEYWAITER_STAFF_LS_TG_PLATFORM_ID,
   HEYWAITER_STAFF_LS_SOTA_ID,
 } from "@/components/providers/StaffProvider";
+import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 
@@ -1202,6 +1203,7 @@ const STAFF_BOOT_TOTAL_MS = 5000;
 
 function MiniAppStaffContent() {
   const searchParams = useSearchParams();
+  const { role: miniAppBotRole } = useMiniAppBotRole();
   const initialVenueId = getVenueIdFromSearchParams(searchParams);
   const [staffBootstrapReady, setStaffBootstrapReady] = useState(false);
 
@@ -1250,12 +1252,12 @@ function MiniAppStaffContent() {
     return () => window.clearInterval(id);
   }, [searchParams]);
 
+  if (miniAppBotRole !== "staff") {
+    return null;
+  }
+
   if (!staffBootstrapReady) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-sm text-slate-500">Подключение к сессии…</p>
-      </main>
-    );
+    return <MiniAppIdentifyingFallback />;
   }
 
   return (
@@ -1267,7 +1269,7 @@ function MiniAppStaffContent() {
 
 export default function MiniAppStaffPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense fallback={<MiniAppIdentifyingFallback />}>
       <MiniAppStaffContent />
     </Suspense>
   );

@@ -1,16 +1,44 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { HEYWAITER_STAFF_LS_SOTA_ID } from "@/components/providers/StaffProvider";
 
 function normalizeBotUsername(raw: string | undefined | null): string {
   return (raw ?? "").trim().replace(/^@/, "").toLowerCase();
 }
 
-type BotRole = "staff" | "guest" | null;
+export type MiniAppResolvedBotRole = "staff" | "guest";
+
+type BotRole = MiniAppResolvedBotRole | null;
 
 const POLL_MS = 300;
 const TOTAL_MS = 5000;
+
+const STAFF_ROUTE_PREFIX = "/mini-app/staff";
+
+export type MiniAppBotRoleContextValue = {
+  /** Роль после идентификации; null на splash/ошибке внутри mini-app. */
+  role: BotRole;
+  identificationFailed: boolean;
+};
+
+const MiniAppBotRoleContext = createContext<MiniAppBotRoleContextValue | null>(null);
+
+export function useMiniAppBotRole(): MiniAppBotRoleContextValue {
+  const v = useContext(MiniAppBotRoleContext);
+  if (!v) {
+    throw new Error("useMiniAppBotRole должен вызываться внутри MiniAppBotRoleDispatcher");
+  }
+  return v;
+}
 
 /** Чтение состояния WebApp; для роли по боту достаточно receiver — initData не обязателен. */
 function readTelegramWebAppState(): {
@@ -78,6 +106,38 @@ function roleFromReceiver(receiverUsername: string, staffBot: string, guestBot: 
   return null;
 }
 
+function hasStaffSotaInStorage(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const v = localStorage.getItem(HEYWAITER_STAFF_LS_SOTA_ID)?.trim();
+    return Boolean(v);
+  } catch {
+    return false;
+  }
+}
+
+type TimeoutDecision = { kind: "role"; role: MiniAppResolvedBotRole } | { kind: "failed" };
+
+function decideRoleAfterTimeout(
+  searchParams: Pick<URLSearchParams, "get">,
+  staffBot: string,
+  guestBot: string,
+  pathStaff: boolean
+): TimeoutDecision {
+  const fromUrl = getRoleFromUrl(searchParams, staffBot, guestBot);
+  if (fromUrl) return { kind: "role", role: fromUrl };
+
+  const { receiverUsername } = readTelegramWebAppState();
+  const fromRecv = roleFromReceiver(receiverUsername, staffBot, guestBot);
+  if (fromRecv) return { kind: "role", role: fromRecv };
+
+  if (pathStaff) return { kind: "role", role: "staff" };
+
+  if (hasStaffSotaInStorage()) return { kind: "role", role: "staff" };
+
+  return { kind: "failed" };
+}
+
 /** Нейтральный экран до идентификации бота (железная изоляция от гостевого UI). */
 export function MiniAppIdentifyingFallback() {
   return (
@@ -99,8 +159,47 @@ export function MiniAppIdentifyingFallback() {
   );
 }
 
+function MiniAppIdentificationFailedScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="min-h-screen flex flex-col items-center justify-center bg-[#fafafa] px-6">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-center">
+        <p className="text-2xl font-semibold tracking-[0.18em] text-slate-800">SOTA</p>
+        <h1 className="mt-4 text-base font-semibold text-slate-900">Режим не определён</h1>
+        <p className="mt-2 text-sm text-slate-600">
+          Не удалось распознать бота Mini App. Откройте приложение из Telegram (@waitertalk_bot или гостевого бота)
+          или повторите попытку.
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-6 w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+        >
+          Попробовать снова
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function Provider({
+  value,
+  children,
+}: {
+  value: MiniAppBotRoleContextValue;
+  children: ReactNode;
+}) {
+  return (
+    <MiniAppBotRoleContext.Provider value={value}>{children}</MiniAppBotRoleContext.Provider>
+  );
+}
+
 export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const nextPathname = usePathname() ?? "";
+  const pathname =
+    typeof window !== "undefined" && window.location.pathname
+      ? window.location.pathname
+      : nextPathname;
+
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -114,18 +213,20 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
   );
 
   const isMiniAppRoute = useMemo(() => {
-    const p = pathname ?? "";
+    const p = pathname;
     return p === "/mini-app" || p.startsWith("/mini-app/");
   }, [pathname]);
 
   const [role, setRole] = useState<BotRole>(null);
+  const [identificationFailed, setIdentificationFailed] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  /** Пока роль не определена на mini-app — не монтируем гостевой/рабочий UI (только нейтральный экран). */
-  const isIdentifying = isMiniAppRoute && role == null;
+  const isIdentifying = isMiniAppRoute && role == null && !identificationFailed;
 
   useLayoutEffect(() => {
     if (!isMiniAppRoute) {
       setRole(null);
+      setIdentificationFailed(false);
       return;
     }
 
@@ -136,14 +237,13 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     }
 
     setRole(null);
+    setIdentificationFailed(false);
 
-    const STAFF_ROUTE_PREFIX = "/mini-app/staff";
-    const pathStaff = (pathname ?? "").startsWith(STAFF_ROUTE_PREFIX);
+    const pathStaff = pathname.startsWith(STAFF_ROUTE_PREFIX);
 
-    const applyRole = (nextRole: BotRole) => {
-      if (!nextRole) return;
+    const applyRole = (nextRole: MiniAppResolvedBotRole) => {
       setRole(nextRole);
-      const isStaffRoute = (pathname ?? "").startsWith(STAFF_ROUTE_PREFIX);
+      const isStaffRoute = pathname.startsWith(STAFF_ROUTE_PREFIX);
       if (nextRole === "staff" && !isStaffRoute) {
         router.replace("/mini-app/staff?v=current");
         return;
@@ -153,22 +253,12 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
       }
     };
 
-    const decideRoleAfterTimeout = (): BotRole => {
-      const fromUrl = getRoleFromUrl(searchParams, staffBot, guestBot);
-      if (fromUrl) return fromUrl;
-      const { receiverUsername } = readTelegramWebAppState();
-      const fromRecv = roleFromReceiver(receiverUsername, staffBot, guestBot);
-      if (fromRecv) return fromRecv;
-      return pathStaff ? "staff" : "guest";
-    };
-
     const urlRoleImmediate = getRoleFromUrl(searchParams, staffBot, guestBot);
     if (urlRoleImmediate) {
       applyRole(urlRoleImmediate);
       return;
     }
 
-    // 1) Приоритет: receiver.username (waitertalk_bot / гостевой бот) — без ожидания initData.
     const { receiverUsername: recvNow } = readTelegramWebAppState();
     const fromRecvNow = roleFromReceiver(recvNow, staffBot, guestBot);
     if (fromRecvNow) {
@@ -191,7 +281,12 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
       }
 
       if (Date.now() - startedAt >= TOTAL_MS) {
-        applyRole(decideRoleAfterTimeout());
+        const decision = decideRoleAfterTimeout(searchParams, staffBot, guestBot, pathStaff);
+        if (decision.kind === "failed") {
+          setIdentificationFailed(true);
+          return;
+        }
+        applyRole(decision.role);
         return;
       }
 
@@ -204,11 +299,43 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
       cancelled = true;
       if (timeoutId != null) clearTimeout(timeoutId);
     };
-  }, [guestBot, isMiniAppRoute, pathname, router, searchParams, staffBot]);
+  }, [
+    guestBot,
+    isMiniAppRoute,
+    pathname,
+    router,
+    searchParams,
+    staffBot,
+    retryNonce,
+  ]);
 
-  if (isIdentifying) {
-    return <MiniAppIdentifyingFallback />;
+  const ctxValue: MiniAppBotRoleContextValue = useMemo(
+    () => ({
+      role: isMiniAppRoute ? role : null,
+      identificationFailed: isMiniAppRoute ? identificationFailed : false,
+    }),
+    [identificationFailed, isMiniAppRoute, role]
+  );
+
+  if (!isMiniAppRoute) {
+    return <Provider value={ctxValue}>{children}</Provider>;
   }
 
-  return <>{children}</>;
+  if (identificationFailed) {
+    return (
+      <Provider value={ctxValue}>
+        <MiniAppIdentificationFailedScreen onRetry={() => setRetryNonce((n) => n + 1)} />
+      </Provider>
+    );
+  }
+
+  if (isIdentifying) {
+    return (
+      <Provider value={ctxValue}>
+        <MiniAppIdentifyingFallback />
+      </Provider>
+    );
+  }
+
+  return <Provider value={ctxValue}>{children}</Provider>;
 }
