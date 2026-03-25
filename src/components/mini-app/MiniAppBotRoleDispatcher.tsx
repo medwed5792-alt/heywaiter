@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 function normalizeBotUsername(raw: string | undefined | null): string {
@@ -12,6 +12,7 @@ type BotRole = "staff" | "guest" | null;
 const POLL_MS = 300;
 const TOTAL_MS = 5000;
 
+/** Чтение состояния WebApp; для роли по боту достаточно receiver — initData не обязателен. */
 function readTelegramWebAppState(): {
   initData: string;
   receiverUsername: string;
@@ -23,11 +24,6 @@ function readTelegramWebAppState(): {
   const tg = (window as unknown as { Telegram?: { WebApp?: any } }).Telegram?.WebApp;
   if (!tg) {
     return { initData: "", receiverUsername: "", userId: null };
-  }
-  try {
-    tg.ready?.();
-  } catch {
-    // ignore
   }
   const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
   const receiverUsername = normalizeBotUsername(
@@ -82,6 +78,27 @@ function roleFromReceiver(receiverUsername: string, staffBot: string, guestBot: 
   return null;
 }
 
+/** Нейтральный экран до идентификации бота (железная изоляция от гостевого UI). */
+export function MiniAppIdentifyingFallback() {
+  return (
+    <main className="min-h-screen flex flex-col items-center justify-center bg-[#fafafa] px-6">
+      <div className="flex w-full max-w-[280px] flex-col items-center gap-8">
+        <div className="text-center">
+          <span className="text-2xl font-semibold tracking-[0.22em] text-slate-800">SOTA</span>
+          <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
+            HeyWaiter
+          </p>
+        </div>
+        <div className="w-full space-y-3" aria-hidden>
+          <div className="mx-auto h-2.5 w-3/4 animate-pulse rounded-full bg-slate-200/95" />
+          <div className="h-2.5 w-full animate-pulse rounded-full bg-slate-200/85" />
+          <div className="mx-auto h-2.5 w-5/6 animate-pulse rounded-full bg-slate-200/85" />
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -102,26 +119,30 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
   }, [pathname]);
 
   const [role, setRole] = useState<BotRole>(null);
-  const [status, setStatus] = useState<"loading" | "ready">("loading");
 
-  useEffect(() => {
+  /** Пока роль не определена на mini-app — не монтируем гостевой/рабочий UI (только нейтральный экран). */
+  const isIdentifying = isMiniAppRoute && role == null;
+
+  useLayoutEffect(() => {
     if (!isMiniAppRoute) {
       setRole(null);
-      setStatus("ready");
       return;
     }
 
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    setStatus("loading");
+    try {
+      (window as unknown as { Telegram?: { WebApp?: { ready?: () => void } } }).Telegram?.WebApp?.ready?.();
+    } catch {
+      // ignore
+    }
+
+    setRole(null);
 
     const STAFF_ROUTE_PREFIX = "/mini-app/staff";
     const pathStaff = (pathname ?? "").startsWith(STAFF_ROUTE_PREFIX);
 
     const applyRole = (nextRole: BotRole) => {
-      if (cancelled || !nextRole) return;
+      if (!nextRole) return;
       setRole(nextRole);
-      setStatus("ready");
       const isStaffRoute = (pathname ?? "").startsWith(STAFF_ROUTE_PREFIX);
       if (nextRole === "staff" && !isStaffRoute) {
         router.replace("/mini-app/staff?v=current");
@@ -144,20 +165,27 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     const urlRoleImmediate = getRoleFromUrl(searchParams, staffBot, guestBot);
     if (urlRoleImmediate) {
       applyRole(urlRoleImmediate);
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
+    // 1) Приоритет: receiver.username (waitertalk_bot / гостевой бот) — без ожидания initData.
+    const { receiverUsername: recvNow } = readTelegramWebAppState();
+    const fromRecvNow = roleFromReceiver(recvNow, staffBot, guestBot);
+    if (fromRecvNow) {
+      applyRole(fromRecvNow);
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const startedAt = Date.now();
 
     const tick = () => {
       if (cancelled) return;
 
-      const { initData, receiverUsername } = readTelegramWebAppState();
+      const { receiverUsername } = readTelegramWebAppState();
       const fromRecv = roleFromReceiver(receiverUsername, staffBot, guestBot);
-
-      if (fromRecv && initData.length > 0) {
+      if (fromRecv) {
         applyRole(fromRecv);
         return;
       }
@@ -178,20 +206,8 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     };
   }, [guestBot, isMiniAppRoute, pathname, router, searchParams, staffBot]);
 
-  if (isMiniAppRoute && status === "loading") {
-    return (
-      <main className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
-        <p className="text-sm text-slate-500">Загрузка (бот-контекст)…</p>
-      </main>
-    );
-  }
-
-  if (isMiniAppRoute && role == null) {
-    return (
-      <main className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
-        <p className="text-sm text-slate-500">Загрузка (бот-контекст)…</p>
-      </main>
-    );
+  if (isIdentifying) {
+    return <MiniAppIdentifyingFallback />;
   }
 
   return <>{children}</>;

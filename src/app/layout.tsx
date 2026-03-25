@@ -24,7 +24,13 @@ export default function RootLayout({
           strategy="beforeInteractive"
         />
         <VisitorProvider>
-          <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+          <Suspense
+            fallback={
+              <div className="min-h-screen bg-[#fafafa] flex items-center justify-center">
+                <span className="text-slate-400 text-sm">Loading…</span>
+              </div>
+            }
+          >
             <MiniAppBotRoleDispatcher>{children}</MiniAppBotRoleDispatcher>
           </Suspense>
           <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
