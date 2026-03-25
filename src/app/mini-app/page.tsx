@@ -10,6 +10,7 @@ import {
   getDocs,
   limit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -28,6 +29,7 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
 import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
+import { AdSpace } from "@/components/ads/AdSpace";
 
 /** Разделение staff/guest — только в `MiniAppBotRoleDispatcher` (root layout). Эта страница — гостевой сценарий. */
 
@@ -93,6 +95,249 @@ function extractOrderBillInfo(data: Record<string, unknown>): { amount: number; 
 
   const amount = items.reduce((acc, i) => acc + i.amount, 0);
   return { amount, items };
+}
+
+type GuestHistoryEntry = {
+  venueId: string;
+  tableId?: string;
+  // В разных сборках поле может называться по-разному; используем как best-effort.
+  createdAt?: { toDate?: () => Date } | number | string | null;
+  visitedAt?: { toDate?: () => Date } | number | string | null;
+};
+
+function useGuestHistory(args: {
+  currentUid: string | null;
+  enabled: boolean;
+}) {
+  const { currentUid, enabled } = args;
+  const [history, setHistory] = useState<GuestHistoryEntry[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !currentUid) {
+      setHistory(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const q = query(
+          collection(db, "users", currentUid, "history"),
+          orderBy("createdAt", "desc"),
+          limit(10)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+
+        const entries = snap.docs
+          .map((d) => {
+            const x = d.data() as Record<string, unknown>;
+            const venueId = typeof x.venueId === "string" ? x.venueId.trim() : "";
+            if (!venueId) return null;
+            const tableId = typeof x.tableId === "string" ? x.tableId.trim() : undefined;
+            return { venueId, tableId, createdAt: x.createdAt as any, visitedAt: x.visitedAt as any } satisfies GuestHistoryEntry;
+          })
+          .filter(Boolean) as GuestHistoryEntry[];
+
+        setHistory(entries);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "History load failed");
+        setHistory([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUid, enabled]);
+
+  return { history, loading, error };
+}
+
+function GuestDashboard({
+  venueIdFromHistory,
+  history,
+  onOpenScanner,
+}: {
+  venueIdFromHistory: string;
+  history: GuestHistoryEntry[];
+  onOpenScanner: () => void;
+}) {
+  const [selectedVenueId, setSelectedVenueId] = useState(venueIdFromHistory);
+
+  useEffect(() => {
+    setSelectedVenueId(venueIdFromHistory);
+  }, [venueIdFromHistory]);
+
+  const venues = useMemo(() => {
+    const byVenue = new Map<string, GuestHistoryEntry[]>();
+    for (const h of history) {
+      if (!byVenue.has(h.venueId)) byVenue.set(h.venueId, []);
+      byVenue.get(h.venueId)!.push(h);
+    }
+    return Array.from(byVenue.entries())
+      .map(([vid, items]) => ({ venueId: vid, items }))
+      .slice(0, 5);
+  }, [history]);
+
+  return (
+    <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
+      <div className="mx-auto flex max-w-md flex-col gap-5">
+        <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-center text-lg font-bold text-slate-900">Добро пожаловать</p>
+          <p className="mt-2 text-center text-sm text-slate-600">
+            Вы в режиме без стола. История визитов поможет восстановить места.
+          </p>
+          <div className="mt-3">
+            <AdSpace placement="dashboard_top" />
+          </div>
+        </header>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-slate-900">Мои места</p>
+          <p className="mt-1 text-xs text-slate-600">Последние заведения и столы</p>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {venues.map((v) => {
+              const active = v.venueId === selectedVenueId;
+              return (
+                <button
+                  key={v.venueId}
+                  type="button"
+                  onClick={() => setSelectedVenueId(v.venueId)}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                    active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  {resolveVenueDisplayName(v.venueId)}
+                </button>
+              );
+            })}
+            {venues.length === 0 && <p className="text-xs text-slate-500 mt-2">История пуста.</p>}
+          </div>
+
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={onOpenScanner}
+              className="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Встроенный сканер
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-sm font-semibold text-slate-900">Выбранное заведение</p>
+          <p className="mt-1 text-xs text-slate-600">{resolveVenueDisplayName(selectedVenueId)}</p>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function GuestVenueMenu({
+  venueId,
+  onOpenScanner,
+}: {
+  venueId: string;
+  onOpenScanner: () => void;
+}) {
+  const [menuConfig, setMenuConfig] = useState<{ menuLink?: string; menuPdfUrl?: string; menuItems?: string[] } | null>(null);
+  const [venueTitle, setVenueTitle] = useState<string>("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const venueSnap = await getDoc(doc(db, "venues", venueId));
+        if (cancelled) return;
+        setVenueTitle(resolveVenueDisplayName(venueSnap.exists() ? venueSnap.data()?.name : undefined));
+        if (venueSnap.exists()) {
+          setMenuConfig(venueSnap.data()?.config ?? null);
+        } else {
+          setMenuConfig(null);
+        }
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [venueId]);
+
+  const hasMenu =
+    menuConfig &&
+    (menuConfig.menuLink || menuConfig.menuPdfUrl || (menuConfig.menuItems?.length ?? 0) > 0);
+
+  return (
+    <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
+      <div className="mx-auto flex max-w-md flex-col gap-5">
+        <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-center text-lg font-bold text-slate-900">{loaded ? venueTitle : "Меню заведения"}</p>
+          <p className="mt-2 text-center text-sm text-slate-600">
+            Выберите стол, чтобы включить вызов официанта и сервис.
+          </p>
+        </header>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          {hasMenu ? (
+            <>
+              {menuConfig?.menuLink ? (
+                <a
+                  href={menuConfig.menuLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 underline"
+                >
+                  📜 Меню
+                </a>
+              ) : null}
+              {menuConfig?.menuPdfUrl ? (
+                <a
+                  href={menuConfig.menuPdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 underline"
+                >
+                  📜 Меню (PDF)
+                </a>
+              ) : null}
+              {menuConfig?.menuItems?.length ? (
+                <ul className="mt-2 list-inside list-disc text-sm text-slate-600">
+                  {menuConfig.menuItems.slice(0, 10).map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-slate-600">Меню не настроено для этого заведения.</p>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <button
+            type="button"
+            onClick={onOpenScanner}
+            className="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Встроенный сканер
+          </button>
+        </section>
+      </div>
+    </main>
+  );
 }
 
 function MiniAppContent() {
@@ -593,6 +838,17 @@ function MiniAppContent() {
     }
   }, [currentUid, venueId, tableId]);
 
+  const hasVenue = Boolean(venueId);
+  const hasTable = Boolean(tableId);
+  const wantGuestHistory = entryRouteResolved && miniAppBotRole === "guest" && !hasVenue && !hasTable;
+  const {
+    history: guestHistory,
+    loading: guestHistoryLoading,
+  } = useGuestHistory({
+    currentUid: currentUid || null,
+    enabled: wantGuestHistory,
+  });
+
   const openTableScanner = useCallback(() => {
     const inTg = isTelegramContext();
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
@@ -636,24 +892,53 @@ function MiniAppContent() {
   }
 
   if (!sessionFirstVisit) {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <div className="mx-auto max-w-sm text-center">
-          <QrCode className="mx-auto mb-4 h-16 w-16 text-slate-400" aria-hidden />
-          <h1 className="text-lg font-semibold text-slate-900">Личный кабинет</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Режим без стола: откройте стол по QR, чтобы включить вызов официанта.
-          </p>
-          <button
-            type="button"
-            onClick={openTableScanner}
-            className="mt-6 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Сканировать QR
-          </button>
-        </div>
-      </main>
-    );
+    if (!hasVenue && !hasTable) {
+      if (guestHistoryLoading) {
+        return (
+          <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
+            <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
+              Загрузка истории…
+            </div>
+          </main>
+        );
+      }
+      const firstVenue = guestHistory?.[0]?.venueId ?? "";
+      if (guestHistory && guestHistory.length > 0 && firstVenue) {
+        return (
+          <GuestDashboard
+            venueIdFromHistory={firstVenue}
+            history={guestHistory}
+            onOpenScanner={openTableScanner}
+          />
+        );
+      }
+      return (
+        <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
+          <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center">
+            <QrCode className="mx-auto mb-4 h-16 w-16 text-slate-400" aria-hidden />
+            <h1 className="text-lg font-semibold text-slate-900">Без стола</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              История визитов поможет восстановить места. Откройте сканер, чтобы выбрать стол.
+            </p>
+            <button
+              type="button"
+              onClick={openTableScanner}
+              className="mt-5 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Открыть сканер
+            </button>
+          </div>
+        </main>
+      );
+    }
+
+    // venueId есть, tableId отсутствует (например SOTA-хаб без стола) => меню заведения
+    if (hasVenue && !hasTable) {
+      return <GuestVenueMenu venueId={venueId} onOpenScanner={openTableScanner} />;
+    }
+
+    // защитный fallback
+    return <GuestVenueMenu venueId={venueId || tableId || ""} onOpenScanner={openTableScanner} />;
   }
 
   return (
