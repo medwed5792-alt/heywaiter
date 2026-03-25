@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { toIdentityKey } from "@/lib/auth/unifiedSearch";
+import { generateSotaId } from "@/lib/sota-id";
 
 /**
  * GET /api/staff/profile?channel=...&platformId=...
@@ -41,10 +42,39 @@ export async function GET(request: NextRequest) {
     const doc = snap.docs[0];
     const data = doc.data();
     const affiliations = Array.isArray(data.affiliations) ? data.affiliations : [];
+    const isFreeAgent =
+      affiliations.filter((a: { status?: string }) => a.status !== "former").length === 0;
+    let sotaId =
+      typeof data.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : null;
+
+    // Soft backfill on read: если активный сотрудник ещё без sotaId — создаём на лету.
+    if (!sotaId && !isFreeAgent) {
+      const newSotaId = generateSotaId("S", "W");
+      await doc.ref.set(
+        { sotaId: newSotaId, updatedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+
+      // Синхронизируем в staff для всех активных affiliation (если такие документы существуют).
+      for (const aff of affiliations) {
+        const a = aff as { status?: string; venueId?: string };
+        if (a.status === "former") continue;
+        const venueId = typeof a.venueId === "string" ? a.venueId.trim() : "";
+        if (!venueId) continue;
+        const staffDocId = `${venueId}_${doc.id}`;
+        const staffRef = firestore.collection("staff").doc(staffDocId);
+        await staffRef.set(
+          { sotaId: newSotaId, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true }
+        );
+      }
+
+      sotaId = newSotaId;
+    }
 
     return NextResponse.json({
       userId: doc.id,
-      sotaId: typeof data.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : null,
+      sotaId,
       firstName: data.firstName ?? null,
       lastName: data.lastName ?? null,
       phone: data.phone ?? null,
@@ -52,7 +82,7 @@ export async function GET(request: NextRequest) {
       photoUrl: data.photoUrl ?? null,
       identities: data.identities ?? {},
       affiliations,
-      isFreeAgent: affiliations.filter((a: { status?: string }) => a.status !== "former").length === 0,
+      isFreeAgent,
     });
   } catch (err) {
     console.error("[staff/profile GET]", err);
