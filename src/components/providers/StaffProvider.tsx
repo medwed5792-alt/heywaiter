@@ -21,6 +21,11 @@ import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
 
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
 
+/** Кэш последнего Telegram user id (платформенный id) для Mini App staff, когда initDataUnsafe ещё пустой. */
+export const HEYWAITER_STAFF_LS_TG_PLATFORM_ID = "heywaiter_staff_tg_platform_id";
+/** Кэш SOTA-ID сотрудника — якорь входа, если Telegram временно не отдаёт initData. */
+export const HEYWAITER_STAFF_LS_SOTA_ID = "heywaiter_staff_sota_id";
+
 function platformKeyFromUrl(raw: string | null): string | null {
   const v = raw?.trim().toLowerCase();
   if (!v) return null;
@@ -51,26 +56,73 @@ function platformKeyFromUrl(raw: string | null): string | null {
   }
 }
 
-function getTelegramUserId(): string | null {
-  if (typeof window === "undefined") return null;
-  const tg = (window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } })
-    .Telegram?.WebApp;
-  const id = tg?.initDataUnsafe?.user?.id;
-  return id != null ? String(id) : null;
+function parseTelegramUserIdFromInitData(initData: string): string | null {
+  const raw = initData.trim();
+  if (!raw) return null;
+  try {
+    const params = new URLSearchParams(raw);
+    const userJson = params.get("user");
+    if (!userJson) return null;
+    const u = JSON.parse(userJson) as { id?: number | string };
+    if (u?.id != null) return String(u.id);
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
-function getPlatformIdentity(): { platformKey: string; platformId: string | null } {
-  if (typeof window === "undefined") return { platformKey: "tg", platformId: null };
+function getTelegramUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  const tg = (window as unknown as {
+    Telegram?: { WebApp?: { initData?: string; initDataUnsafe?: { user?: { id?: number } } } };
+  }).Telegram?.WebApp;
+  if (!tg) return null;
+  const unsafeId = tg.initDataUnsafe?.user?.id;
+  if (unsafeId != null) return String(unsafeId);
+  const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+  return parseTelegramUserIdFromInitData(initData);
+}
+
+function readStaffLocalStorage(key: string): string | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const v = localStorage.getItem(key);
+    return v?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistStaffAnchors(platformId: string | null, sotaId: string | null): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    if (platformId?.trim()) localStorage.setItem(HEYWAITER_STAFF_LS_TG_PLATFORM_ID, platformId.trim());
+    if (sotaId?.trim()) localStorage.setItem(HEYWAITER_STAFF_LS_SOTA_ID, sotaId.trim());
+  } catch {
+    // ignore
+  }
+}
+
+function getPlatformIdentity(): {
+  platformKey: string;
+  platformId: string | null;
+  sotaAnchor: string | null;
+} {
+  if (typeof window === "undefined") {
+    return { platformKey: "tg", platformId: null, sotaAnchor: null };
+  }
   const telegramId = getTelegramUserId();
+  const cachedTg = readStaffLocalStorage(HEYWAITER_STAFF_LS_TG_PLATFORM_ID);
+  const sotaAnchor = readStaffLocalStorage(HEYWAITER_STAFF_LS_SOTA_ID);
 
   const params = new URLSearchParams(window.location.search);
   const urlPlatformKey = platformKeyFromUrl(params.get("platform") ?? params.get("channel")) ?? null;
   const urlPlatformId = params.get("platformId") ?? params.get("chatId") ?? params.get("telegramId");
 
-  const platformKey = urlPlatformKey ?? (telegramId ? "tg" : "tg");
-  const platformId = (urlPlatformId ?? telegramId ?? null)?.trim() || null;
+  const platformKey = urlPlatformKey ?? "tg";
+  const platformId = (urlPlatformId ?? telegramId ?? cachedTg ?? null)?.trim() || null;
 
-  return { platformKey, platformId };
+  return { platformKey, platformId, sotaAnchor };
 }
 
 function getStaffVenueFromSession(): string | null {
@@ -118,6 +170,7 @@ const defaultStaffData: StaffData = {
   userId: null,
   staffId: null,
   onShift: false,
+  sotaId: null,
 };
 
 const StaffContext = createContext<StaffContextValue>({
@@ -164,13 +217,19 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
   }, []);
 
   const fetchMe = useCallback(async (venueId: string): Promise<StaffData | null> => {
-    const { platformKey, platformId } = getPlatformIdentity();
-    if (!platformId) return null;
-    const res = await fetch(
-      `/api/staff/me?venueId=${encodeURIComponent(venueId)}&channel=${encodeURIComponent(
-        platformKey
-      )}&platformId=${encodeURIComponent(platformId)}${platformKey === "tg" ? `&telegramId=${encodeURIComponent(platformId)}` : ""}`
-    );
+    const { platformKey, platformId, sotaAnchor } = getPlatformIdentity();
+    if (!platformId && !sotaAnchor) return null;
+
+    const qs = new URLSearchParams();
+    qs.set("venueId", venueId);
+    qs.set("channel", platformKey);
+    if (platformId) {
+      qs.set("platformId", platformId);
+      if (platformKey === "tg") qs.set("telegramId", platformId);
+    }
+    if (!platformId && sotaAnchor) qs.set("sotaId", sotaAnchor);
+
+    const res = await fetch(`/api/staff/me?${qs.toString()}`);
     let data: any;
     try {
       data = await res.json();
@@ -183,12 +242,16 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
       return null;
     }
     setError(null);
+    const sotaId = typeof data?.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : null;
     const next: StaffData = {
       userId: data?.userId ?? null,
       staffId: data?.staffId ?? null,
       onShift: data.onShift === true,
+      sotaId,
     };
     setStaffData(next);
+    const identAfter = getPlatformIdentity();
+    persistStaffAnchors(identAfter.platformId, sotaId);
     return next;
   }, []);
 
@@ -209,8 +272,8 @@ export function StaffProvider({ children, initialVenueFromUrl = null }: StaffPro
 
   // Инициализация: загрузка venues, затем выбор заведения и fetchMe
   useEffect(() => {
-    const { platformId } = getPlatformIdentity();
-    if (!platformId) {
+    const { platformId, sotaAnchor } = getPlatformIdentity();
+    if (!platformId && !sotaAnchor) {
       setError("Откройте приложение из нужного мессенджера");
       setIsInitialLoading(false);
       return;

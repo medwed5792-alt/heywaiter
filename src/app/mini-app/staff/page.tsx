@@ -18,7 +18,12 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
-import { StaffProvider, useStaff } from "@/components/providers/StaffProvider";
+import {
+  StaffProvider,
+  useStaff,
+  HEYWAITER_STAFF_LS_TG_PLATFORM_ID,
+  HEYWAITER_STAFF_LS_SOTA_ID,
+} from "@/components/providers/StaffProvider";
 import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 
@@ -94,9 +99,23 @@ function formatTime(iso: string | null): string {
 
 function getTelegramUserIdFromWindow(): string | null {
   if (typeof window === "undefined") return null;
-  const id = (window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } })
-    .Telegram?.WebApp?.initDataUnsafe?.user?.id;
-  return id != null ? String(id) : null;
+  const WebApp = (window as unknown as {
+    Telegram?: { WebApp?: { initData?: string; initDataUnsafe?: { user?: { id?: number } } } };
+  }).Telegram?.WebApp;
+  const unsafe = WebApp?.initDataUnsafe?.user?.id;
+  if (unsafe != null) return String(unsafe);
+  const initData = typeof WebApp?.initData === "string" ? WebApp.initData.trim() : "";
+  if (!initData) return null;
+  try {
+    const params = new URLSearchParams(initData);
+    const userJson = params.get("user");
+    if (!userJson) return null;
+    const u = JSON.parse(userJson) as { id?: number | string };
+    if (u?.id != null) return String(u.id);
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function platformKeyToLabel(platformKey: string): string {
@@ -289,7 +308,7 @@ function StaffContentInner() {
   const [activeTables, setActiveTables] = useState<ActiveTableItem[]>([]);
   const [notificationActionLoading, setNotificationActionLoading] = useState<string | null>(null);
 
-  const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false };
+  const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false, sotaId: null };
   const { userId, staffId, onShift } = safeStaffData;
   const tgIdForDetect = getTelegramUserIdFromWindow();
   const urlPlatformRaw = searchParams.get("platform") ?? searchParams.get("channel");
@@ -1178,9 +1197,67 @@ function StaffContentInner() {
   );
 }
 
+const STAFF_BOOT_POLL_MS = 300;
+const STAFF_BOOT_TOTAL_MS = 5000;
+
 function MiniAppStaffContent() {
   const searchParams = useSearchParams();
   const initialVenueId = getVenueIdFromSearchParams(searchParams);
+  const [staffBootstrapReady, setStaffBootstrapReady] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const urlPid = (
+      searchParams.get("platformId") ??
+      searchParams.get("chatId") ??
+      searchParams.get("telegramId") ??
+      ""
+    ).trim();
+    if (urlPid) {
+      setStaffBootstrapReady(true);
+      return;
+    }
+
+    let cachedSota = false;
+    let cachedTg = false;
+    try {
+      cachedSota = Boolean(localStorage.getItem(HEYWAITER_STAFF_LS_SOTA_ID)?.trim());
+      cachedTg = Boolean(localStorage.getItem(HEYWAITER_STAFF_LS_TG_PLATFORM_ID)?.trim());
+    } catch {
+      // ignore
+    }
+    if (cachedSota || cachedTg) {
+      setStaffBootstrapReady(true);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const id = window.setInterval(() => {
+      const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
+      const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+      if (init.length > 0) {
+        setStaffBootstrapReady(true);
+        window.clearInterval(id);
+        return;
+      }
+      if (Date.now() - startedAt >= STAFF_BOOT_TOTAL_MS) {
+        setStaffBootstrapReady(true);
+        window.clearInterval(id);
+      }
+    }, STAFF_BOOT_POLL_MS);
+
+    return () => window.clearInterval(id);
+  }, [searchParams]);
+
+  if (!staffBootstrapReady) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
+        <p className="text-sm text-slate-500">Подключение к сессии…</p>
+      </main>
+    );
+  }
+
   return (
     <StaffProvider initialVenueFromUrl={initialVenueId}>
       <StaffContentInner />

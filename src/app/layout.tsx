@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Toaster } from "react-hot-toast";
 import { VisitorProvider } from "@/components/providers/VisitorProvider";
 import "./globals.css";
@@ -18,6 +19,10 @@ export default function RootLayout({
   return (
     <html lang="ru">
       <body className="min-h-screen">
+        <Script
+          src="https://telegram.org/js/telegram-web-app.js"
+          strategy="beforeInteractive"
+        />
         <VisitorProvider>
           <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
             <MiniAppBotRoleDispatcher>{children}</MiniAppBotRoleDispatcher>

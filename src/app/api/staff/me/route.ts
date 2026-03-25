@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
 
     const telegramId = searchParams.get("telegramId")?.trim();
     const platformIdParam = searchParams.get("platformId")?.trim();
+    const sotaIdParam = searchParams.get("sotaId")?.trim() || "";
 
     const PLATFORM_ID_PARAM_BY_KEY: Record<string, string> = {
       tg: "tgId",
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
       line: "lineId",
     };
 
-    const platformId =
+    let platformId =
       platformIdParam ||
       (key === "tg" ? telegramId : undefined) ||
       (PLATFORM_ID_PARAM_BY_KEY[key] ? searchParams.get(PLATFORM_ID_PARAM_BY_KEY[key])?.trim() : undefined);
@@ -50,7 +51,8 @@ export async function GET(request: NextRequest) {
     const phoneClean = phoneRaw.replace(/\D/g, "");
 
     // Миграция: старый клиент мог передавать только telegramId.
-    if (!platformId) {
+    // Якорь SOTA-ID: когда Telegram ещё не отдал initData / platformId, но в localStorage есть последний sotaId.
+    if (!platformId && !sotaIdParam) {
       return NextResponse.json(
         { error: "platformId обязателен" },
         { status: 400 }
@@ -61,31 +63,87 @@ export async function GET(request: NextRequest) {
 
     // 1) Global Profile: ищем global_user по конкретному identities.<key> только для текущего канала
     let foundGlobalUserId: string | null = null;
-    const bySocialSnap = await firestore
-      .collection("global_users")
-      .where(`identities.${key}`, "==", platformId)
-      .limit(1)
-      .get();
 
-    if (!bySocialSnap.empty) {
-      foundGlobalUserId = bySocialSnap.docs[0].id;
-    } else if (phoneClean) {
-      // 2) Fallback по телефону: ищем global_users по identities.phone и привязываем текущий соц-ID
-      const byPhoneSnap = await firestore
+    if (sotaIdParam) {
+      const bySotaGlobal = await firestore
         .collection("global_users")
-        .where("identities.phone", "==", phoneClean)
+        .where("sotaId", "==", sotaIdParam)
+        .limit(1)
+        .get();
+      if (!bySotaGlobal.empty) {
+        foundGlobalUserId = bySotaGlobal.docs[0].id;
+        const gd = bySotaGlobal.docs[0].data() ?? {};
+        const identities = (gd.identities ?? {}) as Record<string, unknown>;
+        const idFromIdent =
+          typeof identities[key] === "string"
+            ? (identities[key] as string).trim()
+            : key === "tg" && typeof identities.tg === "string"
+              ? (identities.tg as string).trim()
+              : "";
+        if (!platformId && idFromIdent) platformId = idFromIdent;
+      }
+      if (!foundGlobalUserId) {
+        const bySotaStaff = await firestore
+          .collection("staff")
+          .where("venueId", "==", venueId)
+          .where("sotaId", "==", sotaIdParam)
+          .limit(1)
+          .get();
+        if (!bySotaStaff.empty) {
+          const sd = bySotaStaff.docs[0].data() ?? {};
+          const uid = typeof sd.userId === "string" ? sd.userId.trim() : "";
+          if (uid) {
+            foundGlobalUserId = uid;
+            const PLATFORM_STAFF_FIELD: Partial<Record<string, string>> = {
+              tg: "tgId",
+              wa: "waId",
+              vk: "vkId",
+              viber: "viberId",
+              wechat: "wechatId",
+              inst: "instagramId",
+              fb: "facebookId",
+              line: "lineId",
+            };
+            const sf = PLATFORM_STAFF_FIELD[key];
+            const ext =
+              sf && typeof sd[sf] === "string"
+                ? (sd[sf] as string).trim()
+                : typeof sd.tgId === "string"
+                  ? sd.tgId.trim()
+                  : "";
+            if (!platformId && ext) platformId = ext;
+          }
+        }
+      }
+    }
+
+    if (!foundGlobalUserId && platformId) {
+      const bySocialSnap = await firestore
+        .collection("global_users")
+        .where(`identities.${key}`, "==", platformId)
         .limit(1)
         .get();
 
-      if (!byPhoneSnap.empty) {
-        foundGlobalUserId = byPhoneSnap.docs[0].id;
-        const globalRef = firestore.collection("global_users").doc(foundGlobalUserId);
-        const current = byPhoneSnap.docs[0].data() ?? {};
-        const currentIdentities = (current.identities ?? {}) as Record<string, unknown>;
-        await globalRef.update({
-          identities: { ...currentIdentities, [key]: platformId },
-          updatedAt: FieldValue.serverTimestamp(),
-        });
+      if (!bySocialSnap.empty) {
+        foundGlobalUserId = bySocialSnap.docs[0].id;
+      } else if (phoneClean) {
+        // 2) Fallback по телефону: ищем global_users по identities.phone и привязываем текущий соц-ID
+        const byPhoneSnap = await firestore
+          .collection("global_users")
+          .where("identities.phone", "==", phoneClean)
+          .limit(1)
+          .get();
+
+        if (!byPhoneSnap.empty) {
+          foundGlobalUserId = byPhoneSnap.docs[0].id;
+          const globalRef = firestore.collection("global_users").doc(foundGlobalUserId);
+          const current = byPhoneSnap.docs[0].data() ?? {};
+          const currentIdentities = (current.identities ?? {}) as Record<string, unknown>;
+          await globalRef.update({
+            identities: { ...currentIdentities, [key]: platformId },
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
       }
     }
 
@@ -108,14 +166,17 @@ export async function GET(request: NextRequest) {
     );
 
     // Дополнительно (совместимость): иногда может существовать документ venues/.../staff/{socialId}
-    const venueStaffBySocialSnap = await firestore
-      .collection("venues")
-      .doc(venueId)
-      .collection("staff")
-      .doc(platformId)
-      .get();
+    const venueStaffBySocialSnap =
+      platformId != null && platformId !== ""
+        ? await firestore
+            .collection("venues")
+            .doc(venueId)
+            .collection("staff")
+            .doc(platformId)
+            .get()
+        : null;
 
-    if (!hasVenueByAffiliation && !venueStaffBySocialSnap.exists) {
+    if (!hasVenueByAffiliation && !(venueStaffBySocialSnap?.exists === true)) {
       return NextResponse.json(
         { error: "Сотрудник не найден для этого заведения" },
         { status: 404 }
@@ -133,7 +194,7 @@ export async function GET(request: NextRequest) {
       .get();
 
     // Фолбэк на совместимость по внешнему ID в staff документе (tgId/waId/vkId/...)
-    if (staffSnap.empty) {
+    if (staffSnap.empty && platformId) {
       const PLATFORM_STAFF_FIELD: Partial<Record<typeof key, string>> = {
         tg: "tgId",
         wa: "waId",
@@ -181,9 +242,12 @@ export async function GET(request: NextRequest) {
     const staffSotaId =
       typeof staffData.sotaId === "string" && staffData.sotaId.trim() ? staffData.sotaId.trim() : null;
 
+    let responseSotaId = globalSotaId ?? staffSotaId;
+
     // Soft backfill: если у активного сотрудника отсутствует SOTA-ID — создаём на лету.
     if (!globalSotaId || !staffSotaId) {
-      const shouldGenerate = !globalSotaId && !staffSotaId && (hasVenueByAffiliation || venueStaffBySocialSnap.exists);
+      const shouldGenerate =
+        !globalSotaId && !staffSotaId && (hasVenueByAffiliation || venueStaffBySocialSnap?.exists === true);
       const targetSotaId = globalSotaId ?? staffSotaId ?? (shouldGenerate ? generateSotaId("S", "W") : null);
 
       if (targetSotaId) {
@@ -200,6 +264,7 @@ export async function GET(request: NextRequest) {
               { merge: true }
             );
           }
+          responseSotaId = targetSotaId;
         } catch (e) {
           // Не ломаем вход при проблемах бэкофила.
           console.warn("[staff/me] SOTA backfill failed:", e);
@@ -234,6 +299,7 @@ export async function GET(request: NextRequest) {
       onShift,
       shiftStartTime,
       shiftEndTime,
+      sotaId: responseSotaId,
     });
   } catch (err) {
     console.error("[staff/me]", err);

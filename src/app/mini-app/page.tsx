@@ -27,22 +27,8 @@ import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { Bell, QrCode } from "lucide-react";
 import toast from "react-hot-toast";
-/** Staff Mini App: `initDataUnsafe.receiver.username` === waitertalk_bot → /mini-app/staff. Гость: HeyWaiter_bot (см. NEXT_PUBLIC_GUEST_BOT_USERNAME). */
-const STAFF_TELEGRAM_BOT_USERNAME = process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME ?? "waitertalk_bot";
 
-function normalizeTelegramBotUsername(raw: string | undefined): string {
-  return (raw ?? "").trim().replace(/^@/, "").toLowerCase();
-}
-
-function getTelegramReceiverUsername(): string {
-  if (typeof window === "undefined") return "";
-  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
-  return normalizeTelegramBotUsername(tg?.initDataUnsafe?.receiver?.username);
-}
-
-function isStaffTelegramMiniApp(): boolean {
-  return getTelegramReceiverUsername() === STAFF_TELEGRAM_BOT_USERNAME;
-}
+/** Разделение staff/guest — только в `MiniAppBotRoleDispatcher` (root layout). Эта страница — гостевой сценарий. */
 
 type TelegramWebAppInit = {
   initData?: string;
@@ -131,8 +117,6 @@ function MiniAppContent() {
   const [sessionUiError, setSessionUiError] = useState<string | null>(null);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [billRequestStatus, setBillRequestStatus] = useState<"pending" | "processing" | "completed" | null>(null);
-  /** pending → ждём tg.ready; guest → гостевой сценарий; staff → редирект в /mini-app/staff */
-  const [bootKind, setBootKind] = useState<"pending" | "guest" | "staff">("pending");
   const checkInSyncRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -148,22 +132,6 @@ function MiniAppContent() {
 
   useEffect(() => {
     if (!isSdkReady) return;
-    if (typeof window === "undefined") return;
-    const inTg = isTelegramContext();
-    if (!inTg) {
-      setBootKind("guest");
-      return;
-    }
-    if (isStaffTelegramMiniApp()) {
-      setBootKind("staff");
-      router.replace("/mini-app/staff?v=current");
-      return;
-    }
-    setBootKind("guest");
-  }, [isSdkReady, router]);
-
-  useEffect(() => {
-    if (!isSdkReady || bootKind !== "guest") return;
 
     const inTg = isTelegramContext();
 
@@ -256,7 +224,7 @@ function MiniAppContent() {
     setTableId("");
     setFirestoreDone(true);
     setEntryRouteResolved(true);
-  }, [isSdkReady, searchParams, bootKind]);
+  }, [isSdkReady, searchParams]);
 
   useEffect(() => {
     if (!isSdkReady) return;
@@ -653,18 +621,10 @@ function MiniAppContent() {
     router.push(`${origin}/check-in`);
   }, [router]);
 
-  if (!isSdkReady || bootKind === "pending") {
+  if (!isSdkReady) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
         <p className="text-slate-500 text-sm">Загрузка…</p>
-      </main>
-    );
-  }
-
-  if (bootKind === "staff") {
-    return (
-      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-50 p-6">
-        <p className="text-slate-500 text-sm">Открытие приложения персонала…</p>
       </main>
     );
   }
