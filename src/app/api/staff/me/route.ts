@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 import { resolveVenueId } from "@/lib/standards/venue-default";
+import { generateSotaId } from "@/lib/sota-id";
 
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
@@ -96,6 +97,8 @@ export async function GET(request: NextRequest) {
     const globalUserRef = firestore.collection("global_users").doc(foundGlobalUserId);
     const globalUserSnap = await globalUserRef.get();
     const globalData = globalUserSnap.data() ?? {};
+    const globalSotaId =
+      typeof globalData.sotaId === "string" && globalData.sotaId.trim() ? globalData.sotaId.trim() : null;
 
     // 2) Venue Access: проверяем наличие привязки к venue_andrey_alt в профиле (affiliations)
     const affiliations = Array.isArray(globalData.affiliations) ? globalData.affiliations : [];
@@ -174,6 +177,35 @@ export async function GET(request: NextRequest) {
     const staffDocId = staffDoc.id;
     const staffData = staffDoc.data() ?? {};
     const userId = (staffData.userId as string | undefined) ?? foundGlobalUserId;
+
+    const staffSotaId =
+      typeof staffData.sotaId === "string" && staffData.sotaId.trim() ? staffData.sotaId.trim() : null;
+
+    // Soft backfill: если у активного сотрудника отсутствует SOTA-ID — создаём на лету.
+    if (!globalSotaId || !staffSotaId) {
+      const shouldGenerate = !globalSotaId && !staffSotaId && (hasVenueByAffiliation || venueStaffBySocialSnap.exists);
+      const targetSotaId = globalSotaId ?? staffSotaId ?? (shouldGenerate ? generateSotaId("S", "W") : null);
+
+      if (targetSotaId) {
+        try {
+          if (!globalSotaId) {
+            await globalUserRef.set(
+              { sotaId: targetSotaId, updatedAt: FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+          }
+          if (!staffSotaId) {
+            await staffDoc.ref.set(
+              { sotaId: targetSotaId, updatedAt: FieldValue.serverTimestamp() },
+              { merge: true }
+            );
+          }
+        } catch (e) {
+          // Не ломаем вход при проблемах бэкофила.
+          console.warn("[staff/me] SOTA backfill failed:", e);
+        }
+      }
+    }
 
     // 4) onShift читается ТОЛЬКО из venues/venue_andrey_alt/staff/[staffDocId]
     const resolvedVenueId = venueId;
