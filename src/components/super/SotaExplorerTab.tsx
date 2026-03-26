@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { Building2, Shield, UserRound, ExternalLink, Database, ChevronDown, ChevronUp } from "lucide-react";
 import { withSuperAdminAuthHeaders } from "@/components/super/super-auth";
 import { SuperStaffCatalogTab } from "@/components/super/SuperStaffCatalogTab";
+import { GuestLoyaltyCard } from "@/components/super/GuestLoyaltyCard";
 
 type RegistryPrefix = "VR" | "SW" | "GP" | "GN";
 type RegistryKind = "venue" | "staff" | "guest";
@@ -280,8 +281,6 @@ export function SotaExplorerTab() {
     const name =
       pickString(selectedData, ["displayName", "fullName"]) ?? selected.displayName ?? selected.sotaId ?? selected.docId;
     const photoUrl = pickString(selectedData, ["photoUrl", "avatarUrl"]);
-    const score = typeof selectedData.globalScore === "number" ? selectedData.globalScore : null;
-    const affiliations = (selectedData.affiliations as any[] | undefined) ?? [];
 
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -292,35 +291,10 @@ export function SotaExplorerTab() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-base font-semibold text-slate-900 truncate">{name}</p>
-              {typeof score === "number" ? <Chip tone="amber">Статус: {score}</Chip> : <Chip>Статус: —</Chip>}
             </div>
             <p className="mt-1 text-xs font-mono text-slate-500">{selected.sotaId ?? selected.docId}</p>
-            <p className="mt-2 text-sm text-slate-700">
-              Визиты/любимые места: <span className="text-slate-500">пока из Raw Data</span>
-            </p>
+              <GuestLoyaltyCard uid={selected.docId} />
           </div>
-        </div>
-
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Любимые места (по affiliations)</p>
-          {affiliations.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-600">Нет данных.</p>
-          ) : (
-            <ul className="mt-2 space-y-2">
-              {affiliations.slice(0, 6).map((a, idx) => {
-                const venueId = typeof a?.venueId === "string" ? a.venueId : "—";
-                const status = typeof a?.status === "string" ? a.status : "—";
-                return (
-                  <li key={`${venueId}-${idx}`} className="rounded-lg bg-white border border-slate-200 px-3 py-2">
-                    <p className="text-sm text-slate-900">
-                      <span className="font-mono">{venueId}</span>
-                    </p>
-                    <p className="text-xs text-slate-600">Статус: {status}</p>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
         </div>
 
         <div className="mt-4">
