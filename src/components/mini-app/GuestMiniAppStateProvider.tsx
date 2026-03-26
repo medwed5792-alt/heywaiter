@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
+import { collection, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -10,6 +10,8 @@ import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
+import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
+import type { OrderStatus } from "@/lib/types";
 
 type TelegramWebAppInit = {
   initData?: string;
@@ -47,11 +49,87 @@ type GuestVisitEntry = {
   totalVisits?: number;
 };
 
+type GuestOrderLine = {
+  name: string;
+  qty: number;
+  unitPrice: number;
+  totalAmount: number;
+};
+
+type GuestTableOrder = {
+  id: string;
+  orderNumber: number;
+  status: OrderStatus | string;
+  customerUid?: string;
+  items: GuestOrderLine[];
+};
+
+function parseNumber(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const n = Number(raw.replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function extractOrderItemsForUI(data: Record<string, unknown>): GuestOrderLine[] {
+  const rawItems = Array.isArray(data.items) ? data.items : [];
+  const items: GuestOrderLine[] = [];
+
+  for (const i of rawItems) {
+    const x = (i ?? {}) as Record<string, unknown>;
+    const name =
+      String(x.name ?? x.title ?? x.dishName ?? x.itemName ?? "").trim() ||
+      "Позиция";
+    const qty = Math.max(parseNumber(x.qty ?? x.quantity), 1);
+    const unitPriceRaw = parseNumber(x.price ?? x.unitPrice);
+    const totalRaw = parseNumber(x.amount ?? x.total);
+
+    const totalAmount = totalRaw > 0 ? totalRaw : unitPriceRaw > 0 ? unitPriceRaw * qty : 0;
+    const unitPrice = unitPriceRaw > 0 ? unitPriceRaw : qty > 0 ? totalAmount / qty : 0;
+
+    items.push({ name, qty, unitPrice, totalAmount });
+  }
+
+  if (items.length > 0) return items;
+
+  // Fallback: order without `items` array — try numeric fields.
+  const total =
+    parseNumber(data.amount) ||
+    parseNumber(data.total) ||
+    parseNumber(data.sum) ||
+    parseNumber(data.price);
+
+  if (total > 0) {
+    items.push({ name: "Заказ", qty: 1, unitPrice: total, totalAmount: total });
+  }
+
+  return items;
+}
+
+function parseGuestTableOrder(docId: string, data: Record<string, unknown>): GuestTableOrder {
+  const orderNumber = Math.max(1, Math.floor(parseNumber(data.orderNumber)));
+  const status = typeof data.status === "string" ? data.status : "pending";
+  const customerUid = typeof data.customerUid === "string" ? data.customerUid.trim() : undefined;
+  const items = extractOrderItemsForUI(data);
+
+  return {
+    id: docId,
+    orderNumber,
+    status,
+    customerUid,
+    items,
+  };
+}
+
 type GuestMiniAppContextValue = {
   guestIdentity: { sotaId: string | null; telegramUid: string | null; currentUid: string | null };
   currentLocation: { venueId: string | null; tableId: string | null };
   visitHistory: GuestVisitEntry[];
-  activeSession: { venueId: string; tableId: string; checkedIn: boolean } | null;
+  activeSession: ActiveSession | null;
+  participants: ActiveSessionParticipant[];
+  currentTableOrders: GuestTableOrder[];
   isInitializing: boolean;
   isGuestBlocked: boolean;
   guestBlockedReason: string | null;
@@ -75,12 +153,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     tableId: null,
   });
   const [visitHistory, setVisitHistory] = useState<GuestVisitEntry[]>([]);
-  const [activeSession, setActiveSession] = useState<{ venueId: string; tableId: string; checkedIn: boolean } | null>(null);
+  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const [participants, setParticipants] = useState<ActiveSessionParticipant[]>([]);
+  const [currentTableOrders, setCurrentTableOrders] = useState<GuestTableOrder[]>([]);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSdkReady, setIsSdkReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
+  const rootOrdersLoadedRef = useRef(false);
+  const subOrdersLoadedRef = useRef(false);
 
   const telegramUid = useMemo(() => {
     if (typeof window === "undefined") return null;
@@ -136,9 +218,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const nextVenueId = venueId?.trim() || null;
       const nextTableId = tableId?.trim() || null;
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
-      setActiveSession(
-        nextVenueId && nextTableId ? { venueId: nextVenueId, tableId: nextTableId, checkedIn: false } : null
-      );
+      setActiveSession(null);
+      setParticipants([]);
+      setCurrentTableOrders([]);
       if (nextVenueId && !nextTableId) {
         setVisitHistory((prev) => {
           const deduped = prev.filter((v) => v.venueId !== nextVenueId);
@@ -278,16 +360,139 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             participantUid: guestIdentity.currentUid,
           }),
         });
-        setActiveSession((prev) =>
-          prev ? { ...prev, checkedIn: true } : null
-        );
       } catch {
-        setActiveSession((prev) =>
-          prev ? { ...prev, checkedIn: false } : null
-        );
+        // session data will be updated by activeSessions snapshot
       }
     })();
   }, [currentLocation.venueId, currentLocation.tableId, guestIdentity.currentUid, isSdkReady]);
+
+  // Live session data: masterId, isPrivate and participants.
+  useEffect(() => {
+    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
+
+    const q = query(
+      collection(db, "activeSessions"),
+      where("venueId", "==", currentLocation.venueId),
+      where("tableId", "==", currentLocation.tableId),
+      where("status", "==", "check_in_success"),
+      limit(1)
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      if (snap.empty) {
+        setActiveSession(null);
+        setParticipants([]);
+        return;
+      }
+
+      const d = (snap.docs[0]!.data() ?? {}) as Record<string, unknown>;
+      const masterId = typeof d.masterId === "string" ? d.masterId.trim() : "";
+      const isPrivate = typeof d.isPrivate === "boolean" ? d.isPrivate : true;
+
+      const participantsRaw = Array.isArray(d.participants) ? d.participants : [];
+      const parsedParticipants: ActiveSessionParticipant[] = participantsRaw
+        .map((p) => {
+          const x = (p ?? {}) as Record<string, unknown>;
+          const uid = typeof x.uid === "string" ? x.uid.trim() : "";
+          const statusRaw = x.status;
+          const status: ActiveSessionParticipantStatus =
+            statusRaw === "paid" || statusRaw === "exited" ? (statusRaw as ActiveSessionParticipantStatus) : "active";
+          if (!uid) return null;
+          return {
+            uid,
+            status,
+            joinedAt: x.joinedAt ?? null,
+            updatedAt: x.updatedAt ?? null,
+          };
+        })
+        .filter(Boolean) as ActiveSessionParticipant[];
+
+      const tableNumber = typeof d.tableNumber === "number" ? d.tableNumber : 0;
+      const status = typeof d.status === "string" ? d.status : "check_in_success";
+
+      const session: ActiveSession = {
+        id: snap.docs[0]!.id,
+        venueId: currentLocation.venueId,
+        tableId: currentLocation.tableId,
+        tableNumber,
+        masterId: masterId || undefined,
+        isPrivate,
+        participants: parsedParticipants,
+        status: status === "check_in_success" ? "check_in_success" : "check_in_success",
+        createdAt: d.createdAt ?? null,
+        updatedAt: d.updatedAt ?? null,
+      };
+
+      setActiveSession(session);
+      setParticipants(parsedParticipants);
+    });
+
+    return () => unsub();
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
+
+  // Live orders data for the table.
+  useEffect(() => {
+    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
+
+    const venueId = currentLocation.venueId;
+    const tableId = currentLocation.tableId;
+
+    let rootOrders: GuestTableOrder[] = [];
+    let subOrders: GuestTableOrder[] = [];
+
+    const applyMerged = () => {
+      if (rootOrdersLoadedRef.current && rootOrders.length > 0) {
+        setCurrentTableOrders(rootOrders);
+        return;
+      }
+
+      if (subOrdersLoadedRef.current && subOrders.length > 0) {
+        setCurrentTableOrders(subOrders);
+        return;
+      }
+
+      if (rootOrdersLoadedRef.current) {
+        setCurrentTableOrders([]);
+        return;
+      }
+
+      setCurrentTableOrders(subOrdersLoadedRef.current ? subOrders : []);
+    };
+
+    rootOrdersLoadedRef.current = false;
+    subOrdersLoadedRef.current = false;
+
+    const parseOrdersSnap = (snap: any): GuestTableOrder[] => {
+      return snap.docs.map((d: any) => parseGuestTableOrder(d.id, d.data() as Record<string, unknown>));
+    };
+
+    // Root orders (current schema in this repo)
+    const qRoot = query(
+      collection(db, "orders"),
+      where("venueId", "==", venueId),
+      where("tableId", "==", tableId),
+      where("status", "in", ["pending", "ready"])
+    );
+    const unsubRoot = onSnapshot(qRoot, (snap) => {
+      rootOrders = parseOrdersSnap(snap);
+      rootOrdersLoadedRef.current = true;
+      applyMerged();
+    });
+
+    // Required subscription per spec: activeSessions/${venueId}_${tableId}/orders
+    const docId = `${venueId}_${tableId}`;
+    const ordersSubRef = collection(db, "activeSessions", docId, "orders");
+    const unsubSub = onSnapshot(ordersSubRef, (snap) => {
+      subOrders = parseOrdersSnap(snap);
+      subOrdersLoadedRef.current = true;
+      applyMerged();
+    });
+
+    return () => {
+      unsubRoot();
+      unsubSub();
+    };
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
 
   useEffect(() => {
     if (!isSdkReady || isInitializing || currentLocation.venueId || currentLocation.tableId) return;
@@ -471,6 +676,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       currentLocation,
       visitHistory,
       activeSession,
+      participants,
+      currentTableOrders,
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
@@ -486,6 +693,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       currentLocation,
       visitHistory,
       activeSession,
+      participants,
+      currentTableOrders,
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
