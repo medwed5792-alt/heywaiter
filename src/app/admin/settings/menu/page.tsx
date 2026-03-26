@@ -63,7 +63,7 @@ export default function AdminSettingsMenuPage() {
     <div>
       <h2 className="text-lg font-semibold text-gray-900">Меню заведения</h2>
       <p className="mt-1 text-sm text-gray-600">
-        Если заполнена хотя бы одна опция (ссылка, PDF или позиции), в Mini App гостя (/check-in/panel) отображается кнопка «📜 Меню». Если всё пусто — кнопки нет.
+        Если заполнена хотя бы одна опция (ссылка, PDF или позиции), в Mini App гостя (/mini-app) отображается кнопка «📜 Меню». Если всё пусто — кнопки нет.
       </p>
 
       <div className="mt-6 flex flex-col gap-4 max-w-xl">

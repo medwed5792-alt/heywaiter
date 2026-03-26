@@ -63,7 +63,7 @@ export function SettingsMenuSection() {
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6">
       <p className="text-sm text-gray-600">
-        Ссылка на внешнее облачное хранилище (PDF, Google Диск и т.д.). При нажатии гостем кнопки «📜 Меню» в Mini App (/check-in/panel) происходит переход по этой ссылке в браузере.
+        Ссылка на внешнее облачное хранилище (PDF, Google Диск и т.д.). При нажатии гостем кнопки «📜 Меню» в Mini App (/mini-app) происходит переход по этой ссылке в браузере.
       </p>
       <div className="mt-4 flex flex-col gap-4 max-w-xl">
         <label className="flex flex-col gap-1">

@@ -26,12 +26,12 @@ import { createGuestEvent, getWaiterIdFromTableDoc } from "@/lib/guest-events";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
 import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
-import { Bell, QrCode } from "lucide-react";
+import { Bell } from "lucide-react";
 import toast from "react-hot-toast";
-import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
+import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { AdSpace } from "@/components/ads/AdSpace";
 
-/** Разделение staff/guest — только в `MiniAppBotRoleDispatcher` (root layout). Эта страница — гостевой сценарий. */
+/** Единая точка правды гостевого Mini App сценария. */
 
 type TelegramWebAppInit = {
   initData?: string;
@@ -45,17 +45,21 @@ type TelegramWebAppInit = {
   close?: () => void;
 };
 
+function getTelegramWebApp(): TelegramWebAppInit | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { Telegram?: { WebApp?: TelegramWebAppInit } }).Telegram?.WebApp;
+}
+
 function isTelegramContext(): boolean {
   if (typeof window === "undefined") return false;
-  const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  const tg = getTelegramWebApp();
   if (!tg) return false;
   const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
   return initData.length > 0;
 }
 
 function getStartParamFromTelegramWebApp(): string {
-  if (typeof window === "undefined") return "";
-  const WebApp = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+  const WebApp = getTelegramWebApp();
   return WebApp?.initDataUnsafe?.start_param?.trim() ?? "";
 }
 
@@ -311,7 +315,6 @@ function GuestVenueMenu({
 function MiniAppContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { role: miniAppBotRole } = useMiniAppBotRole();
   const { visitorId } = useVisitor();
   const [venueId, setVenueId] = useState<string>("");
   const [tableId, setTableId] = useState<string>("");
@@ -336,7 +339,7 @@ function MiniAppContent() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const tg = getTelegramWebApp();
     if (!tg) {
       setIsSdkReady(true);
       return;
@@ -505,13 +508,13 @@ function MiniAppContent() {
 
   const telegramUserId = useMemo(() => {
     if (typeof window === "undefined") return "";
-    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const tg = getTelegramWebApp();
     const id = tg?.initDataUnsafe?.user?.id;
     return id != null ? String(id) : "";
   }, []);
   const telegramUserName = useMemo(() => {
     if (typeof window === "undefined") return "";
-    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const tg = getTelegramWebApp();
     const first = tg?.initDataUnsafe?.user?.first_name?.trim() ?? "";
     const last = tg?.initDataUnsafe?.user?.last_name?.trim() ?? "";
     return [first, last].filter(Boolean).join(" ").trim();
@@ -519,7 +522,7 @@ function MiniAppContent() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!isTelegramContext()) return;
-    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const tg = getTelegramWebApp();
     if (!tg?.initDataUnsafe?.user) {
       console.warn("[mini-app] Telegram user отсутствует в initDataUnsafe.user", tg?.initDataUnsafe);
     }
@@ -808,10 +811,9 @@ function MiniAppContent() {
 
   const hasVenue = Boolean(venueId);
   const hasTable = Boolean(tableId);
-  const wantFetchVisits = entryRouteResolved && miniAppBotRole === "guest" && !hasVenue && !hasTable;
+  const wantFetchVisits = entryRouteResolved && !hasVenue && !hasTable;
   const {
     visits: fetchedVisits,
-    loading: visitsLoading,
   } = useFetchVisits({
     currentUid: currentUid || null,
     enabled: wantFetchVisits,
@@ -819,7 +821,7 @@ function MiniAppContent() {
 
   const openTableScanner = useCallback(() => {
     const inTg = isTelegramContext();
-    const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
+    const tg = getTelegramWebApp();
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     if (inTg && tg?.showScanQrPopup) {
       tg.showScanQrPopup({ text: "Наведите на QR стола" }, (qrText) => {
@@ -954,10 +956,6 @@ function MiniAppContent() {
     []
   );
 
-  if (miniAppBotRole !== "guest") {
-    return null;
-  }
-
   if (!isSdkReady) {
     return <MiniAppIdentifyingFallback />;
   }
@@ -966,54 +964,31 @@ function MiniAppContent() {
     return <MiniAppIdentifyingFallback />;
   }
 
+  if (!hasVenue && !hasTable) {
+    const topVisits = fetchedVisits ?? [];
+    return (
+      <GuestDashboard
+        visits={topVisits}
+        onOpenVenueMenu={openVenueMenuHub}
+        onOpenScanner={openTableScanner}
+      />
+    );
+  }
+
+  // venueId есть, tableId отсутствует (например SOTA-хаб без стола) => меню заведения
+  if (hasVenue && !hasTable) {
+    return <GuestVenueMenu venueId={venueId} onOpenScanner={openTableScanner} />;
+  }
+
+  // защитный fallback для неконсистентного состояния
   if (!sessionFirstVisit) {
-    if (!hasVenue && !hasTable) {
-      if (visitsLoading) {
-        return (
-          <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
-            <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
-              Загрузка мест…
-            </div>
-          </main>
-        );
-      }
-      const topVisits = fetchedVisits ?? [];
-      if (topVisits.length > 0) {
-        return (
-          <GuestDashboard
-            visits={topVisits}
-            onOpenVenueMenu={openVenueMenuHub}
-            onOpenScanner={openTableScanner}
-          />
-        );
-      }
-      return (
-        <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
-          <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center">
-            <QrCode className="mx-auto mb-4 h-16 w-16 text-slate-400" aria-hidden />
-            <h1 className="text-lg font-semibold text-slate-900">Без стола</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              История визитов поможет восстановить места. Откройте сканер, чтобы выбрать стол.
-            </p>
-            <button
-              type="button"
-              onClick={openTableScanner}
-              className="mt-5 w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              Открыть сканер
-            </button>
-          </div>
-        </main>
-      );
-    }
-
-    // venueId есть, tableId отсутствует (например SOTA-хаб без стола) => меню заведения
-    if (hasVenue && !hasTable) {
-      return <GuestVenueMenu venueId={venueId} onOpenScanner={openTableScanner} />;
-    }
-
-    // защитный fallback
-    return <GuestVenueMenu venueId={venueId || tableId || ""} onOpenScanner={openTableScanner} />;
+    return (
+      <GuestDashboard
+        visits={fetchedVisits ?? []}
+        onOpenVenueMenu={openVenueMenuHub}
+        onOpenScanner={openTableScanner}
+      />
+    );
   }
 
   return (
