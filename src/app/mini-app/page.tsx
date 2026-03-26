@@ -268,9 +268,22 @@ function Loading() {
 }
 
 function MiniAppScreenRouter() {
-  const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation } = useGuestContext();
+  const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation, systemConfig } = useGuestContext();
 
   if (isInitializing) return <Loading />;
+
+  if (systemConfig.globalMaintenanceMode) {
+    return (
+      <main className="min-h-screen bg-slate-950 p-4 pb-10 md:p-6">
+        <div className="mx-auto mt-24 max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-xl">
+          <p className="text-center text-lg font-semibold text-white">SOTA обновляется. Мы скоро вернемся!</p>
+          <p className="mt-2 text-center text-sm text-slate-300">
+            Идут технические работы. Спасибо за терпение.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   if (isGuestBlocked) {
     return (

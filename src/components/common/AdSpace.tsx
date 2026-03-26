@@ -30,11 +30,18 @@ function getCampaignVenueMatch(campaignVenueId: string | null | undefined, curre
 export function AdSpace({ placementId, className }: AdSpaceProps) {
   const guest = useOptionalGuestContext();
   const currentVenueId = guest?.currentLocation.venueId ?? null;
+  const adsNetworkEnabled = guest?.systemConfig?.adsNetworkEnabled ?? true;
 
   const [campaign, setCampaign] = useState<AdCampaignDoc | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!adsNetworkEnabled) {
+      setLoading(false);
+      setCampaign(null);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setCampaign(null);
@@ -85,7 +92,7 @@ export function AdSpace({ placementId, className }: AdSpaceProps) {
     return () => {
       cancelled = true;
     };
-  }, [placementId, currentVenueId]);
+  }, [placementId, currentVenueId, adsNetworkEnabled]);
 
   const adId = campaign?.id ?? "";
   const impKey = useMemo(() => (adId ? `ad_imp_${placementId}_${adId}` : ""), [placementId, adId]);
@@ -107,6 +114,7 @@ export function AdSpace({ placementId, className }: AdSpaceProps) {
     />
   );
 
+  if (!adsNetworkEnabled) return null;
   if (loading) return skeleton;
   if (!campaign) return null;
 

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { collection, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -62,6 +62,19 @@ type GuestTableOrder = {
   status: OrderStatus | string;
   customerUid?: string;
   items: GuestOrderLine[];
+};
+
+export type SotaSystemConfig = {
+  adsNetworkEnabled: boolean;
+  geoRadiusLimit: number;
+  globalMaintenanceMode: boolean;
+  [key: string]: unknown;
+};
+
+const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
+  adsNetworkEnabled: true,
+  geoRadiusLimit: 500,
+  globalMaintenanceMode: false,
 };
 
 function parseNumber(raw: unknown): number {
@@ -130,6 +143,7 @@ type GuestMiniAppContextValue = {
   activeSession: ActiveSession | null;
   participants: ActiveSessionParticipant[];
   currentTableOrders: GuestTableOrder[];
+  systemConfig: SotaSystemConfig;
   isInitializing: boolean;
   isGuestBlocked: boolean;
   guestBlockedReason: string | null;
@@ -156,6 +170,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [participants, setParticipants] = useState<ActiveSessionParticipant[]>([]);
   const [currentTableOrders, setCurrentTableOrders] = useState<GuestTableOrder[]>([]);
+  const [systemConfig, setSystemConfig] = useState<SotaSystemConfig>(DEFAULT_SYSTEM_CONFIG);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSdkReady, setIsSdkReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
@@ -243,6 +258,39 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     tg.ready?.();
     queueMicrotask(() => setIsSdkReady(true));
+  }, []);
+
+  // Global runtime config from system_settings/global with safe defaults.
+  useEffect(() => {
+    const ref = doc(db, "system_settings", "global");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const raw = (snap.data() ?? {}) as Record<string, unknown>;
+        const next: SotaSystemConfig = {
+          ...DEFAULT_SYSTEM_CONFIG,
+          ...raw,
+          adsNetworkEnabled:
+            typeof raw.adsNetworkEnabled === "boolean"
+              ? raw.adsNetworkEnabled
+              : DEFAULT_SYSTEM_CONFIG.adsNetworkEnabled,
+          geoRadiusLimit:
+            typeof raw.geoRadiusLimit === "number" && Number.isFinite(raw.geoRadiusLimit)
+              ? raw.geoRadiusLimit
+              : DEFAULT_SYSTEM_CONFIG.geoRadiusLimit,
+          globalMaintenanceMode:
+            typeof raw.globalMaintenanceMode === "boolean"
+              ? raw.globalMaintenanceMode
+              : DEFAULT_SYSTEM_CONFIG.globalMaintenanceMode,
+        };
+        setSystemConfig(next);
+        console.log("SOTA Global Config Updated:", next);
+      },
+      () => {
+        setSystemConfig(DEFAULT_SYSTEM_CONFIG);
+      }
+    );
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -678,6 +726,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       activeSession,
       participants,
       currentTableOrders,
+      systemConfig,
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
@@ -695,6 +744,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       activeSession,
       participants,
       currentTableOrders,
+      systemConfig,
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
