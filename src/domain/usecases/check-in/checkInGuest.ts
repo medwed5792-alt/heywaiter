@@ -7,6 +7,7 @@ import type {
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
 import { resolveVenueId } from "@/lib/standards/venue-default";
+import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
@@ -47,6 +48,18 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const VENUE_EVENTS_ID = resolveVenueId(venueId);
 
   const firestore = getAdminFirestore();
+
+  async function recordGuestVisit() {
+    if (!currentUid) return;
+    const ref = firestore.doc(`users/${currentUid}/visits/${venueId}`);
+    await ref.set(
+      {
+        lastVisitAt: FieldValue.serverTimestamp(),
+        totalVisits: FieldValue.increment(1),
+      },
+      { merge: true }
+    );
+  }
 
   function nowParticipant(status: ActiveSessionParticipantStatus): ActiveSessionParticipant {
     return {
@@ -100,6 +113,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
           messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
         };
       }
+      await recordGuestVisit();
       return {
         status: "check_in_success",
         sessionId: existing.id,
@@ -145,6 +159,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       });
     }
 
+    await recordGuestVisit();
     return {
       status: "check_in_success",
       sessionId: existing.id,
@@ -260,6 +275,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       guestNameFromBooking: matchedBooking.data()?.guestName,
     });
 
+    await recordGuestVisit();
     return {
       status: "check_in_success",
       sessionId: sessionRef.id,
@@ -344,6 +360,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     guestId: undefined,
     guestNameFromBooking: undefined,
   });
+  await recordGuestVisit();
   return {
     status: "check_in_success",
     sessionId: sessionRef.id,

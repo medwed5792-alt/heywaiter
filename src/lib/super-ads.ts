@@ -24,6 +24,7 @@ export const SUPER_AD_PLACEMENTS = [
   "main_gate",
   "mini_gateway",
   "guest_welcome",
+  "dashboard_top",
   "guest_hub_between_history_promos",
   "guest_hub_between_promos_rating",
   "repeat_after_scan",

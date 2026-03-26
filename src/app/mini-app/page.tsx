@@ -97,26 +97,21 @@ function extractOrderBillInfo(data: Record<string, unknown>): { amount: number; 
   return { amount, items };
 }
 
-type GuestHistoryEntry = {
+type GuestVisitEntry = {
   venueId: string;
-  tableId?: string;
-  // В разных сборках поле может называться по-разному; используем как best-effort.
-  createdAt?: { toDate?: () => Date } | number | string | null;
-  visitedAt?: { toDate?: () => Date } | number | string | null;
+  lastVisitAt?: unknown;
+  totalVisits?: number;
 };
 
-function useGuestHistory(args: {
-  currentUid: string | null;
-  enabled: boolean;
-}) {
+function useFetchVisits(args: { currentUid: string | null; enabled: boolean }) {
   const { currentUid, enabled } = args;
-  const [history, setHistory] = useState<GuestHistoryEntry[] | null>(null);
+  const [visits, setVisits] = useState<GuestVisitEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!enabled || !currentUid) {
-      setHistory(null);
+      setVisits(null);
       setLoading(false);
       setError(null);
       return;
@@ -128,27 +123,25 @@ function useGuestHistory(args: {
     (async () => {
       try {
         const q = query(
-          collection(db, "users", currentUid, "history"),
-          orderBy("createdAt", "desc"),
-          limit(10)
+          collection(db, "users", currentUid, "visits"),
+          orderBy("lastVisitAt", "desc"),
+          limit(5)
         );
         const snap = await getDocs(q);
         if (cancelled) return;
 
-        const entries = snap.docs
-          .map((d) => {
-            const x = d.data() as Record<string, unknown>;
-            const venueId = typeof x.venueId === "string" ? x.venueId.trim() : "";
-            if (!venueId) return null;
-            const tableId = typeof x.tableId === "string" ? x.tableId.trim() : undefined;
-            return { venueId, tableId, createdAt: x.createdAt as any, visitedAt: x.visitedAt as any } satisfies GuestHistoryEntry;
-          })
-          .filter(Boolean) as GuestHistoryEntry[];
-
-        setHistory(entries);
+        const entries = snap.docs.map((d) => {
+          const x = d.data() as Record<string, unknown>;
+          return {
+            venueId: d.id,
+            lastVisitAt: x.lastVisitAt,
+            totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
+          } satisfies GuestVisitEntry;
+        });
+        setVisits(entries);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "History load failed");
-        setHistory([]);
+        if (!cancelled) setError(e instanceof Error ? e.message : "Visits load failed");
+        setVisits([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -159,42 +152,25 @@ function useGuestHistory(args: {
     };
   }, [currentUid, enabled]);
 
-  return { history, loading, error };
+  return { visits, loading, error };
 }
 
 function GuestDashboard({
-  venueIdFromHistory,
-  history,
+  visits,
+  onOpenVenueMenu,
   onOpenScanner,
 }: {
-  venueIdFromHistory: string;
-  history: GuestHistoryEntry[];
+  visits: GuestVisitEntry[];
+  onOpenVenueMenu: (venueId: string) => void;
   onOpenScanner: () => void;
 }) {
-  const [selectedVenueId, setSelectedVenueId] = useState(venueIdFromHistory);
-
-  useEffect(() => {
-    setSelectedVenueId(venueIdFromHistory);
-  }, [venueIdFromHistory]);
-
-  const venues = useMemo(() => {
-    const byVenue = new Map<string, GuestHistoryEntry[]>();
-    for (const h of history) {
-      if (!byVenue.has(h.venueId)) byVenue.set(h.venueId, []);
-      byVenue.get(h.venueId)!.push(h);
-    }
-    return Array.from(byVenue.entries())
-      .map(([vid, items]) => ({ venueId: vid, items }))
-      .slice(0, 5);
-  }, [history]);
-
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
       <div className="mx-auto flex max-w-md flex-col gap-5">
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-center text-lg font-bold text-slate-900">Добро пожаловать</p>
           <p className="mt-2 text-center text-sm text-slate-600">
-            Вы в режиме без стола. История визитов поможет восстановить места.
+            Вы в режиме без стола. Последние визиты помогут быстро открыть заведение.
           </p>
           <div className="mt-3">
             <AdSpace placement="dashboard_top" />
@@ -203,25 +179,22 @@ function GuestDashboard({
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm font-semibold text-slate-900">Мои места</p>
-          <p className="mt-1 text-xs text-slate-600">Последние заведения и столы</p>
+          <p className="mt-1 text-xs text-slate-600">Топ-5 последних заведений</p>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {venues.map((v) => {
-              const active = v.venueId === selectedVenueId;
-              return (
-                <button
-                  key={v.venueId}
-                  type="button"
-                  onClick={() => setSelectedVenueId(v.venueId)}
-                  className={`rounded-full border px-3 py-1.5 text-xs transition ${
-                    active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-700"
-                  }`}
-                >
-                  {resolveVenueDisplayName(v.venueId)}
-                </button>
-              );
-            })}
-            {venues.length === 0 && <p className="text-xs text-slate-500 mt-2">История пуста.</p>}
+          <div className="mt-3 flex flex-col gap-2">
+            {visits.map((v) => (
+              <button
+                key={v.venueId}
+                type="button"
+                onClick={() => onOpenVenueMenu(v.venueId)}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-800 hover:bg-white"
+              >
+                {resolveVenueDisplayName(v.venueId)}
+              </button>
+            ))}
+            {visits.length === 0 && (
+              <p className="text-xs text-slate-500 mt-2">Пока нет визитов. Откройте сканер.</p>
+            )}
           </div>
 
           <div className="mt-4">
@@ -230,14 +203,9 @@ function GuestDashboard({
               onClick={onOpenScanner}
               className="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
             >
-              Встроенный сканер
+              Сканер
             </button>
           </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-semibold text-slate-900">Выбранное заведение</p>
-          <p className="mt-1 text-xs text-slate-600">{resolveVenueDisplayName(selectedVenueId)}</p>
         </section>
       </div>
     </main>
@@ -332,7 +300,7 @@ function GuestVenueMenu({
             onClick={onOpenScanner}
             className="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
           >
-            Встроенный сканер
+            Сканер
           </button>
         </section>
       </div>
@@ -840,13 +808,13 @@ function MiniAppContent() {
 
   const hasVenue = Boolean(venueId);
   const hasTable = Boolean(tableId);
-  const wantGuestHistory = entryRouteResolved && miniAppBotRole === "guest" && !hasVenue && !hasTable;
+  const wantFetchVisits = entryRouteResolved && miniAppBotRole === "guest" && !hasVenue && !hasTable;
   const {
-    history: guestHistory,
-    loading: guestHistoryLoading,
-  } = useGuestHistory({
+    visits: fetchedVisits,
+    loading: visitsLoading,
+  } = useFetchVisits({
     currentUid: currentUid || null,
-    enabled: wantGuestHistory,
+    enabled: wantFetchVisits,
   });
 
   const openTableScanner = useCallback(() => {
@@ -854,20 +822,114 @@ function MiniAppContent() {
     const tg = window.Telegram?.WebApp as TelegramWebAppInit | undefined;
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     if (inTg && tg?.showScanQrPopup) {
-      tg.showScanQrPopup({ text: "Наведите на QR стола" }, (text) => {
-        const parsed = parseStartParamPayload(text?.trim() ?? "");
-        if (parsed) {
-          setVenueId(parsed.venueId);
-          setTableId(parsed.tableId);
+      tg.showScanQrPopup({ text: "Наведите на QR стола" }, (qrText) => {
+        void (async () => {
+          const raw = String(qrText ?? "").trim();
+          if (!raw) {
+            toast.error("Неверный QR");
+            return;
+          }
+
+          const resolveFromUrl = async (u: URL) => {
+            const path = u.pathname || "";
+
+            // Direct HeyWaiter deep-link: /check-in?v=...&t=...
+            if (path.includes("/check-in") || path.includes("/mini-app")) {
+              const v = u.searchParams.get("v") || u.searchParams.get("venueId");
+              const t =
+                u.searchParams.get("t") || u.searchParams.get("tableId") || u.searchParams.get("tableRef") || "";
+              if (v && v.trim()) return { venueId: v.trim(), tableId: t.trim() };
+            }
+
+            // Telegram deep-link: ...?startapp=STARTAPP_TOKEN
+            const startapp = u.searchParams.get("startapp");
+            if (startapp) {
+              const decoded = (() => {
+                try {
+                  return decodeURIComponent(startapp.trim());
+                } catch {
+                  return startapp.trim();
+                }
+              })();
+
+              const sota = parseSotaStartappPayload(decoded);
+              if (sota) {
+                const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
+                if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
+              }
+
+              const legacy = parseStartParamPayload(decoded);
+              if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
+            }
+
+            return null;
+          };
+
+          const resolveFromText = async (text: string) => {
+            // URL в QR (полный или без scheme)
+            try {
+              if (/^https?:\/\//i.test(text)) {
+                return await resolveFromUrl(new URL(text));
+              }
+              if (text.includes("heywaiter.vercel.app")) {
+                const normalized = text.startsWith("heywaiter.vercel.app")
+                  ? `https://${text}`
+                  : `https://${text.replace(/^\/+/, "")}`;
+                return await resolveFromUrl(new URL(normalized));
+              }
+            } catch {
+              // ignore
+            }
+
+            // Встроенный startapp=... внутри строки
+            const startappMatch = text.match(/startapp=([^&\s]+)/i);
+            if (startappMatch?.[1]) {
+              const rawToken = startappMatch[1]!;
+              const decoded = (() => {
+                try {
+                  return decodeURIComponent(rawToken.trim());
+                } catch {
+                  return rawToken.trim();
+                }
+              })();
+              const sota = parseSotaStartappPayload(decoded);
+              if (sota) {
+                const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
+                if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
+              }
+              const legacy = parseStartParamPayload(decoded);
+              if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
+            }
+
+            // Legacy/короткий payload
+            const legacy = parseStartParamPayload(text);
+            if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
+
+            // SOTA compact token directly
+            const sota = parseSotaStartappPayload(text);
+            if (sota) {
+              const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
+              if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
+            }
+
+            return null;
+          };
+
+          const resolved = await resolveFromText(raw);
+          if (!resolved) {
+            toast.error("Неверный QR");
+            return;
+          }
+
+          setVenueId(resolved.venueId);
+          setTableId(resolved.tableId);
           setVenueSettings(null);
           setTableSettings(null);
           setStaffName(null);
           setFirestoreDone(false);
           setEntryRouteResolved(true);
           tg.close?.();
-        } else {
-          toast.error("Неверный QR");
-        }
+        })();
       });
       return;
     }
@@ -878,6 +940,19 @@ function MiniAppContent() {
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push(`${origin}/check-in`);
   }, [router]);
+
+  const openVenueMenuHub = useCallback(
+    (vid: string) => {
+      setVenueId(vid);
+      setTableId("");
+      setVenueSettings(null);
+      setTableSettings(null);
+      setStaffName(null);
+      setFirestoreDone(false);
+      setEntryRouteResolved(true);
+    },
+    []
+  );
 
   if (miniAppBotRole !== "guest") {
     return null;
@@ -893,21 +968,21 @@ function MiniAppContent() {
 
   if (!sessionFirstVisit) {
     if (!hasVenue && !hasTable) {
-      if (guestHistoryLoading) {
+      if (visitsLoading) {
         return (
           <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
             <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-600">
-              Загрузка истории…
+              Загрузка мест…
             </div>
           </main>
         );
       }
-      const firstVenue = guestHistory?.[0]?.venueId ?? "";
-      if (guestHistory && guestHistory.length > 0 && firstVenue) {
+      const topVisits = fetchedVisits ?? [];
+      if (topVisits.length > 0) {
         return (
           <GuestDashboard
-            venueIdFromHistory={firstVenue}
-            history={guestHistory}
+            visits={topVisits}
+            onOpenVenueMenu={openVenueMenuHub}
             onOpenScanner={openTableScanner}
           />
         );
