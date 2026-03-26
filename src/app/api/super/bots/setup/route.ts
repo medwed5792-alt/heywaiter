@@ -10,10 +10,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { setTelegramWebhook } from "@/lib/webhook/auto-webhooks";
 import { updateBotsConfig } from "@/lib/webhook/bots-store";
 import { getAppUrl } from "@/lib/webhook/utils";
+import { requireSuperAdmin } from "@/lib/superadmin-guard";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 
 export async function POST(request: NextRequest) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json().catch(() => ({}));
     const token = (body.token as string)?.trim();

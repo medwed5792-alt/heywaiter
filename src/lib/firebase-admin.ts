@@ -13,8 +13,10 @@ if (fs.existsSync(".env.local")) {
 }
 
 import type { Firestore } from "firebase-admin/firestore";
+import type { Auth } from "firebase-admin/auth";
 
 let adminFirestore: Firestore | null = null;
+let adminAuth: Auth | null = null;
 
 function isEdgeRuntime(): boolean {
   return typeof (globalThis as unknown as { EdgeRuntime?: string }).EdgeRuntime === "string" ||
@@ -41,7 +43,7 @@ function buildCredentialFromEnv(): { projectId: string; clientEmail: string; pri
   return { projectId, clientEmail, privateKey };
 }
 
-function getFirebaseAdmin(): { firestore: Firestore } {
+function getFirebaseAdmin(): { firestore: Firestore; auth: Auth } {
   if (typeof window !== "undefined") {
     throw new Error("firebase-admin must not be used in the browser");
   }
@@ -80,9 +82,16 @@ function getFirebaseAdmin(): { firestore: Firestore } {
     firestore.settings({ ignoreUndefinedProperties: true });
     adminFirestore = firestore;
   }
-  return { firestore: adminFirestore! };
+  if (!adminAuth) {
+    adminAuth = admin.auth() as Auth;
+  }
+  return { firestore: adminFirestore!, auth: adminAuth! };
 }
 
 export function getAdminFirestore(): Firestore {
   return getFirebaseAdmin().firestore;
+}
+
+export function getAdminAuth(): Auth {
+  return getFirebaseAdmin().auth;
 }

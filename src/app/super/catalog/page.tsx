@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import { User, Star, Trash2, Pencil } from "lucide-react";
 import type { GlobalUser } from "@/lib/types";
+import { withSuperAdminAuthHeaders } from "@/components/super/super-auth";
 
 function SuperStaffCatalogTab() {
   const [users, setUsers] = useState<GlobalUser[]>([]);
@@ -15,7 +16,7 @@ function SuperStaffCatalogTab() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/super/catalog");
+        const res = await fetch("/api/super/catalog", await withSuperAdminAuthHeaders());
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка загрузки");
         setUsers(data.users ?? []);
@@ -29,11 +30,14 @@ function SuperStaffCatalogTab() {
 
   const handleSaveKarma = async (userId: string) => {
     try {
-      const res = await fetch(`/api/super/catalog/${encodeURIComponent(userId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ globalScore: editScore }),
-      });
+      const res = await fetch(
+        `/api/super/catalog/${encodeURIComponent(userId)}`,
+        await withSuperAdminAuthHeaders({
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ globalScore: editScore }),
+        })
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
       setUsers((prev) =>
@@ -50,9 +54,10 @@ function SuperStaffCatalogTab() {
     if (!confirm("Полностью удалить этого сотрудника из системы? Это удалит запись в global_users и все связи с заведениями.")) return;
     setDeletingId(userId);
     try {
-      const res = await fetch(`/api/super/catalog/${encodeURIComponent(userId)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/super/catalog/${encodeURIComponent(userId)}`,
+        await withSuperAdminAuthHeaders({ method: "DELETE" })
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
       setUsers((prev) => prev.filter((u) => u.id !== userId));

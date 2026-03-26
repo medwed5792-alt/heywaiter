@@ -1,8 +1,9 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { doc, getDoc, updateDoc, deleteDoc, getDocs, query, collection, where, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { requireSuperAdmin } from "@/lib/superadmin-guard";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 /**
  * PATCH /api/super/catalog/[userId]
@@ -10,15 +11,17 @@ import { db } from "@/lib/firebase";
  * Тело: { globalScore?: number }
  */
 export async function PATCH(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const { userId } = await params;
     if (!userId) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
     }
-    const body = await _request.json();
+    const body = await request.json().catch(() => ({}));
     const globalScore = body.globalScore;
     if (typeof globalScore !== "number" || globalScore < 0 || globalScore > 5) {
       return NextResponse.json(
@@ -26,12 +29,13 @@ export async function PATCH(
         { status: 400 }
       );
     }
-    const ref = doc(db, "global_users", userId);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) {
+    const firestore = getAdminFirestore();
+    const ref = firestore.collection("global_users").doc(userId);
+    const snap = await ref.get();
+    if (!snap.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    await updateDoc(ref, { globalScore, updatedAt: serverTimestamp() });
+    await ref.update({ globalScore, updatedAt: FieldValue.serverTimestamp() });
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[super/catalog] PATCH Error:", err);
@@ -47,26 +51,32 @@ export async function PATCH(
  * Супер-админ: полное удаление пользователя из системы (global_users и связи в staff).
  */
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ userId: string }> }
 ) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const { userId } = await params;
     if (!userId) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
     }
-    const globalRef = doc(db, "global_users", userId);
-    const snap = await getDoc(globalRef);
-    if (!snap.exists()) {
+    const firestore = getAdminFirestore();
+    const globalRef = firestore.collection("global_users").doc(userId);
+    const snap = await globalRef.get();
+    if (!snap.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    await deleteDoc(globalRef);
-    // Удалить связи staff, где userId = userId (staff doc id = venueId_userId)
-    const staffSnap = await getDocs(
-      query(collection(db, "staff"), where("userId", "==", userId))
-    );
+    await globalRef.delete();
+
+    const staffSnap = await firestore.collection("staff").where("userId", "==", userId).get();
     for (const d of staffSnap.docs) {
-      await deleteDoc(doc(db, "staff", d.id));
+      const data = d.data() ?? {};
+      const venueId = typeof data.venueId === "string" ? data.venueId : "";
+      await d.ref.delete();
+      if (venueId) {
+        await firestore.collection("venues").doc(venueId).collection("staff").doc(d.id).delete().catch(() => undefined);
+      }
     }
     return NextResponse.json({ ok: true });
   } catch (err) {

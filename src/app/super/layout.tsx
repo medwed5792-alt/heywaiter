@@ -3,13 +3,15 @@
 import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SuperSidebar } from "@/components/super/SuperSidebar";
+import { auth, signInAnonymously } from "@/lib/firebase";
+import { getIdToken } from "firebase/auth";
 
 const SUPERADMIN_ROLE_KEY = "heywaiter_admin_role";
 const LOGIN_PATH = "/super/login";
 
 /**
  * Интерфейс №4: Кабинет Супер-Админа (Центр управления полётами).
- * Доступ только для роли superadmin. Остальных редирект на /super/login.
+ * Доступ только для UID в super_admins (isSuperAdmin=true). Остальных редирект на /super/login.
  * Страница /super/login исключена из проверки, чтобы не было бесконечного редиректа.
  */
 export default function SuperLayout({
@@ -20,6 +22,7 @@ export default function SuperLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [denyReason, setDenyReason] = useState<string | null>(null);
 
   const isLoginPage = pathname === LOGIN_PATH;
 
@@ -28,14 +31,47 @@ export default function SuperLayout({
       setAllowed(true);
       return;
     }
-    const role = typeof window !== "undefined"
-      ? (localStorage.getItem(SUPERADMIN_ROLE_KEY) ?? "").toLowerCase()
-      : "";
-    if (role !== "superadmin") {
-      router.replace(LOGIN_PATH);
-      return;
-    }
-    setAllowed(true);
+    let cancelled = false;
+    setAllowed(null);
+    setDenyReason(null);
+
+    (async () => {
+      const role =
+        typeof window !== "undefined"
+          ? (localStorage.getItem(SUPERADMIN_ROLE_KEY) ?? "").toLowerCase()
+          : "";
+      if (role !== "superadmin") {
+        router.replace(LOGIN_PATH);
+        return;
+      }
+
+      try {
+        if (!auth.currentUser) {
+          await signInAnonymously(auth);
+        }
+        const token = auth.currentUser ? await getIdToken(auth.currentUser, true) : "";
+        if (!token) throw new Error("Missing auth token");
+
+        const res = await fetch("/api/super/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || data.ok !== true) {
+          throw new Error(data.error || "SuperAdmin access required");
+        }
+
+        if (!cancelled) setAllowed(true);
+      } catch (e) {
+        if (!cancelled) {
+          setAllowed(false);
+          setDenyReason(e instanceof Error ? e.message : "Access denied");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router, pathname, isLoginPage]);
 
   if (isLoginPage) {
@@ -45,7 +81,9 @@ export default function SuperLayout({
   if (allowed !== true) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900">
-        <p className="text-slate-400">Проверка доступа…</p>
+        <p className="text-slate-400">
+          {allowed === null ? "Проверка доступа…" : `Доступ запрещен: ${denyReason ?? "SuperAdmin required"}`}
+        </p>
       </div>
     );
   }

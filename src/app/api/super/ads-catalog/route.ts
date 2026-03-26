@@ -6,8 +6,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { superAdFromFirestoreDoc } from "@/lib/super-ads";
 import type { SuperAdSchedule } from "@/lib/ad-schedule";
+import { requireSuperAdmin } from "@/lib/superadmin-guard";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const { getAdminFirestore } = await import("@/lib/firebase-admin");
     const firestore = getAdminFirestore();
@@ -44,6 +47,8 @@ function parseSchedule(body: Record<string, unknown>): SuperAdSchedule | undefin
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const { getAdminFirestore } = await import("@/lib/firebase-admin");

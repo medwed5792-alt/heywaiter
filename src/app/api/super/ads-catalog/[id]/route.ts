@@ -1,11 +1,14 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireSuperAdmin } from "@/lib/superadmin-guard";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const { id } = await params;
     if (!id) {
@@ -57,9 +60,11 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const { id } = await params;
     if (!id) {

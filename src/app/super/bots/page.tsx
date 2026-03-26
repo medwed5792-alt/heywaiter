@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
 import type { MessengerChannel } from "@/lib/types";
 import type { BotType } from "@/lib/webhook/channels";
+import { withSuperAdminAuthHeaders } from "@/components/super/super-auth";
 
 const CHANNEL_LABEL: Record<string, string> = {
   telegram: "Telegram",
@@ -64,11 +65,14 @@ export default function SuperBotsPage() {
         return;
       }
       try {
-        const res = await fetch("/api/super/bots/setup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, botType }),
-        });
+        const res = await fetch(
+          "/api/super/bots/setup",
+          await withSuperAdminAuthHeaders({
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token, botType }),
+          })
+        );
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
           error?: string;

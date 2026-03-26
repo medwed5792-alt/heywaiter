@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { requireSuperAdmin } from "@/lib/superadmin-guard";
 
 /**
  * Нормализация телефона: только цифры (без +, скобок, пробелов).
@@ -22,6 +23,8 @@ function cleanPhone(value: string | undefined | null): string {
  * Возвращает: { ok: true, deleted: { globalUsers: string[], staff: string[], venueStaff: string[] } }
  */
 export async function POST(request: NextRequest) {
+  const auth = await requireSuperAdmin(request);
+  if (!auth.ok) return auth.response;
   try {
     const body = await request.json().catch(() => ({}));
     const tgId = typeof body.tgId === "string" ? body.tgId.trim() : "";

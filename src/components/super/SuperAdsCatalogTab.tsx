@@ -6,6 +6,7 @@ import { Megaphone, Pencil, Plus, Trash2 } from "lucide-react";
 import type { SuperAdCatalogItem } from "@/lib/super-ads";
 import { SUPER_AD_PLACEMENTS, SUPER_AD_CATEGORY_PRESETS } from "@/lib/super-ads";
 import { AdGeoTagFields } from "@/components/super/AdGeoTagFields";
+import { withSuperAdminAuthHeaders } from "@/components/super/super-auth";
 
 const PLACEMENT_LABELS: Record<string, string> = {
   main_ad: "Mini App гость: под кнопкой вызова (первый визит)",
@@ -118,7 +119,7 @@ export function SuperAdsCatalogTab() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/super/ads-catalog");
+    const res = await fetch("/api/super/ads-catalog", await withSuperAdminAuthHeaders());
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Ошибка загрузки");
     setAds(data.ads ?? []);
@@ -210,20 +211,26 @@ export function SuperAdsCatalogTab() {
               schedule: schedule ?? null,
             };
       if (editingId === "new") {
-        const res = await fetch("/api/super/ads-catalog", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        const res = await fetch(
+          "/api/super/ads-catalog",
+          await withSuperAdminAuthHeaders({
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка");
         toast.success("Объявление создано");
       } else if (editingId) {
-        const res = await fetch(`/api/super/ads-catalog/${encodeURIComponent(editingId)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        const res = await fetch(
+          `/api/super/ads-catalog/${encodeURIComponent(editingId)}`,
+          await withSuperAdminAuthHeaders({
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Ошибка");
         toast.success("Сохранено");
@@ -241,9 +248,10 @@ export function SuperAdsCatalogTab() {
     if (!confirm("Удалить объявление из глобального каталога?")) return;
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/super/ads-catalog/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/super/ads-catalog/${encodeURIComponent(id)}`,
+        await withSuperAdminAuthHeaders({ method: "DELETE" })
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Ошибка");
       toast.success("Удалено");
