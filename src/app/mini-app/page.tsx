@@ -402,6 +402,13 @@ function MiniAppScreenRouter() {
   const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation, activeSession, systemConfig } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
 
+  // Force "Service" tab when app is opened by QR / session exists.
+  useEffect(() => {
+    if (currentLocation?.tableId || activeSession) {
+      setTab("service");
+    }
+  }, [currentLocation?.tableId, activeSession]);
+
   if (isInitializing) return <Loading />;
 
   if (systemConfig.globalMaintenanceMode) {
@@ -427,11 +434,6 @@ function MiniAppScreenRouter() {
       </main>
     );
   }
-
-  // Force "Service" tab when app is opened by QR / session exists.
-  useEffect(() => {
-    if (currentLocation.tableId || activeSession) setTab("service");
-  }, [currentLocation.tableId, activeSession]);
 
   const inSession = Boolean(currentLocation.venueId && currentLocation.tableId && activeSession);
 
