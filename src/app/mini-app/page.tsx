@@ -1,7 +1,7 @@
  "use client";
 
 import { Suspense, useMemo, useRef, useState } from "react";
-import { AdSpace } from "@/components/ads/AdSpace";
+import { AdSpace } from "@/components/common/AdSpace";
 import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
@@ -17,10 +17,11 @@ function GuestDashboard() {
           <p className="mt-2 text-center text-sm text-slate-600">
             Вы в режиме без стола. Последние визиты помогут быстро открыть заведение.
           </p>
-          <div className="mt-3">
-            <AdSpace placement="dashboard_top" />
-          </div>
         </header>
+
+        <div className="mt-3">
+          <AdSpace placementId="guest_dashboard_top" />
+        </div>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm font-semibold text-slate-900">Мои места</p>
@@ -253,6 +254,10 @@ function GuestSession() {
             )}
           </div>
         </section>
+
+        <div className="mt-3">
+          <AdSpace placementId="guest_session_footer" />
+        </div>
       </div>
     </main>
   );

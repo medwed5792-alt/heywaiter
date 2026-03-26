@@ -717,3 +717,7 @@ export function useGuestContext(): GuestMiniAppContextValue {
   }
   return ctx;
 }
+
+export function useOptionalGuestContext(): GuestMiniAppContextValue | null {
+  return useContext(GuestMiniAppContext);
+}
