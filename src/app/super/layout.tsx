@@ -23,6 +23,7 @@ export default function SuperLayout({
   const pathname = usePathname();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [denyReason, setDenyReason] = useState<string | null>(null);
+  const [currentUid, setCurrentUid] = useState<string | null>(null);
 
   const isLoginPage = pathname === LOGIN_PATH;
 
@@ -49,6 +50,8 @@ export default function SuperLayout({
         if (!auth.currentUser) {
           await signInAnonymously(auth);
         }
+        const uid = auth.currentUser?.uid ?? null;
+        setCurrentUid(uid);
         const token = auth.currentUser ? await getIdToken(auth.currentUser, true) : "";
         if (!token) throw new Error("Missing auth token");
 
@@ -81,9 +84,20 @@ export default function SuperLayout({
   if (allowed !== true) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-900">
-        <p className="text-slate-400">
-          {allowed === null ? "Проверка доступа…" : `Доступ запрещен: ${denyReason ?? "SuperAdmin required"}`}
-        </p>
+        <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-800 p-6 shadow-xl">
+          <p className="text-center text-lg font-semibold text-slate-100">Доступ запрещен.</p>
+          <p className="mt-3 text-center text-sm text-slate-300">
+            Ваш Telegram UID: <span className="font-mono text-slate-100">{currentUid ?? "—"}</span>. Пожалуйста,
+            добавьте его в коллекцию <span className="font-mono text-slate-100">super_admins</span> в Firebase.
+          </p>
+          {allowed !== null && denyReason ? (
+            <p className="mt-3 text-center text-xs text-amber-300">{denyReason}</p>
+          ) : (
+            <p className="mt-3 text-center text-xs text-slate-400">
+              {allowed === null ? "Проверка доступа…" : "Не удалось подтвердить права."}
+            </p>
+          )}
+        </div>
       </div>
     );
   }
