@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { addDoc, collection, getDocs, limit, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -59,6 +59,8 @@ type GuestMiniAppContextValue = {
   openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
   refreshVisitHistory: () => Promise<void>;
+  callWaiter: (reason: "menu" | "bill" | "help") => Promise<void>;
+  requestBill: (type: "full" | "split") => Promise<void>;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -224,6 +226,42 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     void resolveRoute();
   }, [isSdkReady, searchParams, switchLocation]);
 
+  // Poll table status. When the backend marks it as "closed" we return the guest to dashboard.
+  useEffect(() => {
+    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const q = query(
+          collection(db, "activeSessions"),
+          where("venueId", "==", currentLocation.venueId),
+          where("tableId", "==", currentLocation.tableId),
+          where("status", "==", "closed"),
+          limit(1)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        if (!snap.empty) {
+          await switchLocation(currentLocation.venueId, null);
+        }
+      } catch {
+        // best-effort polling
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(() => {
+      void poll();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [currentLocation.venueId, currentLocation.tableId, isSdkReady, switchLocation]);
+
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId || !guestIdentity.currentUid) return;
     const key = `${currentLocation.venueId}:${currentLocation.tableId}:${guestIdentity.currentUid}`;
@@ -351,12 +389,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
           await switchLocation(resolved.venueId, resolved.tableId || null);
-          if (resolved.venueId && guestIdentity.currentUid) {
-            await addDoc(collection(db, "users", guestIdentity.currentUid, "visits"), {
-              lastVisitAt: new Date(),
-              totalVisits: 1,
-            }).catch(() => undefined);
-          }
           tg.close?.();
         })();
       });
@@ -368,7 +400,70 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push(`${origin}/check-in`);
-  }, [guestIdentity.currentUid, router, switchLocation]);
+  }, [router, switchLocation]);
+
+  const callWaiter = useCallback(
+    async (reason: "menu" | "bill" | "help") => {
+      if (isGuestBlocked) {
+        toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
+        return;
+      }
+
+      const venueId = currentLocation.venueId?.trim();
+      const tableId = currentLocation.tableId?.trim();
+      if (!venueId || !tableId) {
+        toast.error("Стол не определен");
+        return;
+      }
+
+      const type = reason === "bill" ? "request_bill" : "call_waiter";
+
+      try {
+        const res = await fetch("/api/call-waiter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ venueId, tableId, type }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || data.ok === false) throw new Error(data.error ?? "call-waiter failed");
+        toast.success("Официант вызван!");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Не удалось вызвать официанта");
+      }
+    },
+    [currentLocation.tableId, currentLocation.venueId, guestBlockedReason, isGuestBlocked]
+  );
+
+  const requestBill = useCallback(
+    async (type: "full" | "split") => {
+      if (isGuestBlocked) {
+        toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
+        return;
+      }
+
+      const venueId = currentLocation.venueId?.trim();
+      const tableId = currentLocation.tableId?.trim();
+      const uid = guestIdentity.currentUid?.trim();
+      if (!venueId || !tableId || !uid) {
+        toast.error("Не удалось определить гостя или стол");
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/request-bill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ venueId, tableId, uid, type }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || data.ok === false) throw new Error(data.error ?? "request-bill failed");
+        toast.success("Запрос счета отправлен");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
+      }
+    },
+    [currentLocation.tableId, currentLocation.venueId, guestIdentity.currentUid, guestBlockedReason, isGuestBlocked]
+  );
 
   const value = useMemo<GuestMiniAppContextValue>(
     () => ({
@@ -383,6 +478,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       openTableScanner,
       openVenueMenu,
       refreshVisitHistory,
+      callWaiter,
+      requestBill,
     }),
     [
       guestIdentity,
@@ -396,6 +493,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       openTableScanner,
       openVenueMenu,
       refreshVisitHistory,
+      callWaiter,
+      requestBill,
     ]
   );
 
