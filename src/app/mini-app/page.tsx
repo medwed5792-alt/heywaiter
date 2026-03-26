@@ -1,14 +1,53 @@
- "use client";
+"use client";
 
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AdSpace } from "@/components/common/AdSpace";
 import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
+import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 
 function GuestDashboard() {
   const { visitHistory, openVenueMenu, openTableScanner } = useGuestContext();
+  const { requestLocation, getVenueDistance } = useSotaLocation();
+  const [distanceByVenue, setDistanceByVenue] = useState<Record<string, { distanceMeters: number | null; isNear: boolean }>>({});
+
+  useEffect(() => {
+    void requestLocation();
+  }, [requestLocation]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, { distanceMeters: number | null; isNear: boolean }> = {};
+      for (const v of visitHistory) {
+        const dist = await getVenueDistance(v.venueId);
+        next[v.venueId] = { distanceMeters: dist.distanceMeters, isNear: dist.isNear };
+      }
+      if (!cancelled) setDistanceByVenue(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visitHistory, getVenueDistance]);
+
+  const rankedVisits = useMemo(() => {
+    return [...visitHistory].sort((a, b) => {
+      const da = distanceByVenue[a.venueId];
+      const db = distanceByVenue[b.venueId];
+      const aNear = da?.isNear ? 1 : 0;
+      const bNear = db?.isNear ? 1 : 0;
+      if (aNear !== bNear) return bNear - aNear;
+      const aDist = da?.distanceMeters;
+      const bDist = db?.distanceMeters;
+      if (aDist != null && bDist != null) return aDist - bDist;
+      if (aDist != null) return -1;
+      if (bDist != null) return 1;
+      return 0;
+    });
+  }, [visitHistory, distanceByVenue]);
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
       <div className="mx-auto flex max-w-md flex-col gap-5">
@@ -28,14 +67,21 @@ function GuestDashboard() {
           <p className="mt-1 text-xs text-slate-600">Топ-5 последних заведений</p>
 
           <div className="mt-3 flex flex-col gap-2">
-            {visitHistory.map((v) => (
+            {rankedVisits.map((v) => (
               <button
                 key={v.venueId}
                 type="button"
                 onClick={() => openVenueMenu(v.venueId)}
                 className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-800 hover:bg-white"
               >
-                {resolveVenueDisplayName(v.venueId)}
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate">{resolveVenueDisplayName(v.venueId)}</span>
+                  {distanceByVenue[v.venueId]?.isNear ? (
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                      Рядом с вами
+                    </span>
+                  ) : null}
+                </span>
               </button>
             ))}
             {visitHistory.length === 0 && (
@@ -303,9 +349,11 @@ function MiniAppScreenRouter() {
 export default function MiniAppPage() {
   return (
     <Suspense fallback={<MiniAppIdentifyingFallback />}>
-      <GuestMiniAppStateProvider>
-        <MiniAppScreenRouter />
-      </GuestMiniAppStateProvider>
+      <SotaLocationProvider>
+        <GuestMiniAppStateProvider>
+          <MiniAppScreenRouter />
+        </GuestMiniAppStateProvider>
+      </SotaLocationProvider>
     </Suspense>
   );
 }

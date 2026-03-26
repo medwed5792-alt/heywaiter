@@ -17,7 +17,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { haversineDistanceM, IS_GEO_DEBUG } from "@/lib/geo";
+import { IS_GEO_DEBUG } from "@/lib/geo";
 import {
   StaffProvider,
   useStaff,
@@ -27,14 +27,9 @@ import {
 import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
+import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 
 const NOTIFICATIONS_POLL_MS = 5000;
-const GEO_OPTIONS: PositionOptions = {
-  enableHighAccuracy: false,
-  maximumAge: 30_000,
-  timeout: 10_000,
-};
-
 type Tab = "work" | "cabinet";
 
 type TelegramWebApp = {
@@ -55,13 +50,6 @@ interface NotificationItem {
   items?: string[] | null;
   read: boolean;
   createdAt: string | null;
-}
-
-interface VenueGeo {
-  lat: number;
-  lng: number;
-  radius: number;
-  configured: boolean;
 }
 
 interface ScheduleEntryItem {
@@ -273,6 +261,7 @@ function StaffOnboardingScreen({
 function StaffContentInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { checkInsideVenue, requestLocation } = useSotaLocation();
   const venueId = getVenueIdFromSearchParams(searchParams);
   const {
     staffData,
@@ -289,7 +278,6 @@ function StaffContentInner() {
   const playedShiftEndIdsRef = useRef<Set<string>>(new Set());
   const prevNotificationIdsRef = useRef<Set<string>>(new Set());
   const didInitNotificationsRef = useRef(false);
-  const [venueGeo, setVenueGeo] = useState<VenueGeo | null>(null);
   const [geoBlocked, setGeoBlocked] = useState(false);
   const [geoMessage, setGeoMessage] = useState<string | null>(null);
   const [geoLoading, setGeoLoading] = useState(false);
@@ -498,10 +486,9 @@ function StaffContentInner() {
     }
   }, [tab, staffId, fetchSchedule]);
 
-  // Гео-валидация: загрузка настроек заведения и проверка дистанции (haversineDistanceM из geo.ts)
+  // Гео-валидация через универсальный SotaLocationProvider.
   useEffect(() => {
     if (onShift) {
-      setVenueGeo(null);
       setGeoBlocked(false);
       setGeoMessage(null);
       return;
@@ -510,64 +497,30 @@ function StaffContentInner() {
     (async () => {
       setGeoLoading(true);
       try {
-        const res = await fetch(`/api/venues/${encodeURIComponent(venueId)}/geo`);
-        const data = await res.json();
+        await requestLocation();
+        const check = await checkInsideVenue(venueId);
         if (cancelled) return;
-        if (!res.ok || !data?.configured) {
-          setVenueGeo(null);
+        if (!check.configured) {
           setGeoBlocked(false);
           setGeoMessage(null);
           setGeoLoading(false);
           return;
         }
-        setVenueGeo({
-          lat: data.lat,
-          lng: data.lng,
-          radius: data.radius ?? 100,
-          configured: true,
-        });
-        if (typeof navigator === "undefined" || !navigator.geolocation) {
+        if (!check.allowed) {
+          const radius = check.effectiveRadius ?? 100;
+          setGeoBlocked(true);
+          setGeoMessage(`Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`);
+        } else {
           setGeoBlocked(false);
           setGeoMessage(null);
-          setGeoLoading(false);
-          return;
         }
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            if (cancelled) return;
-            const dist = haversineDistanceM(
-              pos.coords.latitude,
-              pos.coords.longitude,
-              data.lat,
-              data.lng
-            );
-            const radius = data.radius ?? 100;
-            if (dist > radius) {
-              setGeoBlocked(true);
-              setGeoMessage(
-                `Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`
-              );
-            } else {
-              setGeoBlocked(false);
-              setGeoMessage(null);
-            }
-            setGeoLoading(false);
-          },
-          () => {
-            if (!cancelled) {
-              setGeoBlocked(false);
-              setGeoMessage(null);
-              setGeoLoading(false);
-            }
-          },
-          GEO_OPTIONS
-        );
+        setGeoLoading(false);
       } catch {
         if (!cancelled) setGeoLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [venueId, onShift]);
+  }, [venueId, onShift, checkInsideVenue, requestLocation]);
 
   // Верхние кнопки SOS (без ввода номера стола) удалены, оставляем только «SOS по столу».
 
@@ -1261,9 +1214,11 @@ function MiniAppStaffContent() {
   }
 
   return (
-    <StaffProvider initialVenueFromUrl={initialVenueId}>
-      <StaffContentInner />
-    </StaffProvider>
+    <SotaLocationProvider>
+      <StaffProvider initialVenueFromUrl={initialVenueId}>
+        <StaffContentInner />
+      </StaffProvider>
+    </SotaLocationProvider>
   );
 }
 
