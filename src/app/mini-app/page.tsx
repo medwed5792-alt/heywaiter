@@ -8,10 +8,53 @@ import { SotaLocationProvider, useSotaLocation } from "@/components/providers/So
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 
-function GuestDashboard() {
+type GuestTab = "service" | "cabinet";
+
+function BottomTabs({
+  tab,
+  onTab,
+}: {
+  tab: GuestTab;
+  onTab: (t: GuestTab) => void;
+}) {
+  return (
+    <nav className="sticky bottom-0 z-10 border-t border-slate-200 bg-white">
+      <div className="mx-auto flex max-w-md">
+        <button
+          type="button"
+          onClick={() => onTab("service")}
+          className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${
+            tab === "service"
+              ? "text-emerald-700 bg-emerald-50/50"
+              : "text-slate-500 hover:bg-slate-50"
+          }`}
+        >
+          <span className={`inline-flex h-2 w-2 rounded-full ${tab === "service" ? "bg-emerald-600" : "bg-slate-300"}`} />
+          Сервис
+        </button>
+        <button
+          type="button"
+          onClick={() => onTab("cabinet")}
+          className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-medium transition-colors ${
+            tab === "cabinet"
+              ? "text-slate-900 bg-slate-50"
+              : "text-slate-500 hover:bg-slate-50"
+          }`}
+        >
+          <span className={`inline-flex h-2 w-2 rounded-full ${tab === "cabinet" ? "bg-slate-800" : "bg-slate-300"}`} />
+          Кабинет
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+function GuestServiceSearchMode() {
   const { visitHistory, openVenueMenu, openTableScanner } = useGuestContext();
   const { requestLocation, getVenueDistance } = useSotaLocation();
-  const [distanceByVenue, setDistanceByVenue] = useState<Record<string, { distanceMeters: number | null; isNear: boolean }>>({});
+  const [distanceByVenue, setDistanceByVenue] = useState<
+    Record<string, { distanceMeters: number | null; isNear: boolean }>
+  >({});
 
   useEffect(() => {
     void requestLocation();
@@ -49,58 +92,49 @@ function GuestDashboard() {
   }, [visitHistory, distanceByVenue]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
-      <div className="mx-auto flex max-w-md flex-col gap-5">
-        <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-center text-lg font-bold text-slate-900">Добро пожаловать</p>
-          <p className="mt-2 text-center text-sm text-slate-600">
-            Вы в режиме без стола. Последние визиты помогут быстро открыть заведение.
-          </p>
-        </header>
+    <div className="space-y-5">
+      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="text-center text-lg font-bold text-slate-900">Сервис</p>
+        <p className="mt-2 text-center text-sm text-slate-600">Откройте стол по QR‑коду или выберите заведение рядом.</p>
+      </header>
 
-        <div className="mt-3">
-          <AdSpace placementId="guest_dashboard_top" />
-        </div>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <button
+          type="button"
+          onClick={openTableScanner}
+          className="w-full rounded-xl bg-slate-900 py-4 text-base font-semibold text-white hover:bg-slate-800"
+        >
+          Сканер QR
+        </button>
+        <p className="mt-2 text-center text-xs text-slate-500">Сканер открывает стол и переключает в режим управления.</p>
+      </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-semibold text-slate-900">Мои места</p>
-          <p className="mt-1 text-xs text-slate-600">Топ-5 последних заведений</p>
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p className="text-sm font-semibold text-slate-900">Ближайшие заведения</p>
+        <p className="mt-1 text-xs text-slate-600">Из ваших мест, отсортировано по расстоянию</p>
 
-          <div className="mt-3 flex flex-col gap-2">
-            {rankedVisits.map((v) => (
-              <button
-                key={v.venueId}
-                type="button"
-                onClick={() => openVenueMenu(v.venueId)}
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-800 hover:bg-white"
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className="truncate">{resolveVenueDisplayName(v.venueId)}</span>
-                  {distanceByVenue[v.venueId]?.isNear ? (
-                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
-                      Рядом с вами
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-            ))}
-            {visitHistory.length === 0 && (
-              <p className="text-xs text-slate-500 mt-2">Пока нет визитов. Откройте сканер.</p>
-            )}
-          </div>
-
-          <div className="mt-4">
+        <div className="mt-3 flex flex-col gap-2">
+          {rankedVisits.map((v) => (
             <button
+              key={v.venueId}
               type="button"
-              onClick={openTableScanner}
-              className="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+              onClick={() => openVenueMenu(v.venueId)}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-800 hover:bg-white"
             >
-              Сканер
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate">{resolveVenueDisplayName(v.venueId)}</span>
+                {distanceByVenue[v.venueId]?.isNear ? (
+                  <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                    Рядом с вами
+                  </span>
+                ) : null}
+              </span>
             </button>
-          </div>
-        </section>
-      </div>
-    </main>
+          ))}
+          {visitHistory.length === 0 && <p className="mt-2 text-xs text-slate-500">Пока нет истории мест.</p>}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -138,8 +172,7 @@ function GuestSession() {
   }, [orderLines]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 pb-10 md:p-6" style={{ zoom: 0.75 }}>
-      <div className="mx-auto flex max-w-md flex-col gap-5">
+    <div className="space-y-5">
         <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-center text-lg font-bold text-slate-900">Гостевая сессия</p>
           <p className="mt-2 text-center text-sm text-slate-600">
@@ -304,8 +337,7 @@ function GuestSession() {
         <div className="mt-3">
           <AdSpace placementId="guest_session_footer" />
         </div>
-      </div>
-    </main>
+    </div>
   );
 }
 
@@ -313,8 +345,62 @@ function Loading() {
   return <MiniAppIdentifyingFallback />;
 }
 
+function GuestCabinet() {
+  const { guestIdentity, visitHistory, openVenueMenu } = useGuestContext();
+
+  return (
+    <div className="space-y-5">
+      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="text-center text-lg font-bold text-slate-900">Кабинет</p>
+        <p className="mt-2 text-center text-sm text-slate-600">Профиль и история посещений</p>
+      </header>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Профиль</p>
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-slate-600">UID</span>
+            <span className="text-sm font-mono text-slate-900">{guestIdentity.currentUid ?? "—"}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-slate-600">Telegram</span>
+            <span className="text-sm font-mono text-slate-900">{guestIdentity.telegramUid ?? "—"}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm text-slate-600">SOTA</span>
+            <span className="text-sm font-mono text-slate-900">{guestIdentity.sotaId ?? "—"}</span>
+          </div>
+        </div>
+      </section>
+
+      <div className="mt-1">
+        <AdSpace placementId="guest_dashboard_top" />
+      </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p className="text-sm font-semibold text-slate-900">Мои места</p>
+        <p className="mt-1 text-xs text-slate-600">Топ-5 последних заведений</p>
+        <div className="mt-3 flex flex-col gap-2">
+          {visitHistory.map((v) => (
+            <button
+              key={v.venueId}
+              type="button"
+              onClick={() => openVenueMenu(v.venueId)}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left text-sm font-medium text-slate-800 hover:bg-white"
+            >
+              {resolveVenueDisplayName(v.venueId)}
+            </button>
+          ))}
+          {visitHistory.length === 0 && <p className="mt-2 text-xs text-slate-500">Пока нет визитов.</p>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function MiniAppScreenRouter() {
-  const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation, systemConfig } = useGuestContext();
+  const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation, activeSession, systemConfig } = useGuestContext();
+  const [tab, setTab] = useState<GuestTab>("service");
 
   if (isInitializing) return <Loading />;
 
@@ -342,8 +428,21 @@ function MiniAppScreenRouter() {
     );
   }
 
-  if (currentLocation.venueId && currentLocation.tableId) return <GuestSession />;
-  return <GuestDashboard />;
+  // Force "Service" tab when app is opened by QR / session exists.
+  useEffect(() => {
+    if (currentLocation.tableId || activeSession) setTab("service");
+  }, [currentLocation.tableId, activeSession]);
+
+  const inSession = Boolean(currentLocation.venueId && currentLocation.tableId && activeSession);
+
+  return (
+    <div className="min-h-screen bg-slate-50 md:flex md:max-w-2xl md:mx-auto md:shadow-lg" style={{ zoom: 0.75 }}>
+      <main className="flex-1 p-4 pb-24 md:p-6">
+        {tab === "service" ? (inSession ? <GuestSession /> : <GuestServiceSearchMode />) : <GuestCabinet />}
+      </main>
+      <BottomTabs tab={tab} onTab={setTab} />
+    </div>
+  );
 }
 
 export default function MiniAppPage() {
