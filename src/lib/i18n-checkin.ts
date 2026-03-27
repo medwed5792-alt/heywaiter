@@ -9,7 +9,7 @@ export const checkInCopy: Record<
 > = {
   ru: {
     title: "HeyWaiter",
-    subtitle: "Вы за столом. Выберите мессенджер для связи с официантом.",
+    subtitle: "Вы за столом. Выберите мессенджер для связи с персоналом.",
     choose: "Открыть в",
     openIn: "Открыть в",
   },

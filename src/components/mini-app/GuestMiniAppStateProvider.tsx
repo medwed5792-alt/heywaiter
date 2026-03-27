@@ -11,6 +11,7 @@ import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
+import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -24,6 +25,8 @@ type TelegramWebAppInit = {
   ready?: () => void;
   addToAttachmentMenu?: () => Promise<boolean> | boolean;
   showScanQrPopup?: (params: { text?: string }, callback: (text: string) => void) => void;
+  /** Закрывает только оверлей сканера QR (не путать с close — закрытием всего Mini App). */
+  closeScanQrPopup?: () => void;
   close?: () => void;
 };
 
@@ -185,6 +188,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [telegramUid, setTelegramUid] = useState<string | null>(null);
   const [assignedStaffId, setAssignedStaffId] = useState<string | null>(null);
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
@@ -197,13 +201,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
   const subOrdersLoadedRef = useRef(false);
-
-  const telegramUid = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    const tg = getTelegramWebApp();
-    const id = tg?.initDataUnsafe?.user?.id;
-    return id != null ? String(id) : null;
-  }, []);
 
   const guestIdentity = useMemo(() => {
     const currentUid = resolveUnifiedCustomerUid({
@@ -219,6 +216,24 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       currentUid,
     };
   }, [telegramUid, visitorId]);
+
+  // До isSdkReady initData может быть пустым; после ready() и при поздней подгрузке — опрос как в StaffProvider.
+  useEffect(() => {
+    if (!isSdkReady || typeof window === "undefined") return;
+    const read = () => getTelegramUserIdFromWebApp(getTelegramWebApp());
+    const apply = () => {
+      const id = read();
+      if (id) setTelegramUid(id);
+      return Boolean(id);
+    };
+    if (apply()) return;
+    let n = 0;
+    const timer = window.setInterval(() => {
+      n += 1;
+      if (apply() || n >= 17) window.clearInterval(timer);
+    }, 300);
+    return () => window.clearInterval(timer);
+  }, [isSdkReady]);
 
   const refreshVisitHistory = useCallback(async () => {
     const currentUid = guestIdentity.currentUid;
@@ -415,7 +430,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const receiver = tg?.initDataUnsafe?.receiver?.username?.toLowerCase().trim() ?? "";
     if (receiver === "waitertalk_bot") {
       setIsGuestBlocked(true);
-      setGuestBlockedReason("Гостевой режим недоступен в @waitertalk_bot");
+      setGuestBlockedReason("Откройте гостевое приложение из меню бота заведения");
       setIsInitializing(false);
       return;
     }
@@ -537,11 +552,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   // Live session data: masterId, isPrivate and participants.
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
+    const venueId = currentLocation.venueId;
+    const tableId = currentLocation.tableId;
 
     const q = query(
       collection(db, "activeSessions"),
-      where("venueId", "==", currentLocation.venueId),
-      where("tableId", "==", currentLocation.tableId),
+      where("venueId", "==", venueId),
+      where("tableId", "==", tableId),
       where("status", "==", "check_in_success"),
       limit(1)
     );
@@ -580,8 +597,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       const session: ActiveSession = {
         id: snap.docs[0]!.id,
-        venueId: currentLocation.venueId,
-        tableId: currentLocation.tableId,
+        venueId,
+        tableId,
         tableNumber,
         masterId: masterId || undefined,
         isPrivate,
@@ -762,7 +779,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
           await switchLocation(resolved.venueId, resolved.tableId || null);
-          tg.close?.();
+          tg.closeScanQrPopup?.();
         })();
       });
       return;
@@ -823,12 +840,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || data.ok === false) throw new Error(data.error ?? "call-waiter failed");
-        toast.success("Официант вызван!");
+        toast.success("Запрос отправлен персоналу");
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Не удалось вызвать официанта");
+        toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [currentLocation.tableId, currentLocation.venueId, guestBlockedReason, isGuestBlocked]
+    [
+      currentLocation.tableId,
+      currentLocation.venueId,
+      guestBlockedReason,
+      isGuestBlocked,
+      isSessionActive,
+      guestIdentity.currentUid,
+    ]
   );
 
   const requestBill = useCallback(

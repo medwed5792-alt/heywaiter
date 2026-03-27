@@ -18,6 +18,7 @@ import {
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DEFAULT_VENUE_ID } from "@/lib/standards/venue-default";
+import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 
 const STAFF_VENUE_SESSION_KEY = "heywaiter_staff_venue_id";
 
@@ -56,31 +57,12 @@ function platformKeyFromUrl(raw: string | null): string | null {
   }
 }
 
-function parseTelegramUserIdFromInitData(initData: string): string | null {
-  const raw = initData.trim();
-  if (!raw) return null;
-  try {
-    const params = new URLSearchParams(raw);
-    const userJson = params.get("user");
-    if (!userJson) return null;
-    const u = JSON.parse(userJson) as { id?: number | string };
-    if (u?.id != null) return String(u.id);
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
 function getTelegramUserId(): string | null {
   if (typeof window === "undefined") return null;
   const tg = (window as unknown as {
     Telegram?: { WebApp?: { initData?: string; initDataUnsafe?: { user?: { id?: number } } } };
   }).Telegram?.WebApp;
-  if (!tg) return null;
-  const unsafeId = tg.initDataUnsafe?.user?.id;
-  if (unsafeId != null) return String(unsafeId);
-  const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
-  return parseTelegramUserIdFromInitData(initData);
+  return getTelegramUserIdFromWebApp(tg);
 }
 
 function readStaffLocalStorage(key: string): string | null {

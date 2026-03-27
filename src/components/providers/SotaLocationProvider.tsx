@@ -178,7 +178,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
         // 1) Try high-accuracy GPS first (fast timeout).
         const pos = await getGeoPosition(HIGH_ACCURACY_OPTIONS).catch(async (err) => {
           const ge = err as GeolocationPositionError | undefined;
-          if (ge?.code === ge.PERMISSION_DENIED) throw err;
+          if (ge && ge.code === ge.PERMISSION_DENIED) throw err;
           // 2) Fallback to coarse network/Wi-Fi mode.
           return await getGeoPosition(COARSE_OPTIONS);
         });
@@ -195,7 +195,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
         const ge = e as GeolocationPositionError | undefined;
         const coarse = await fetchIpFallback();
         scheduleGeoStateUpdate(() => {
-          if (ge?.code === ge.PERMISSION_DENIED) {
+          if (ge && ge.code === ge.PERMISSION_DENIED) {
             setStatus("denied");
             setError("Доступ к геолокации запрещен. Разрешите геолокацию в браузере.");
           } else {

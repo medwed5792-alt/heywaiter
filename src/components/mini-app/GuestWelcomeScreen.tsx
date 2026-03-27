@@ -32,7 +32,7 @@ export function GuestWelcomeScreen({ staffDisplayName, onComplete }: GuestWelcom
           {staffDisplayName ? (
             <span className="text-emerald-800">{staffDisplayName}</span>
           ) : (
-            <span className="text-slate-600">ваш официант</span>
+            <span className="text-slate-600">персонал зала</span>
           )}
         </p>
         <p className="mt-2 text-sm text-slate-600">
@@ -46,7 +46,7 @@ export function GuestWelcomeScreen({ staffDisplayName, onComplete }: GuestWelcom
         >
           Приступить к обслуживанию
         </button>
-        <p className="mt-3 text-xs text-slate-500">Открыть меню и вызов официанта</p>
+        <p className="mt-3 text-xs text-slate-500">Меню и вызов персонала</p>
       </div>
     </main>
   );

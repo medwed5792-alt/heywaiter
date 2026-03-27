@@ -326,7 +326,7 @@ function GuestSession() {
               onClick={() => void callWaiter(reasonRef.current)}
               className="w-full bg-yellow-500 py-4 rounded-xl font-bold text-lg text-black hover:bg-yellow-600 disabled:opacity-50 disabled:pointer-events-none"
             >
-              Вызвать официанта
+              Вызвать персонал
             </button>
 
             <button

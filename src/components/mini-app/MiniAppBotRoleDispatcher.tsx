@@ -159,15 +159,25 @@ export function MiniAppIdentifyingFallback() {
   );
 }
 
-function MiniAppIdentificationFailedScreen({ onRetry }: { onRetry: () => void }) {
+function MiniAppIdentificationFailedScreen({
+  onRetry,
+  context,
+}: {
+  onRetry: () => void;
+  /** Гостю не показываем имена «рабочих» ботов — только нейтральная инструкция. */
+  context: "guest" | "staff";
+}) {
+  const hint =
+    context === "staff"
+      ? "Откройте Mini App из Telegram-бота персонала или через меню смены, затем повторите попытку."
+      : "Откройте Mini App из меню бота заведения или по QR на столе, затем повторите попытку.";
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-[#fafafa] px-6">
       <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm text-center">
         <p className="text-2xl font-semibold tracking-[0.18em] text-slate-800">SOTA</p>
         <h1 className="mt-4 text-base font-semibold text-slate-900">Режим не определён</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Не удалось распознать бота Mini App. Откройте приложение из Telegram (@waitertalk_bot или гостевого бота)
-          или повторите попытку.
+          Не удалось распознать контекст Mini App. {hint}
         </p>
         <button
           type="button"
@@ -327,9 +337,13 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     (role === "staff" && !isStaffRoute) || (role === "guest" && isStaffRoute);
 
   if (identificationFailed) {
+    const failContext: "guest" | "staff" = pathname.startsWith(STAFF_ROUTE_PREFIX) ? "staff" : "guest";
     return (
       <Provider value={ctxValue}>
-        <MiniAppIdentificationFailedScreen onRetry={() => setRetryNonce((n) => n + 1)} />
+        <MiniAppIdentificationFailedScreen
+          context={failContext}
+          onRetry={() => setRetryNonce((n) => n + 1)}
+        />
       </Provider>
     );
   }

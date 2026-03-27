@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getVenueIdFromSearchParams } from "@/lib/standards/venue-from-url";
 import { Briefcase, User, Bell, Calendar, Coins } from "lucide-react";

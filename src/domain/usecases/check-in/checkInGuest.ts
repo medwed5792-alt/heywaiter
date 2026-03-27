@@ -122,7 +122,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         sessionId: existing.id,
         messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
         ...(shouldShowPinHint
-          ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+          ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
           : {}),
       };
     }
@@ -287,7 +287,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       sessionId: sessionRef.id,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
       ...(shouldShowPinHint
-        ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+        ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
         : {}),
     };
   }
@@ -375,7 +375,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     sessionId: sessionRef.id,
     messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
     ...(shouldShowPinHint
-      ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+      ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
       : {}),
   };
 }
