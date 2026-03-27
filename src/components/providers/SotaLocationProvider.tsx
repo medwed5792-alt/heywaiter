@@ -6,6 +6,7 @@ import { db } from "@/lib/firebase";
 import { haversineDistanceM } from "@/lib/geo";
 
 type LocationStatus = "idle" | "requesting" | "ready" | "denied" | "unavailable" | "error";
+type LocationSource = "none" | "gps" | "network" | "ip";
 
 type VenueGeoData = {
   lat: number;
@@ -41,6 +42,7 @@ type InsideVenueResult = {
 type SotaLocationContextValue = {
   coords: { lat: number; lng: number } | null;
   status: LocationStatus;
+  source: LocationSource;
   error: string | null;
   globalRadiusLimit: number;
   requestLocation: () => Promise<{ lat: number; lng: number } | null>;
@@ -50,6 +52,16 @@ type SotaLocationContextValue = {
 };
 
 const DEFAULT_GLOBAL_RADIUS_LIMIT = 500;
+const HIGH_ACCURACY_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  timeout: 5000,
+  maximumAge: 0,
+};
+const COARSE_OPTIONS: PositionOptions = {
+  enableHighAccuracy: false,
+  timeout: 10000,
+  maximumAge: 60000,
+};
 
 const SotaLocationContext = createContext<SotaLocationContextValue | null>(null);
 
@@ -66,6 +78,7 @@ function readVenueGeo(raw: unknown): VenueGeoData | null {
 export function SotaLocationProvider({ children }: { children: ReactNode }) {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [status, setStatus] = useState<LocationStatus>("idle");
+  const [source, setSource] = useState<LocationSource>("none");
   const [error, setError] = useState<string | null>(null);
   const [globalRadiusLimit, setGlobalRadiusLimit] = useState<number>(DEFAULT_GLOBAL_RADIUS_LIMIT);
   const venueGeoCacheRef = useRef<Map<string, VenueGeoData | null>>(new Map());
@@ -87,6 +100,26 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
+  const getGeoPosition = useCallback((options: PositionOptions) => {
+    return new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, options);
+    });
+  }, []);
+
+  const fetchIpFallback = useCallback(async (): Promise<{ lat: number; lng: number } | null> => {
+    try {
+      const res = await fetch("https://ipapi.co/json/");
+      if (!res.ok) return null;
+      const data = (await res.json()) as { latitude?: number; longitude?: number };
+      const lat = Number(data.latitude);
+      const lng = Number(data.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return { lat, lng };
+    } catch {
+      return null;
+    }
+  }, []);
+
   const requestLocation = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       setStatus("unavailable");
@@ -97,29 +130,38 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     setStatus("requesting");
     setError(null);
     try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: false,
-          maximumAge: 60_000,
-          timeout: 10_000,
-        });
+      // 1) Try high-accuracy GPS first (fast timeout).
+      const pos = await getGeoPosition(HIGH_ACCURACY_OPTIONS).catch(async (err) => {
+        const ge = err as GeolocationPositionError | undefined;
+        if (ge?.code === ge.PERMISSION_DENIED) throw err;
+        // 2) Fallback to coarse network/Wi-Fi mode.
+        return await getGeoPosition(COARSE_OPTIONS);
       });
       const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       setCoords(next);
       setStatus("ready");
+      setSource(pos.coords.accuracy <= 150 ? "gps" : "network");
       return next;
     } catch (e) {
       const ge = e as GeolocationPositionError | undefined;
       if (ge?.code === ge.PERMISSION_DENIED) {
         setStatus("denied");
-        setError("Доступ к геолокации запрещен");
+        setError("Доступ к геолокации запрещен. Разрешите геолокацию в браузере.");
       } else {
         setStatus("error");
-        setError("Не удалось получить координаты");
+        setError("Не удалось получить координаты. Включите Wi-Fi/GPS и повторите попытку.");
+      }
+      // 3) Optional IP fallback for rough city-level diagnostics.
+      const coarse = await fetchIpFallback();
+      if (coarse) {
+        setCoords(coarse);
+        setSource("ip");
+      } else {
+        setSource("none");
       }
       return null;
     }
-  }, []);
+  }, [fetchIpFallback, getGeoPosition]);
 
   const getVenueGeo = useCallback(async (venueId: string): Promise<VenueGeoData | null> => {
     const key = venueId.trim();
@@ -174,6 +216,15 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
         (status === "idle" || status === "requesting"
           ? await requestLocation()
           : null);
+      if (source === "ip") {
+        return {
+          venueId,
+          configured: eff.configured,
+          effectiveRadius: eff.effectiveRadius,
+          distanceMeters: null,
+          isNear: false,
+        };
+      }
       if (!current || !eff.configured || eff.venueLat == null || eff.venueLng == null || eff.effectiveRadius == null) {
         return {
           venueId,
@@ -192,7 +243,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
         isNear: distanceMeters <= eff.effectiveRadius,
       };
     },
-    [coords, getEffectiveRadius, requestLocation, status]
+    [coords, getEffectiveRadius, requestLocation, source, status]
   );
 
   const checkInsideVenue = useCallback(
@@ -220,6 +271,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     () => ({
       coords,
       status,
+      source,
       error,
       globalRadiusLimit,
       requestLocation,
@@ -227,7 +279,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
       getVenueDistance,
       checkInsideVenue,
     }),
-    [coords, status, error, globalRadiusLimit, requestLocation, getEffectiveRadius, getVenueDistance, checkInsideVenue]
+    [coords, status, source, error, globalRadiusLimit, requestLocation, getEffectiveRadius, getVenueDistance, checkInsideVenue]
   );
 
   return <SotaLocationContext.Provider value={value}>{children}</SotaLocationContext.Provider>;

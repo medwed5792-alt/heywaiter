@@ -261,7 +261,7 @@ function StaffOnboardingScreen({
 function StaffContentInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { checkInsideVenue, requestLocation } = useSotaLocation();
+  const { checkInsideVenue, requestLocation, status: geoStatus, source: geoSource, error: geoError } = useSotaLocation();
   const venueId = getVenueIdFromSearchParams(searchParams);
   const {
     staffData,
@@ -311,6 +311,31 @@ function StaffContentInner() {
   const [bindPhone, setBindPhone] = useState("");
   const [bindPhoneSaving, setBindPhoneSaving] = useState(false);
   const [bindPhoneError, setBindPhoneError] = useState<string | null>(null);
+
+  const rerunGeoCheck = useCallback(async () => {
+    if (onShift) return;
+    setGeoLoading(true);
+    setGeoMessage(null);
+    try {
+      await requestLocation();
+      const check = await checkInsideVenue(venueId);
+      if (!check.configured) {
+        setGeoBlocked(false);
+        setGeoMessage(null);
+      } else if (!check.allowed) {
+        const radius = check.effectiveRadius ?? 100;
+        setGeoBlocked(true);
+        setGeoMessage(`Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`);
+      } else {
+        setGeoBlocked(false);
+        setGeoMessage(null);
+      }
+    } catch {
+      // keep message from geoStatus/geoError
+    } finally {
+      setGeoLoading(false);
+    }
+  }, [checkInsideVenue, onShift, requestLocation, venueId]);
 
   const fetchNotifications = useCallback(async () => {
     if (!staffId) return;
@@ -521,6 +546,25 @@ function StaffContentInner() {
     })();
     return () => { cancelled = true; };
   }, [venueId, onShift, checkInsideVenue, requestLocation]);
+
+  useEffect(() => {
+    if (onShift) return;
+    if (geoStatus === "requesting") {
+      setGeoMessage("Определение координат...");
+      return;
+    }
+    if (geoStatus === "denied") {
+      setGeoMessage("Не удалось определить местоположение, включите геолокацию в браузере.");
+      return;
+    }
+    if (geoStatus === "error" || geoStatus === "unavailable") {
+      setGeoMessage(geoError ?? "Не удалось определить местоположение, включите Wi-Fi/GPS.");
+      return;
+    }
+    if (geoSource === "ip") {
+      setGeoMessage("Точное GEO недоступно. Используем приблизительное определение по IP.");
+    }
+  }, [geoError, geoSource, geoStatus, onShift]);
 
   // Верхние кнопки SOS (без ввода номера стола) удалены, оставляем только «SOS по столу».
 
@@ -933,6 +977,15 @@ function StaffContentInner() {
               )}
               {!onShift && geoMessage && (
                 <p className="mt-2 text-sm text-amber-700">{geoMessage}</p>
+              )}
+              {!onShift && geoStatus === "denied" && (
+                <button
+                  type="button"
+                  onClick={() => void rerunGeoCheck()}
+                  className="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Попробовать снова
+                </button>
               )}
               <button
                 type="button"

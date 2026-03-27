@@ -9,10 +9,15 @@ import { getSimulateOutOfZone } from "@/components/debug/DebugPanelTrigger";
 import type { VenueGeo } from "@/lib/types";
 
 const CHECK_INTERVAL_MS = 30_000;
-const OPTIONS: PositionOptions = {
+const COARSE_OPTIONS: PositionOptions = {
   enableHighAccuracy: false,
   maximumAge: 60_000,
   timeout: 10_000,
+};
+const HIGH_ACCURACY_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 0,
+  timeout: 5_000,
 };
 
 export type GeoFencingMode = "guest" | "staff";
@@ -42,6 +47,24 @@ type UseGeoFencingParams = UseGeoFencingGuest | UseGeoFencingStaff;
  * Если гость запретил GPS — не блокируем интерфейс, логируем geo_status: denied в сессию.
  */
 export function useGeoFencing(params: UseGeoFencingParams) {
+  const getCurrentPositionHybrid = useCallback(
+    (onSuccess: (p: GeolocationPosition) => void, onError: (err: GeolocationPositionError) => void) => {
+      if (typeof navigator === "undefined" || !navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(
+        onSuccess,
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            onError(err);
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(onSuccess, onError, COARSE_OPTIONS);
+        },
+        HIGH_ACCURACY_OPTIONS
+      );
+    },
+    []
+  );
+
   const { venueId } = params;
   const geoRef = useRef<VenueGeo | null>(null);
   const alertedGuestRef = useRef(false);
@@ -124,9 +147,9 @@ export function useGeoFencing(params: UseGeoFencingParams) {
           }).catch(() => {});
         }
       };
-      watchId = navigator.geolocation.watchPosition(onPosition, onError, OPTIONS);
+      watchId = navigator.geolocation.watchPosition(onPosition, onError, COARSE_OPTIONS);
       intervalId = setInterval(() => {
-        navigator.geolocation.getCurrentPosition(onPosition, onError, OPTIONS);
+        getCurrentPositionHybrid(onPosition, onError);
       }, CHECK_INTERVAL_MS);
     })();
 
@@ -134,7 +157,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       if (intervalId != null) clearInterval(intervalId);
     };
-  }, [venueId, onPosition, active, params.mode, sessionIdForDep]);
+  }, [venueId, onPosition, active, params.mode, sessionIdForDep, getCurrentPositionHybrid]);
 
   const startAfterUserAction = params.mode === "guest" ? (params as UseGeoFencingGuest).startAfterUserAction : undefined;
   const startGeoFencing = useCallback(() => {
@@ -158,7 +181,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
         return { allowed: true, radius: geo.radius };
       }
       const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, OPTIONS);
+        getCurrentPositionHybrid(resolve, reject);
       });
       let lat = pos.coords.latitude;
       let lng = pos.coords.longitude;
@@ -172,7 +195,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
     } catch {
       return { allowed: true };
     }
-  }, [venueId]);
+  }, [venueId, getCurrentPositionHybrid]);
 
   return {
     startGeoFencing,
