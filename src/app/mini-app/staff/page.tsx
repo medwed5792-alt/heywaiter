@@ -296,6 +296,7 @@ function StaffContentInner() {
   const [allowedTableNumbers, setAllowedTableNumbers] = useState<Set<number>>(new Set());
   const [activeTables, setActiveTables] = useState<ActiveTableItem[]>([]);
   const [notificationActionLoading, setNotificationActionLoading] = useState<string | null>(null);
+  const [geoHintOpen, setGeoHintOpen] = useState(false);
 
   const safeStaffData = staffData ?? { userId: null, staffId: null, onShift: false, sotaId: null };
   const { userId, staffId, onShift } = safeStaffData;
@@ -311,6 +312,35 @@ function StaffContentInner() {
   const [bindPhone, setBindPhone] = useState("");
   const [bindPhoneSaving, setBindPhoneSaving] = useState(false);
   const [bindPhoneError, setBindPhoneError] = useState<string | null>(null);
+
+  const geoBadge = useMemo(() => {
+    if (geoSource === "gps") {
+      return {
+        label: "GPS",
+        className: "bg-emerald-100 text-emerald-800",
+        hint: "Высокая точность. Используется спутниковое позиционирование.",
+      };
+    }
+    if (geoSource === "network") {
+      return {
+        label: "Wi-Fi/Сеть",
+        className: "bg-blue-100 text-blue-800",
+        hint: "Средняя точность. Включите Wi-Fi для более точного определения.",
+      };
+    }
+    if (geoSource === "ip") {
+      return {
+        label: "IP-Адрес",
+        className: "bg-amber-100 text-amber-800",
+        hint: "Низкая точность. Разрешите геолокацию в браузере для GPS/Wi-Fi.",
+      };
+    }
+    return {
+      label: "Не определено",
+      className: "bg-slate-100 text-slate-700",
+      hint: "Источник не определен. Нажмите «Попробовать снова».",
+    };
+  }, [geoSource]);
 
   const rerunGeoCheck = useCallback(async () => {
     if (onShift) return;
@@ -973,11 +1003,38 @@ function StaffContentInner() {
               <p className="mt-0.5 text-slate-700">
                 {onShift ? "Вы на смене" : "Вы не на смене"}
               </p>
+              {!onShift && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-500">
+                    {geoLoading || geoStatus === "requesting" ? "Определение координат..." : "Источник геоданных"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setGeoHintOpen((v) => !v)}
+                    className={`px-2 py-1 rounded text-xs font-bold ${geoBadge.className}`}
+                  >
+                    {geoBadge.label}
+                  </button>
+                </div>
+              )}
+              {!onShift && geoHintOpen && (
+                <p className="mt-1 text-xs text-slate-500">{geoBadge.hint}</p>
+              )}
               {shiftError && (
                 <p className="mt-2 text-sm text-red-600">{shiftError}</p>
               )}
               {!onShift && geoMessage && (
                 <p className="mt-2 text-sm text-amber-700">{geoMessage}</p>
+              )}
+              {!onShift && geoSource === "ip" && (
+                <p className="mt-1 text-xs text-amber-700">
+                  Используется примерное местоположение по сети. Доступ разрешен с предупреждением.
+                </p>
+              )}
+              {!onShift && geoStatus === "denied" && (
+                <p className="mt-1 text-xs text-red-600">
+                  Доступ к геопозиции запрещен в браузере. Разрешите доступ и нажмите &quot;Попробовать снова&quot;.
+                </p>
               )}
               {!onShift && geoStatus === "denied" && (
                 <button
