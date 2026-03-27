@@ -7,6 +7,7 @@ import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-ap
 import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
+import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
 
 type GuestTab = "service" | "cabinet";
 
@@ -139,12 +140,35 @@ function GuestServiceSearchMode() {
 }
 
 function GuestSession() {
-  const { currentLocation, guestIdentity, activeSession, participants, currentTableOrders, callWaiter, requestBill } =
-    useGuestContext();
+  const {
+    currentLocation,
+    guestIdentity,
+    activeSession,
+    participants,
+    currentTableOrders,
+    callWaiter,
+    requestBill,
+    isSessionActive,
+    assignedStaffDisplayName,
+    completeWelcomeSequence,
+  } = useGuestContext();
   const reasonRef = useRef<"menu" | "bill" | "help">("help");
   const [ordersOpen, setOrdersOpen] = useState(false);
+  const [revealCallWaiter, setRevealCallWaiter] = useState(false);
 
-  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId);
+  useEffect(() => {
+    if (!isSessionActive) return;
+    const id = window.setTimeout(() => setRevealCallWaiter(true), 72);
+    return () => clearTimeout(id);
+  }, [isSessionActive]);
+
+  if (!isSessionActive) {
+    return (
+      <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />
+    );
+  }
+
+  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
   const currentUid = guestIdentity.currentUid ?? "";
   const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
   const isPrivate = activeSession?.isPrivate === true;
@@ -399,7 +423,15 @@ function GuestCabinet() {
 }
 
 function MiniAppScreenRouter() {
-  const { isInitializing, isGuestBlocked, guestBlockedReason, currentLocation, activeSession, systemConfig } = useGuestContext();
+  const {
+    isInitializing,
+    isGuestBlocked,
+    guestBlockedReason,
+    currentLocation,
+    activeSession,
+    systemConfig,
+    isSessionActive,
+  } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
 
   // Force "Service" tab when app is opened by QR / session exists.
@@ -436,13 +468,20 @@ function MiniAppScreenRouter() {
   }
 
   const inSession = Boolean(currentLocation.venueId && currentLocation.tableId && activeSession);
+  const showBottomTabs = !inSession || isSessionActive;
 
   return (
     <div className="min-h-screen bg-slate-50 md:flex md:max-w-2xl md:mx-auto md:shadow-lg" style={{ zoom: 0.75 }}>
-      <main className="flex-1 p-4 pb-24 md:p-6">
-        {tab === "service" ? (inSession ? <GuestSession /> : <GuestServiceSearchMode />) : <GuestCabinet />}
+      <main className={`flex-1 p-4 md:p-6 ${showBottomTabs ? "pb-24" : "pb-10"}`}>
+        {inSession ? (
+          <GuestSession />
+        ) : tab === "service" ? (
+          <GuestServiceSearchMode />
+        ) : (
+          <GuestCabinet />
+        )}
       </main>
-      <BottomTabs tab={tab} onTab={setTab} />
+      {showBottomTabs && <BottomTabs tab={tab} onTab={setTab} />}
     </div>
   );
 }

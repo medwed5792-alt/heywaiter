@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -148,6 +149,13 @@ type GuestMiniAppContextValue = {
   isInitializing: boolean;
   isGuestBlocked: boolean;
   guestBlockedReason: string | null;
+  /** false на экране посадки, пока гость не подтвердил приветствие; сервисные кнопки неактивны. */
+  isSessionActive: boolean;
+  /** Закреплённый за столом staff id — совпадает с тем, что бэкенд использует для вызова. */
+  assignedStaffId: string | null;
+  /** Имя для строки «Вас обслуживает …». */
+  assignedStaffDisplayName: string | null;
+  completeWelcomeSequence: () => void;
   switchLocation: (venueId: string | null, tableId: string | null) => Promise<void>;
   openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
@@ -176,7 +184,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [isSdkReady, setIsSdkReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
+  const [isSessionActive, setIsSessionActive] = useState(false);
+  const [assignedStaffId, setAssignedStaffId] = useState<string | null>(null);
+  const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
+  /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
+  const serviceHandshakeRef = useRef<{
+    venueId: string | null;
+    tableId: string | null;
+    assignedStaffId: string | null;
+  }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
   const subOrdersLoadedRef = useRef(false);
@@ -324,6 +341,73 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     );
     return () => unsub();
   }, []);
+
+  // Экран посадки: на каждом столе — отдельный флаг в sessionStorage.
+  useEffect(() => {
+    const v = currentLocation.venueId?.trim();
+    const t = currentLocation.tableId?.trim();
+    if (!v || !t) {
+      setIsSessionActive(true);
+      return;
+    }
+    try {
+      const done = sessionStorage.getItem(`sota_welcome_${v}_${t}`) === "1";
+      setIsSessionActive(done);
+    } catch {
+      setIsSessionActive(false);
+    }
+  }, [currentLocation.venueId, currentLocation.tableId]);
+
+  // Тот же currentWaiterId, что и на бэкенде при pushCallWaiterNotification.
+  useEffect(() => {
+    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) {
+      setAssignedStaffId(null);
+      return;
+    }
+    const venueId = currentLocation.venueId;
+    const tableId = currentLocation.tableId;
+    const tableRef = doc(db, "venues", venueId, "tables", tableId);
+    const unsub = onSnapshot(tableRef, (snap) => {
+      if (!snap.exists()) {
+        setAssignedStaffId(null);
+        return;
+      }
+      const data = (snap.data() ?? {}) as Record<string, unknown>;
+      setAssignedStaffId(getWaiterIdFromTablePayload(data));
+    });
+    return () => unsub();
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
+
+  useEffect(() => {
+    if (!assignedStaffId) {
+      setAssignedStaffDisplayName(null);
+      return;
+    }
+    const staffRef = doc(db, "staff", assignedStaffId);
+    const unsub = onSnapshot(staffRef, (snap) => {
+      if (!snap.exists()) {
+        setAssignedStaffDisplayName(null);
+        return;
+      }
+      const data = (snap.data() ?? {}) as Record<string, unknown>;
+      const dn =
+        typeof data.displayName === "string" && data.displayName.trim()
+          ? data.displayName.trim()
+          : typeof data.name === "string" && data.name.trim()
+            ? data.name.trim()
+            : null;
+      setAssignedStaffDisplayName(dn);
+    });
+    return () => unsub();
+  }, [assignedStaffId]);
+
+  useEffect(() => {
+    serviceHandshakeRef.current = {
+      venueId: currentLocation.venueId?.trim() || null,
+      tableId: currentLocation.tableId?.trim() || null,
+      assignedStaffId,
+    };
+  }, [currentLocation.venueId, currentLocation.tableId, assignedStaffId]);
 
   useEffect(() => {
     if (!isSdkReady) return;
@@ -691,15 +775,33 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     router.push(`${origin}/check-in`);
   }, [router, switchLocation]);
 
+  const completeWelcomeSequence = useCallback(() => {
+    const v = currentLocation.venueId?.trim();
+    const t = currentLocation.tableId?.trim();
+    if (v && t) {
+      try {
+        sessionStorage.setItem(`sota_welcome_${v}_${t}`, "1");
+      } catch {
+        // ignore
+      }
+    }
+    setIsSessionActive(true);
+  }, [currentLocation.venueId, currentLocation.tableId]);
+
   const callWaiter = useCallback(
     async (reason: "menu" | "bill" | "help") => {
       if (isGuestBlocked) {
         toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
         return;
       }
+      if (!isSessionActive) {
+        toast.error("Сначала подтвердите приветствие на столе");
+        return;
+      }
 
-      const venueId = currentLocation.venueId?.trim();
-      const tableId = currentLocation.tableId?.trim();
+      const snap = serviceHandshakeRef.current;
+      const venueId = snap.venueId?.trim();
+      const tableId = snap.tableId?.trim();
       if (!venueId || !tableId) {
         toast.error("Стол не определен");
         return;
@@ -711,7 +813,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const res = await fetch("/api/call-waiter", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ venueId, tableId, type }),
+          body: JSON.stringify({
+            venueId,
+            tableId,
+            type,
+            customerUid: guestIdentity.currentUid ?? undefined,
+            assignedStaffId: snap.assignedStaffId ?? undefined,
+          }),
         });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || data.ok === false) throw new Error(data.error ?? "call-waiter failed");
@@ -730,8 +838,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return;
       }
 
-      const venueId = currentLocation.venueId?.trim();
-      const tableId = currentLocation.tableId?.trim();
+      const snap = serviceHandshakeRef.current;
+      const venueId = snap.venueId?.trim();
+      const tableId = snap.tableId?.trim();
       const uid = guestIdentity.currentUid?.trim();
       if (!venueId || !tableId || !uid) {
         toast.error("Не удалось определить гостя или стол");
@@ -742,7 +851,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const res = await fetch("/api/request-bill", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ venueId, tableId, uid, type }),
+          body: JSON.stringify({
+            venueId,
+            tableId,
+            uid,
+            type,
+            assignedStaffId: snap.assignedStaffId ?? undefined,
+          }),
         });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || data.ok === false) throw new Error(data.error ?? "request-bill failed");
@@ -751,7 +866,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
       }
     },
-    [currentLocation.tableId, currentLocation.venueId, guestIdentity.currentUid, guestBlockedReason, isGuestBlocked]
+    [
+      currentLocation.tableId,
+      currentLocation.venueId,
+      guestIdentity.currentUid,
+      guestBlockedReason,
+      isGuestBlocked,
+      isSessionActive,
+    ]
   );
 
   const value = useMemo<GuestMiniAppContextValue>(
@@ -766,6 +888,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
+      isSessionActive,
+      assignedStaffId,
+      assignedStaffDisplayName,
+      completeWelcomeSequence,
       switchLocation,
       openTableScanner,
       openVenueMenu,
@@ -784,6 +910,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
+      isSessionActive,
+      assignedStaffId,
+      assignedStaffDisplayName,
+      completeWelcomeSequence,
       switchLocation,
       openTableScanner,
       openVenueMenu,
