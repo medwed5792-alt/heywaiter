@@ -317,7 +317,7 @@ function StaffContentInner() {
     setGeoLoading(true);
     setGeoMessage(null);
     try {
-      await requestLocation();
+      await requestLocation(true);
       const check = await checkInsideVenue(venueId);
       if (!check.configured) {
         setGeoBlocked(false);
@@ -522,7 +522,7 @@ function StaffContentInner() {
     (async () => {
       setGeoLoading(true);
       try {
-        await requestLocation();
+        await requestLocation(false);
         const check = await checkInsideVenue(venueId);
         if (cancelled) return;
         if (!check.configured) {
@@ -562,7 +562,8 @@ function StaffContentInner() {
       return;
     }
     if (geoSource === "ip") {
-      setGeoMessage("Точное GEO недоступно. Используем приблизительное определение по IP.");
+      setGeoMessage("Низкая точность координат (IP). Разрешен вход на смену с предупреждением.");
+      setGeoBlocked(false);
     }
   }, [geoError, geoSource, geoStatus, onShift]);
 

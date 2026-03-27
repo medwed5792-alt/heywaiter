@@ -45,7 +45,7 @@ type SotaLocationContextValue = {
   source: LocationSource;
   error: string | null;
   globalRadiusLimit: number;
-  requestLocation: () => Promise<{ lat: number; lng: number } | null>;
+  requestLocation: (force?: boolean) => Promise<{ lat: number; lng: number } | null>;
   getEffectiveRadius: (venueId: string) => Promise<EffectiveRadiusResult>;
   getVenueDistance: (venueId: string) => Promise<VenueDistanceResult>;
   checkInsideVenue: (venueId: string) => Promise<InsideVenueResult>;
@@ -82,6 +82,22 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [globalRadiusLimit, setGlobalRadiusLimit] = useState<number>(DEFAULT_GLOBAL_RADIUS_LIMIT);
   const venueGeoCacheRef = useRef<Map<string, VenueGeoData | null>>(new Map());
+  const coordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const statusRef = useRef<LocationStatus>("idle");
+  const sourceRef = useRef<LocationSource>("none");
+  const inFlightRef = useRef<Promise<{ lat: number; lng: number } | null> | null>(null);
+  const autoFailCountRef = useRef(0);
+  const stateDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    coordsRef.current = coords;
+  }, [coords]);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+  useEffect(() => {
+    sourceRef.current = source;
+  }, [source]);
 
   useEffect(() => {
     const ref = doc(db, "system_settings", "global");
@@ -120,48 +136,89 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const requestLocation = useCallback(async () => {
+  const scheduleGeoStateUpdate = useCallback((updater: () => void) => {
+    if (stateDebounceRef.current) {
+      clearTimeout(stateDebounceRef.current);
+    }
+    stateDebounceRef.current = setTimeout(() => {
+      updater();
+      stateDebounceRef.current = null;
+    }, 150);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (stateDebounceRef.current) clearTimeout(stateDebounceRef.current);
+    };
+  }, []);
+
+  const requestLocation = useCallback(async (force = false) => {
+    if (inFlightRef.current) return inFlightRef.current;
+
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       setStatus("unavailable");
       setError("Геолокация недоступна");
       return null;
     }
 
-    setStatus("requesting");
-    setError(null);
-    try {
-      // 1) Try high-accuracy GPS first (fast timeout).
-      const pos = await getGeoPosition(HIGH_ACCURACY_OPTIONS).catch(async (err) => {
-        const ge = err as GeolocationPositionError | undefined;
-        if (ge?.code === ge.PERMISSION_DENIED) throw err;
-        // 2) Fallback to coarse network/Wi-Fi mode.
-        return await getGeoPosition(COARSE_OPTIONS);
-      });
-      const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      setCoords(next);
-      setStatus("ready");
-      setSource(pos.coords.accuracy <= 150 ? "gps" : "network");
-      return next;
-    } catch (e) {
-      const ge = e as GeolocationPositionError | undefined;
-      if (ge?.code === ge.PERMISSION_DENIED) {
-        setStatus("denied");
-        setError("Доступ к геолокации запрещен. Разрешите геолокацию в браузере.");
-      } else {
+    if (!force && autoFailCountRef.current >= 2) {
+      scheduleGeoStateUpdate(() => {
         setStatus("error");
-        setError("Не удалось получить координаты. Включите Wi-Fi/GPS и повторите попытку.");
-      }
-      // 3) Optional IP fallback for rough city-level diagnostics.
-      const coarse = await fetchIpFallback();
-      if (coarse) {
-        setCoords(coarse);
-        setSource("ip");
-      } else {
-        setSource("none");
-      }
+        setError("Не удалось определить местоположение автоматически. Нажмите «Попробовать снова».");
+      });
       return null;
     }
-  }, [fetchIpFallback, getGeoPosition]);
+
+    const task = (async () => {
+      scheduleGeoStateUpdate(() => {
+        setStatus("requesting");
+        setError(null);
+      });
+      try {
+        // 1) Try high-accuracy GPS first (fast timeout).
+        const pos = await getGeoPosition(HIGH_ACCURACY_OPTIONS).catch(async (err) => {
+          const ge = err as GeolocationPositionError | undefined;
+          if (ge?.code === ge.PERMISSION_DENIED) throw err;
+          // 2) Fallback to coarse network/Wi-Fi mode.
+          return await getGeoPosition(COARSE_OPTIONS);
+        });
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        scheduleGeoStateUpdate(() => {
+          setCoords(next);
+          setStatus("ready");
+          setSource(pos.coords.accuracy <= 150 ? "gps" : "network");
+          setError(null);
+        });
+        autoFailCountRef.current = 0;
+        return next;
+      } catch (e) {
+        const ge = e as GeolocationPositionError | undefined;
+        const coarse = await fetchIpFallback();
+        scheduleGeoStateUpdate(() => {
+          if (ge?.code === ge.PERMISSION_DENIED) {
+            setStatus("denied");
+            setError("Доступ к геолокации запрещен. Разрешите геолокацию в браузере.");
+          } else {
+            setStatus("error");
+            setError("Не удалось получить координаты. Включите Wi-Fi/GPS и повторите попытку.");
+          }
+          if (coarse) {
+            setCoords(coarse);
+            setSource("ip");
+          } else {
+            setSource("none");
+          }
+        });
+        if (!force) autoFailCountRef.current += 1;
+        return null;
+      } finally {
+        inFlightRef.current = null;
+      }
+    })();
+
+    inFlightRef.current = task;
+    return task;
+  }, [fetchIpFallback, getGeoPosition, scheduleGeoStateUpdate]);
 
   const getVenueGeo = useCallback(async (venueId: string): Promise<VenueGeoData | null> => {
     const key = venueId.trim();
@@ -212,11 +269,11 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     async (venueId: string): Promise<VenueDistanceResult> => {
       const eff = await getEffectiveRadius(venueId);
       const current =
-        coords ??
-        (status === "idle" || status === "requesting"
+        coordsRef.current ??
+        (statusRef.current === "idle" || statusRef.current === "requesting"
           ? await requestLocation()
           : null);
-      if (source === "ip") {
+      if (sourceRef.current === "ip") {
         return {
           venueId,
           configured: eff.configured,
@@ -243,7 +300,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
         isNear: distanceMeters <= eff.effectiveRadius,
       };
     },
-    [coords, getEffectiveRadius, requestLocation, source, status]
+    [getEffectiveRadius, requestLocation]
   );
 
   const checkInsideVenue = useCallback(

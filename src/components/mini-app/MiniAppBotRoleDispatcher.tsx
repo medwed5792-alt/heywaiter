@@ -321,6 +321,11 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     return <Provider value={ctxValue}>{children}</Provider>;
   }
 
+  // Hard silence screen: never render guest/staff content while role and route are inconsistent.
+  const isStaffRoute = pathname.startsWith(STAFF_ROUTE_PREFIX);
+  const routeMismatch =
+    (role === "staff" && !isStaffRoute) || (role === "guest" && isStaffRoute);
+
   if (identificationFailed) {
     return (
       <Provider value={ctxValue}>
@@ -330,6 +335,14 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
   }
 
   if (isIdentifying) {
+    return (
+      <Provider value={ctxValue}>
+        <MiniAppIdentifyingFallback />
+      </Provider>
+    );
+  }
+
+  if (routeMismatch) {
     return (
       <Provider value={ctxValue}>
         <MiniAppIdentifyingFallback />
