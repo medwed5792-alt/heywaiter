@@ -71,7 +71,7 @@ async function setMenuButton(
   token: string,
   chatId: number,
   webAppUrl: string,
-  buttonText: string = "Пульт"
+  buttonText: string = "SOTA: Сервис"
 ): Promise<void> {
   try {
     await setChatMenuButton(token, { chat_id: chatId, webAppUrl, buttonText });
@@ -124,13 +124,13 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   const parsed = parseStartPayload(message.text);
   if (!parsed) {
-    const webAppUrl = `${baseUrl}/mini-app?chatId=${chatId}&platform=telegram`;
+    const webAppUrl = `${baseUrl}/mini-app?chatId=${chatId}&platform=telegram&tab=service`;
     await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
       reply_markup: { inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]] },
     });
-    await setMenuButton(token, chatId, webAppUrl, "Меню");
+    await setMenuButton(token, chatId, webAppUrl, "SOTA: Сервис");
     return;
   }
 
@@ -148,13 +148,13 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const venueType = venueData.venueType as string | undefined;
 
   if (venueType === "fast_food") {
-    const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&chatId=${chatId}&platform=telegram`;
+    const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&chatId=${chatId}&platform=telegram&tab=service`;
     await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
       reply_markup: { inline_keyboard: [[{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }]] },
     });
-    await setMenuButton(token, chatId, webAppUrl, "Пульт");
+    await setMenuButton(token, chatId, webAppUrl, "SOTA: Сервис");
     return;
   }
 
@@ -165,7 +165,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   }
 
   const role = kind === "OWN" ? "vip" : "guest";
-  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}`;
+  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}&tab=service`;
 
   if (kind === "OWN" && guest) {
     await addDoc(collection(db, "activeSessions"), {
@@ -220,6 +220,6 @@ export async function handleTelegramClient(request: NextRequest, token: string):
       ],
     },
   });
-  await setChatMenuButton(token, { chat_id: chatId, webAppUrl, buttonText: "Пульт" });
+  await setChatMenuButton(token, { chat_id: chatId, webAppUrl, buttonText: "SOTA: Сервис" });
 }
 

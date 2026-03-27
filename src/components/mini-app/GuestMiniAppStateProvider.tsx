@@ -21,6 +21,7 @@ type TelegramWebAppInit = {
     receiver?: { username?: string };
   };
   ready?: () => void;
+  addToAttachmentMenu?: () => Promise<boolean> | boolean;
   showScanQrPopup?: (params: { text?: string }, callback: (text: string) => void) => void;
   close?: () => void;
 };
@@ -176,6 +177,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
   const checkInSyncRef = useRef<string | null>(null);
+  const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
   const subOrdersLoadedRef = useRef(false);
 
@@ -259,6 +261,36 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     tg.ready?.();
     queueMicrotask(() => setIsSdkReady(true));
   }, []);
+
+  // Telegram Mini App UX: suggest pinning app in attachment menu once per device.
+  useEffect(() => {
+    if (!isSdkReady || typeof window === "undefined") return;
+    if (attachmentMenuInitRef.current) return;
+    const tg = getTelegramWebApp();
+    const inTg = isTelegramContext();
+    if (!tg || !inTg || typeof tg.addToAttachmentMenu !== "function") return;
+    attachmentMenuInitRef.current = true;
+
+    let alreadyDone = false;
+    try {
+      alreadyDone = localStorage.getItem("sota_guest_attachment_menu_added") === "1";
+    } catch {
+      // ignore storage errors
+    }
+    if (alreadyDone) return;
+
+    Promise.resolve(tg.addToAttachmentMenu())
+      .then(() => {
+        try {
+          localStorage.setItem("sota_guest_attachment_menu_added", "1");
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {
+        // optional API; ignore unsupported clients
+      });
+  }, [isSdkReady]);
 
   // Global runtime config from system_settings/global with safe defaults.
   useEffect(() => {
@@ -399,7 +431,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     checkInSyncRef.current = key;
     (async () => {
       try {
-        await fetch("/api/check-in", {
+        const res = await fetch("/api/check-in", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -408,6 +440,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             participantUid: guestIdentity.currentUid,
           }),
         });
+        const data = (await res.json().catch(() => ({}))) as { onboardingHint?: string };
+        if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
+          toast(data.onboardingHint.trim(), { icon: "📌" });
+        }
       } catch {
         // session data will be updated by activeSessions snapshot
       }

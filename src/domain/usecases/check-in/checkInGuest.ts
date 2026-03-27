@@ -12,7 +12,7 @@ import { FieldValue } from "firebase-admin/firestore";
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 export type CheckInGuestResult =
-  | { status: "check_in_success"; sessionId: string; messageGuest: string }
+  | { status: "check_in_success"; sessionId: string; messageGuest: string; onboardingHint?: string }
   | { status: "table_private"; sessionId: string; messageGuest: string }
   | { status: "table_conflict"; sessionId: string; messageGuest: string };
 
@@ -48,10 +48,13 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const VENUE_EVENTS_ID = resolveVenueId(venueId);
 
   const firestore = getAdminFirestore();
+  let shouldShowPinHint = false;
 
   async function recordGuestVisit() {
     if (!currentUid) return;
     const ref = firestore.doc(`users/${currentUid}/visits/${venueId}`);
+    const prev = await ref.get();
+    shouldShowPinHint = !prev.exists;
     await ref.set(
       {
         lastVisitAt: FieldValue.serverTimestamp(),
@@ -118,6 +121,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         status: "check_in_success",
         sessionId: existing.id,
         messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+        ...(shouldShowPinHint
+          ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+          : {}),
       };
     }
 
@@ -280,6 +286,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       status: "check_in_success",
       sessionId: sessionRef.id,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+      ...(shouldShowPinHint
+        ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+        : {}),
     };
   }
 
@@ -365,6 +374,9 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     status: "check_in_success",
     sessionId: sessionRef.id,
     messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+    ...(shouldShowPinHint
+      ? { onboardingHint: "Закрепите этот чат, чтобы быстро вызывать официанта." }
+      : {}),
   };
 }
 
