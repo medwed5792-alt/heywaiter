@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "venuesBySotaId": {
+    "VR000000": {
+      "enabled": true,
+      "timeZone": "Europe/Moscow",
+      "serviceHoursLocal": { "start": "09:00", "end": "23:30" },
+      "minLeadTimeHoursBeforeArrival": 0,
+      "maxLeadTimeHoursBeforeArrival": 168,
+      "maxCartItems": 50
+    }
+  },
+  "defaults": {
+    "timeZone": "Europe/Moscow",
+    "defaultMaxCartItems": 100
+  }
+}
