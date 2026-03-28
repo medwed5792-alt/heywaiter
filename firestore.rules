@@ -1,0 +1,107 @@
+rules_version = '2';
+
+/**
+ * HeyWaiter — правила для venues/{venueId}/preorder_carts/{cartId}
+ *
+ * Модель:
+ * - cartId = логический customerUid (telegram_user_id:… | anonymous_id:…).
+ * - Поле authUid = Firebase Auth uid — привязка владельца (см. GuestCabinetPreOrderPanel).
+ *
+ * Персонал: доступ через preorder_staff_gate/{request.auth.uid} с полем venueIds: ["venueDocId", ...].
+ * Создание/изменение gate — только Admin SDK (Console / CF / скрипт).
+ *
+ * Смержите match /{document=**} с вашей существующей политикой по остальным коллекциям.
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function preorderStaffGateDoc() {
+      return get(/databases/$(database)/documents/preorder_staff_gate/$(request.auth.uid));
+    }
+
+    function preorderStaffForVenue(venueId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/preorder_staff_gate/$(request.auth.uid))
+        && venueId in preorderStaffGateDoc().data.venueIds;
+    }
+
+    function isLogicalCustomerUid(cid) {
+      return cid is string
+        && cid.size() > 0
+        && cid.size() <= 256
+        && (
+          cid.matches('telegram_user_id:[0-9]+')
+          || cid.matches('anonymous_id:.+')
+        );
+    }
+
+    function preorderCartCanRead(venueId, cartId) {
+      return request.auth != null
+        && (
+          (resource.data.authUid == request.auth.uid)
+          || preorderStaffForVenue(venueId)
+        );
+    }
+
+    function preorderCartCanCreate(venueId, cartId) {
+      return request.auth != null
+        && isLogicalCustomerUid(cartId)
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.customerUid == cartId
+        && request.resource.data.venueId == venueId
+        && request.resource.data.status in ['draft', 'sent']
+        && request.resource.data.items is list
+        && request.resource.data.items.size() <= 100
+        && !request.resource.data.keys().hasAny(['receivedAt', 'receivedByStaffId']);
+    }
+
+    function guestPreorderUpdateCore(venueId, cartId) {
+      return request.resource.data.customerUid == cartId
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.venueId == venueId
+        && resource.data.authUid == request.auth.uid
+        && (
+          (resource.data.status == 'draft' && request.resource.data.status in ['draft', 'sent'])
+          || (resource.data.status == 'received' && request.resource.data.status == 'draft')
+        );
+    }
+
+    function staffPreorderMarkReceivedOk() {
+      return resource.data.status == 'sent'
+        && request.resource.data.status == 'received'
+        && request.resource.data.customerUid == resource.data.customerUid
+        && request.resource.data.authUid == resource.data.authUid
+        && request.resource.data.venueId == resource.data.venueId
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'receivedAt', 'receivedByStaffId', 'updatedAt', 'updatedAtMs']);
+    }
+
+    function preorderCartCanUpdate(venueId, cartId) {
+      return (request.auth != null && guestPreorderUpdateCore(venueId, cartId))
+        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderMarkReceivedOk());
+    }
+
+    match /preorder_staff_gate/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /venues/{venueId}/preorder_carts/{cartId} {
+      allow read: if preorderCartCanRead(venueId, cartId);
+
+      allow create: if preorderCartCanCreate(venueId, cartId);
+
+      allow update: if preorderCartCanUpdate(venueId, cartId);
+
+      allow delete: if request.auth != null
+        && resource.data.authUid == request.auth.uid
+        && resource.data.status == 'draft';
+    }
+
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

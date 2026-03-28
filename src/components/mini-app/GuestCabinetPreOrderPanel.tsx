@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import toast from "react-hot-toast";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import {
   PREORDER_CARTS_SUBCOLLECTION,
   type PreOrderCartStatus,
@@ -52,6 +53,12 @@ export function GuestCabinetPreOrderPanel({
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
   const [newQty, setNewQty] = useState("1");
+  const [firebaseAuthUid, setFirebaseAuthUid] = useState<string | null>(() => auth.currentUser?.uid ?? null);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setFirebaseAuthUid(u?.uid ?? null));
+    return () => unsub();
+  }, []);
 
   const cartRef = useMemo(() => {
     const v = venueFirestoreId.trim();
@@ -84,11 +91,12 @@ export function GuestCabinetPreOrderPanel({
   }, [enabled, cartRef, venueFirestoreId]);
 
   const pushDraftToFirestore = useCallback(async () => {
-    if (!cartRef || !customerUid?.trim()) return;
+    if (!cartRef || !customerUid?.trim() || !firebaseAuthUid) return;
     try {
       await setDoc(
         cartRef,
         {
+          authUid: firebaseAuthUid,
           venueId: venueFirestoreId.trim(),
           venueSotaId: registrySotaId,
           customerUid: customerUid.trim(),
@@ -102,7 +110,7 @@ export function GuestCabinetPreOrderPanel({
     } catch {
       // сеть / правила — тихо; локальный черновик уже сохранён
     }
-  }, [cartRef, customerUid, items, registrySotaId, venueFirestoreId]);
+  }, [cartRef, customerUid, firebaseAuthUid, items, registrySotaId, venueFirestoreId]);
 
   useEffect(() => {
     if (!enabled || !hydrated || !canEdit) return;
@@ -116,7 +124,7 @@ export function GuestCabinetPreOrderPanel({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [items, enabled, hydrated, canEdit, venueFirestoreId, cartRef, pushDraftToFirestore]);
+  }, [items, enabled, hydrated, canEdit, venueFirestoreId, cartRef, pushDraftToFirestore, firebaseAuthUid]);
 
   const addLine = () => {
     if (!canEdit) return;
@@ -152,8 +160,8 @@ export function GuestCabinetPreOrderPanel({
   };
 
   const sendToVenue = async () => {
-    if (!cartRef || !customerUid?.trim()) {
-      toast.error("Нет идентификатора гостя для отправки");
+    if (!cartRef || !customerUid?.trim() || !firebaseAuthUid) {
+      toast.error("Нет идентификатора гостя или сессии Firebase для отправки");
       return;
     }
     if (items.length === 0) {
@@ -165,6 +173,7 @@ export function GuestCabinetPreOrderPanel({
       await setDoc(
         cartRef,
         {
+          authUid: firebaseAuthUid,
           venueId: venueFirestoreId.trim(),
           venueSotaId: registrySotaId,
           customerUid: customerUid.trim(),
@@ -186,7 +195,7 @@ export function GuestCabinetPreOrderPanel({
   };
 
   const startNewPreorder = async () => {
-    if (!cartRef || !customerUid?.trim()) return;
+    if (!cartRef || !customerUid?.trim() || !firebaseAuthUid) return;
     setItems([]);
     setStatus("draft");
     savePreorderDraftToLocal(venueFirestoreId, []);
@@ -194,6 +203,7 @@ export function GuestCabinetPreOrderPanel({
       await setDoc(
         cartRef,
         {
+          authUid: firebaseAuthUid,
           venueId: venueFirestoreId.trim(),
           venueSotaId: registrySotaId,
           customerUid: customerUid.trim(),
@@ -233,6 +243,8 @@ export function GuestCabinetPreOrderPanel({
 
       {!customerUid?.trim() ? (
         <p className="mt-3 text-xs text-amber-800">Войдите через Telegram или откройте приложение как гость — нужен UID для синхронизации.</p>
+      ) : !firebaseAuthUid ? (
+        <p className="mt-3 text-xs text-amber-800">Подключение к Firebase… корзина сохраняется только на устройстве, пока не готова анонимная сессия.</p>
       ) : null}
 
       <div className="mt-3 space-y-2">
@@ -309,7 +321,7 @@ export function GuestCabinetPreOrderPanel({
             <button
               type="button"
               onClick={addLine}
-              disabled={!customerUid?.trim()}
+              disabled={!customerUid?.trim() || !firebaseAuthUid}
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
               В корзину
@@ -323,7 +335,7 @@ export function GuestCabinetPreOrderPanel({
           <button
             type="button"
             onClick={() => void sendToVenue()}
-            disabled={sending || !customerUid?.trim() || items.length === 0}
+            disabled={sending || !customerUid?.trim() || !firebaseAuthUid || items.length === 0}
             className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             {sending ? "Отправка…" : "Отправить в заведение"}
