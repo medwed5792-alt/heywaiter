@@ -8,6 +8,7 @@ import { SotaLocationProvider, useSotaLocation } from "@/components/providers/So
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
+import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
 
 type GuestTab = "service" | "cabinet";
 
@@ -370,7 +371,18 @@ function Loading() {
 }
 
 function GuestCabinet() {
-  const { guestIdentity, visitHistory, openVenueMenu } = useGuestContext();
+  const {
+    guestIdentity,
+    visitHistory,
+    openVenueMenu,
+    isVenuePreOrderEnabled,
+    getVenueRegistrySotaId,
+  } = useGuestContext();
+
+  const preorderVenues = useMemo(
+    () => visitHistory.filter((v) => isVenuePreOrderEnabled(v.venueId)),
+    [visitHistory, isVenuePreOrderEnabled]
+  );
 
   return (
     <div className="space-y-5">
@@ -378,6 +390,22 @@ function GuestCabinet() {
         <p className="text-center text-lg font-bold text-slate-900">Кабинет</p>
         <p className="mt-2 text-center text-sm text-slate-600">Профиль и история посещений</p>
       </header>
+
+      {preorderVenues.length > 0 ? (
+        <div className="space-y-4">
+          <p className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Предзаказ до визита</p>
+          {preorderVenues.map((v) => (
+            <GuestCabinetPreOrderPanel
+              key={v.venueId}
+              venueFirestoreId={v.venueId}
+              venueTitle={resolveVenueDisplayName(v.venueId)}
+              registrySotaId={getVenueRegistrySotaId(v.venueId)}
+              customerUid={guestIdentity.currentUid}
+              enabled
+            />
+          ))}
+        </div>
+      ) : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Профиль</p>

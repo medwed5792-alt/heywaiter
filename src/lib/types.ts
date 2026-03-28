@@ -136,6 +136,13 @@ export interface VenueSettings {
   language?: LocaleCode;
 }
 
+/** Модули Mini App / CRM, рубильники на уровне заведения (перекрывают только часть глобальных флагов). */
+export interface VenueModuleConfig {
+  preOrder?: {
+    enabled?: boolean;
+  };
+}
+
 /** Геозона заведения (Geo-Fencing): радиус в метрах */
 export interface VenueGeo {
   lat: number;
@@ -170,6 +177,8 @@ export interface Venue {
   messages?: VenueMessages;
   botsConfig?: BotsConfig;
   settings?: VenueSettings;
+  /** Рубильники модулей (предзаказ и др.); детали — в коде resolvePreOrderEnabled. */
+  moduleConfig?: VenueModuleConfig;
   /** Координаты и радиус для Escape Alert (гость/сотрудник покинул зону) */
   geo?: VenueGeo;
   /** Счётчик для номера заказа (Fast Food); инкремент при создании заказа */

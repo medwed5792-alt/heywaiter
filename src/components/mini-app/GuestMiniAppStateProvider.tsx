@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { mergePreOrderSystemFields, resolvePreOrderEnabled, readVenueSotaId } from "@/lib/pre-order";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
@@ -73,6 +74,10 @@ export type SotaSystemConfig = {
   adsNetworkEnabled: boolean;
   geoRadiusLimit: number;
   globalMaintenanceMode: boolean;
+  /** ЦУП: ключ VR… → включить предзаказ для заведения с таким sotaId. */
+  preOrderBySotaVenueId: Record<string, boolean>;
+  /** ЦУП: ключ = Firestore id документа venues/{id}. */
+  preOrderByVenueDocId: Record<string, boolean>;
   [key: string]: unknown;
 };
 
@@ -80,6 +85,8 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
   adsNetworkEnabled: true,
   geoRadiusLimit: 500,
   globalMaintenanceMode: false,
+  preOrderBySotaVenueId: {},
+  preOrderByVenueDocId: {},
 };
 
 function parseNumber(raw: unknown): number {
@@ -165,6 +172,8 @@ type GuestMiniAppContextValue = {
   refreshVisitHistory: () => Promise<void>;
   callWaiter: (reason: "menu" | "bill" | "help") => Promise<void>;
   requestBill: (type: "full" | "split") => Promise<void>;
+  isVenuePreOrderEnabled: (venueFirestoreId: string) => boolean;
+  getVenueRegistrySotaId: (venueFirestoreId: string) => string | null;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -191,6 +200,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [telegramUid, setTelegramUid] = useState<string | null>(null);
   const [assignedStaffId, setAssignedStaffId] = useState<string | null>(null);
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
+  const [venueDocById, setVenueDocById] = useState<Record<string, Record<string, unknown>>>({});
   const checkInSyncRef = useRef<string | null>(null);
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
@@ -331,9 +341,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       ref,
       (snap) => {
         const raw = (snap.data() ?? {}) as Record<string, unknown>;
+        const preOrderFields = mergePreOrderSystemFields(raw);
         const next: SotaSystemConfig = {
           ...DEFAULT_SYSTEM_CONFIG,
           ...raw,
+          ...preOrderFields,
           adsNetworkEnabled:
             typeof raw.adsNetworkEnabled === "boolean"
               ? raw.adsNetworkEnabled
@@ -684,6 +696,52 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     void refreshVisitHistory();
   }, [isSdkReady, isInitializing, currentLocation.venueId, currentLocation.tableId, refreshVisitHistory]);
 
+  const visitVenueIdsKey = useMemo(() => {
+    const s = new Set<string>();
+    for (const v of visitHistory) {
+      const id = v.venueId?.trim();
+      if (id) s.add(id);
+    }
+    return [...s].sort().join("|");
+  }, [visitHistory]);
+
+  useEffect(() => {
+    if (!isSdkReady) return;
+    const ids = visitVenueIdsKey ? visitVenueIdsKey.split("|").filter(Boolean) : [];
+    const unsubs: Array<() => void> = [];
+    for (const id of ids) {
+      const ref = doc(db, "venues", id);
+      const unsub = onSnapshot(
+        ref,
+        (snap) => {
+          setVenueDocById((prev) => ({
+            ...prev,
+            [id]: snap.exists() ? { ...(snap.data() as Record<string, unknown>) } : {},
+          }));
+        },
+        () => {
+          setVenueDocById((prev) => ({ ...prev, [id]: {} }));
+        }
+      );
+      unsubs.push(unsub);
+    }
+    return () => unsubs.forEach((u) => u());
+  }, [isSdkReady, visitVenueIdsKey]);
+
+  const isVenuePreOrderEnabled = useCallback(
+    (venueFirestoreId: string) => {
+      const id = venueFirestoreId.trim();
+      if (!id) return false;
+      return resolvePreOrderEnabled(id, venueDocById[id], systemConfig);
+    },
+    [venueDocById, systemConfig]
+  );
+
+  const getVenueRegistrySotaId = useCallback(
+    (venueFirestoreId: string) => readVenueSotaId(venueDocById[venueFirestoreId.trim()]),
+    [venueDocById]
+  );
+
   const openVenueMenu = useCallback(
     (venueId: string) => {
       void switchLocation(venueId, null);
@@ -922,6 +980,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       refreshVisitHistory,
       callWaiter,
       requestBill,
+      isVenuePreOrderEnabled,
+      getVenueRegistrySotaId,
     }),
     [
       guestIdentity,
@@ -944,6 +1004,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       refreshVisitHistory,
       callWaiter,
       requestBill,
+      isVenuePreOrderEnabled,
+      getVenueRegistrySotaId,
     ]
   );
 

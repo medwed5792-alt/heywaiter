@@ -87,6 +87,8 @@ export function SystemSettingsTab() {
           <h3 className="text-base font-semibold text-slate-900">Системные переменные</h3>
           <p className="mt-1 text-sm text-slate-600">
             Хранится в <code className="rounded bg-slate-100 px-1 text-xs">system_settings/global</code>. Значения — JSON.
+            Предзаказ: <code className="rounded bg-slate-100 px-1 text-xs">preOrderBySotaVenueId</code> (объект VR… → boolean) и/или{" "}
+            <code className="rounded bg-slate-100 px-1 text-xs">preOrderByVenueDocId</code> (id документа venues → boolean).
           </p>
         </div>
         <div className="flex gap-2">

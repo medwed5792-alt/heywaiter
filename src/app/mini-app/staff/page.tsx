@@ -26,6 +26,7 @@ import {
 } from "@/components/providers/StaffProvider";
 import { useMiniAppBotRole, MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { StaffCabinetProfile } from "@/components/mini-app/StaffCabinetProfile";
+import { StaffPreOrderInbox } from "@/components/mini-app/StaffPreOrderInbox";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 
@@ -1106,6 +1107,8 @@ function StaffContentInner() {
                 <p className="mt-2 text-xs text-red-600">{sosSubmitError ?? sosValidationError}</p>
               )}
             </section>
+
+            <StaffPreOrderInbox venueId={venueId} staffId={staffId} />
 
             <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
