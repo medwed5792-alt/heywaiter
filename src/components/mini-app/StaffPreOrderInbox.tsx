@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { ShoppingBag } from "lucide-react";
 import { collection, doc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { getIdToken } from "firebase/auth";
+import { auth, db } from "@/lib/firebase";
 import {
   PREORDER_CARTS_SUBCOLLECTION,
   parsePreorderCartDoc,
@@ -50,8 +51,9 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
     return () => unsub();
   }, [venueId]);
 
-  const confirmOrder = async (cartDocId: string) => {
+  const confirmOrder = async (row: Row) => {
     const v = venueId.trim();
+    const cartDocId = row.id;
     if (!v) return;
     setBusy(cartDocId);
     try {
@@ -64,6 +66,36 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
         updatedAt: serverTimestamp(),
         updatedAtMs: Date.now(),
       });
+
+      const user = auth.currentUser;
+      if (user) {
+        try {
+          const token = await getIdToken(user);
+          const orderDisplayId = cartDocId.length > 8 ? cartDocId.slice(-8) : cartDocId;
+          const res = await fetch("/api/staff/preorder-notify", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              venueId: v,
+              cartDocId,
+              customerUid: row.customerUid,
+              event: "status_confirmed",
+              orderDisplayId,
+            }),
+          });
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            console.warn("[StaffPreOrderInbox] preorder-notify failed", res.status, errBody);
+          }
+        } catch (e) {
+          console.warn("[StaffPreOrderInbox] preorder-notify error", e);
+        }
+      } else {
+        console.warn("[StaffPreOrderInbox] нет Firebase Auth — уведомление гостю не отправлено");
+      }
     } catch (e) {
       console.warn("[StaffPreOrderInbox] confirm failed", e);
     } finally {
@@ -98,7 +130,7 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
                     </div>
                     <button
                       type="button"
-                      onClick={() => void confirmOrder(r.id)}
+                      onClick={() => void confirmOrder(r)}
                       disabled={busy === r.id}
                       className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
