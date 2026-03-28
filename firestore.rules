@@ -1,16 +1,15 @@
 rules_version = '2';
 
 /**
- * HeyWaiter — правила для venues/{venueId}/preorder_carts/{cartId}
+ * HeyWaiter — venues/{venueId}/preorder_carts/{cartId}
  *
- * Модель:
- * - cartId = логический customerUid (telegram_user_id:… | anonymous_id:…).
- * - Поле authUid = Firebase Auth uid — привязка владельца (см. GuestCabinetPreOrderPanel).
+ * cartId = resolveUnifiedCustomerUid: tg:|wa:|vk:|anon: (и legacy telegram_user_id:|anonymous_id:).
+ * authUid = Firebase Auth uid — владелец документа; гость: read/write только если resource.data.authUid == request.auth.uid.
  *
- * Персонал: доступ через preorder_staff_gate/{request.auth.uid} с полем venueIds: ["venueDocId", ...].
- * Создание/изменение gate — только Admin SDK (Console / CF / скрипт).
- *
- * Смержите match /{document=**} с вашей существующей политикой по остальным коллекциям.
+ * Персонал: preorder_staff_gate/{request.auth.uid}
+ *   venueIds: ["<Firestore venues doc id>", ...]
+ *   venueSotaIds: ["<VR…>", ...]  — доступ ко всем площадкам с данным SOTA-ID
+ * Запись gate — только Admin SDK.
  */
 
 service cloud.firestore {
@@ -21,9 +20,17 @@ service cloud.firestore {
     }
 
     function preorderStaffForVenue(venueId) {
+      let gate = preorderStaffGateDoc().data;
       return request.auth != null
         && exists(/databases/$(database)/documents/preorder_staff_gate/$(request.auth.uid))
-        && venueId in preorderStaffGateDoc().data.venueIds;
+        && (
+          ('venueIds' in gate && venueId in gate.venueIds)
+          || (
+            'venueSotaIds' in gate
+            && get(/databases/$(database)/documents/venues/$(venueId)).data.sotaId is string
+            && get(/databases/$(database)/documents/venues/$(venueId)).data.sotaId in gate.venueSotaIds
+          )
+        );
     }
 
     function isLogicalCustomerUid(cid) {
@@ -33,6 +40,10 @@ service cloud.firestore {
         && (
           cid.matches('telegram_user_id:[0-9]+')
           || cid.matches('anonymous_id:.+')
+          || cid.matches('tg:[0-9]+')
+          || cid.matches('wa:[^:]+')
+          || cid.matches('vk:[^:]+')
+          || cid.matches('anon:.+')
         );
     }
 

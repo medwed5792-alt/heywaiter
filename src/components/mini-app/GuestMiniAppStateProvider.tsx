@@ -3,7 +3,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
-import { mergePreOrderSystemFields, resolvePreOrderEnabled, readVenueSotaId } from "@/lib/pre-order";
+import {
+  mergePreOrderSystemFields,
+  resolvePreOrderEnabled,
+  readVenueSotaId,
+  resolvePreorderMaxCartItems,
+  resolvePreorderSubmissionGate,
+} from "@/lib/pre-order";
+import {
+  parsePreorderModuleConfig,
+  PREORDER_SYSTEM_CONFIG_DOC_ID,
+  type PreorderModuleConfig,
+} from "@/lib/system-configs/preorder-module-config";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
@@ -11,7 +22,7 @@ import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
-import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
+import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
@@ -133,6 +144,18 @@ function extractOrderItemsForUI(data: Record<string, unknown>): GuestOrderLine[]
   return items;
 }
 
+function visitTimestampMillis(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : 0;
+  }
+  if (v && typeof v === "object" && "seconds" in v && typeof (v as { seconds: number }).seconds === "number") {
+    return (v as { seconds: number }).seconds * 1000;
+  }
+  return 0;
+}
+
 function parseGuestTableOrder(docId: string, data: Record<string, unknown>): GuestTableOrder {
   const orderNumber = Math.max(1, Math.floor(parseNumber(data.orderNumber)));
   const status = typeof data.status === "string" ? data.status : "pending";
@@ -174,6 +197,9 @@ type GuestMiniAppContextValue = {
   requestBill: (type: "full" | "split") => Promise<void>;
   isVenuePreOrderEnabled: (venueFirestoreId: string) => boolean;
   getVenueRegistrySotaId: (venueFirestoreId: string) => string | null;
+  preorderModuleConfig: PreorderModuleConfig;
+  getPreorderSubmissionGate: (venueFirestoreId: string) => { ok: boolean; reason: string | null };
+  getPreorderMaxCartItems: (venueFirestoreId: string) => number;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -201,6 +227,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [assignedStaffId, setAssignedStaffId] = useState<string | null>(null);
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
   const [venueDocById, setVenueDocById] = useState<Record<string, Record<string, unknown>>>({});
+  const [preorderModuleConfig, setPreorderModuleConfig] = useState<PreorderModuleConfig>({});
   const checkInSyncRef = useRef<string | null>(null);
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
@@ -251,21 +278,41 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setVisitHistory([]);
       return;
     }
+    const candidates = visitHistoryUidCandidates(currentUid);
     try {
-      const q = query(
-        collection(db, "users", currentUid, "visits"),
-        orderBy("lastVisitAt", "desc"),
-        limit(5)
-      );
-      const snap = await getDocs(q);
-      const entries = snap.docs.map((d) => {
-        const x = d.data() as Record<string, unknown>;
-        return {
-          venueId: d.id,
-          lastVisitAt: x.lastVisitAt,
-          totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
-        } satisfies GuestVisitEntry;
-      });
+      const byVenue = new Map<string, GuestVisitEntry>();
+      for (const uid of candidates) {
+        const q = query(
+          collection(db, "users", uid, "visits"),
+          orderBy("lastVisitAt", "desc"),
+          limit(5)
+        );
+        const snap = await getDocs(q);
+        for (const d of snap.docs) {
+          const x = d.data() as Record<string, unknown>;
+          const next: GuestVisitEntry = {
+            venueId: d.id,
+            lastVisitAt: x.lastVisitAt,
+            totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
+          };
+          const prev = byVenue.get(d.id);
+          if (!prev) {
+            byVenue.set(d.id, next);
+          } else {
+            const prevMs = visitTimestampMillis(prev.lastVisitAt);
+            const nextMs = visitTimestampMillis(next.lastVisitAt);
+            if (nextMs >= prevMs) {
+              byVenue.set(d.id, {
+                ...next,
+                totalVisits: next.totalVisits ?? prev.totalVisits,
+              });
+            }
+          }
+        }
+      }
+      const entries = [...byVenue.values()]
+        .sort((a, b) => visitTimestampMillis(b.lastVisitAt) - visitTimestampMillis(a.lastVisitAt))
+        .slice(0, 5);
       setVisitHistory(entries);
     } catch {
       setVisitHistory([]);
@@ -365,6 +412,20 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       () => {
         setSystemConfig(DEFAULT_SYSTEM_CONFIG);
       }
+    );
+    return () => unsub();
+  }, []);
+
+  // ЦУП: system_configs/preorder — VR, окна времени, лимиты корзины.
+  useEffect(() => {
+    const ref = doc(db, "system_configs", PREORDER_SYSTEM_CONFIG_DOC_ID);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const raw = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
+        setPreorderModuleConfig(parsePreorderModuleConfig(raw));
+      },
+      () => setPreorderModuleConfig({})
     );
     return () => unsub();
   }, []);
@@ -732,14 +793,31 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     (venueFirestoreId: string) => {
       const id = venueFirestoreId.trim();
       if (!id) return false;
-      return resolvePreOrderEnabled(id, venueDocById[id], systemConfig);
+      return resolvePreOrderEnabled(id, venueDocById[id], systemConfig, preorderModuleConfig);
     },
-    [venueDocById, systemConfig]
+    [venueDocById, systemConfig, preorderModuleConfig]
   );
 
   const getVenueRegistrySotaId = useCallback(
     (venueFirestoreId: string) => readVenueSotaId(venueDocById[venueFirestoreId.trim()]),
     [venueDocById]
+  );
+
+  const getPreorderSubmissionGate = useCallback(
+    (venueFirestoreId: string) => {
+      const vr = readVenueSotaId(venueDocById[venueFirestoreId.trim()]);
+      const r = resolvePreorderSubmissionGate({ registrySotaId: vr, preorderModule: preorderModuleConfig });
+      return r.ok ? { ok: true as const, reason: null } : { ok: false as const, reason: r.reason };
+    },
+    [venueDocById, preorderModuleConfig]
+  );
+
+  const getPreorderMaxCartItems = useCallback(
+    (venueFirestoreId: string) => {
+      const vr = readVenueSotaId(venueDocById[venueFirestoreId.trim()]);
+      return resolvePreorderMaxCartItems(vr, preorderModuleConfig, 100);
+    },
+    [venueDocById, preorderModuleConfig]
   );
 
   const openVenueMenu = useCallback(
@@ -982,6 +1060,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       requestBill,
       isVenuePreOrderEnabled,
       getVenueRegistrySotaId,
+      preorderModuleConfig,
+      getPreorderSubmissionGate,
+      getPreorderMaxCartItems,
     }),
     [
       guestIdentity,
@@ -1006,6 +1087,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       requestBill,
       isVenuePreOrderEnabled,
       getVenueRegistrySotaId,
+      preorderModuleConfig,
+      getPreorderSubmissionGate,
+      getPreorderMaxCartItems,
     ]
   );
 

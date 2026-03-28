@@ -4,6 +4,11 @@
  */
 
 import { normalizeSotaId } from "@/lib/sota-id";
+import type { PreorderModuleConfig } from "@/lib/system-configs/preorder-module-config";
+import {
+  isNowWithinServiceWindow,
+  pickPreorderVenuePolicy,
+} from "@/lib/system-configs/preorder-module-config";
 
 /** Фрагмент system_settings/global для предзаказа (задаётся в ЦУП /super/system). */
 export type PreOrderGlobalConfigSlice = {
@@ -79,26 +84,63 @@ function readModulePreOrderEnabled(venueData: Record<string, unknown> | null | u
 }
 
 /**
- * Приоритет: venues.moduleConfig.preOrder.enabled → preOrderByVenueDocId → preOrderBySotaVenueId[VR] → false.
+ * Приоритет: venues.moduleConfig.preOrder.enabled → system_configs/preorder venuesBySotaId[VR] →
+ * preOrderByVenueDocId → preOrderBySotaVenueId[VR] → false.
  */
 export function resolvePreOrderEnabled(
   venueFirestoreId: string,
   venueData: Record<string, unknown> | null | undefined,
-  systemConfig: PreOrderGlobalConfigSlice
+  systemConfig: PreOrderGlobalConfigSlice,
+  preorderModule?: PreorderModuleConfig | null
 ): boolean {
   const mod = readModulePreOrderEnabled(venueData);
   if (typeof mod === "boolean") return mod;
 
+  const sid = readVenueSotaId(venueData);
+  const cupPolicy = pickPreorderVenuePolicy(sid, preorderModule ?? {});
+  if (cupPolicy && typeof cupPolicy.enabled === "boolean") return cupPolicy.enabled;
+
   const byDoc = systemConfig.preOrderByVenueDocId;
   if (byDoc && typeof byDoc[venueFirestoreId] === "boolean") return byDoc[venueFirestoreId]!;
 
-  const sid = typeof venueData?.sotaId === "string" ? normalizeSotaId(venueData.sotaId) : "";
   if (sid) {
     const bySota = systemConfig.preOrderBySotaVenueId;
     if (bySota && typeof bySota[sid] === "boolean") return bySota[sid]!;
   }
 
   return false;
+}
+
+export function resolvePreorderMaxCartItems(
+  registrySotaId: string | null,
+  preorderModule: PreorderModuleConfig | null | undefined,
+  fallback: number = 100
+): number {
+  const policy = pickPreorderVenuePolicy(registrySotaId, preorderModule ?? {});
+  if (policy?.maxCartItems != null && policy.maxCartItems > 0) return Math.min(500, policy.maxCartItems);
+  const d = preorderModule?.defaults?.defaultMaxCartItems;
+  if (typeof d === "number" && d > 0) return Math.min(500, Math.floor(d));
+  return fallback;
+}
+
+export function resolvePreorderSubmissionGate(args: {
+  registrySotaId: string | null;
+  preorderModule: PreorderModuleConfig | null | undefined;
+  now?: Date;
+}): { ok: true } | { ok: false; reason: string } {
+  const now = args.now ?? new Date();
+  const policy = pickPreorderVenuePolicy(args.registrySotaId, args.preorderModule ?? {});
+  if (!policy?.serviceHoursLocal) return { ok: true };
+  const tz =
+    (policy.timeZone?.trim() || args.preorderModule?.defaults?.timeZone?.trim() || "Europe/Moscow").trim();
+  const { start, end } = policy.serviceHoursLocal;
+  if (!isNowWithinServiceWindow(now, tz, start, end)) {
+    return {
+      ok: false,
+      reason: `Приём предзаказов с ${start} до ${end} (${tz})`,
+    };
+  }
+  return { ok: true };
 }
 
 export function readVenueSotaId(venueData: Record<string, unknown> | null | undefined): string | null {

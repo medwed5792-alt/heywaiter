@@ -1,7 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import type { ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
+import { buildTelegramCustomerUid, extractMessengerExternalIdFromCustomerUid } from "@/lib/identity/customer-uid";
 
 type SessionDocShape = {
   masterId?: string;
@@ -162,10 +162,7 @@ async function completeOrdersForTable(
     .where("tableId", "==", tableId)
     .where("status", "in", ["pending", "ready"]);
 
-  const legacyTelegramId =
-    customerUid && customerUid.startsWith("telegram_user_id:")
-      ? customerUid.slice("telegram_user_id:".length).trim()
-      : "";
+  const legacyTelegramId = extractMessengerExternalIdFromCustomerUid(customerUid ?? null);
 
   const [primarySnap, legacySnap] = await Promise.all([
     customerUid ? base.where("customerUid", "==", customerUid).get() : base.get(),

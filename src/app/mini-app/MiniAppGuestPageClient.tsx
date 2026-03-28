@@ -377,6 +377,8 @@ function GuestCabinet() {
     openVenueMenu,
     isVenuePreOrderEnabled,
     getVenueRegistrySotaId,
+    getPreorderSubmissionGate,
+    getPreorderMaxCartItems,
   } = useGuestContext();
 
   const preorderVenues = useMemo(
@@ -394,16 +396,22 @@ function GuestCabinet() {
       {preorderVenues.length > 0 ? (
         <div className="space-y-4">
           <p className="text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Предзаказ до визита</p>
-          {preorderVenues.map((v) => (
-            <GuestCabinetPreOrderPanel
-              key={v.venueId}
-              venueFirestoreId={v.venueId}
-              venueTitle={resolveVenueDisplayName(v.venueId)}
-              registrySotaId={getVenueRegistrySotaId(v.venueId)}
-              customerUid={guestIdentity.currentUid}
-              enabled
-            />
-          ))}
+          {preorderVenues.map((v) => {
+            const gate = getPreorderSubmissionGate(v.venueId);
+            return (
+              <GuestCabinetPreOrderPanel
+                key={v.venueId}
+                venueFirestoreId={v.venueId}
+                venueTitle={resolveVenueDisplayName(v.venueId)}
+                registrySotaId={getVenueRegistrySotaId(v.venueId)}
+                customerUid={guestIdentity.currentUid}
+                enabled
+                maxCartItems={getPreorderMaxCartItems(v.venueId)}
+                submissionAllowed={gate.ok}
+                submissionBlockedReason={gate.reason}
+              />
+            );
+          })}
         </div>
       ) : null}
 
