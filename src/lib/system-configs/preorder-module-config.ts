@@ -22,6 +22,11 @@ export type PreorderVenuePolicy = {
   maxLeadTimeHoursBeforeArrival?: number;
   /** Макс. позиций в корзине для этого VR (перекрывает defaultMaxCartItems). */
   maxCartItems?: number;
+  /**
+   * Автоподтверждение после отправки гостем (без кнопки персонала); по умолчанию false.
+   * Реализация — позже (платёж / остатки).
+   */
+  autoConfirm?: boolean;
 };
 
 export type PreorderModuleConfig = {
@@ -31,6 +36,8 @@ export type PreorderModuleConfig = {
   defaults?: {
     timeZone?: string;
     defaultMaxCartItems?: number;
+    /** Значение по умолчанию для autoConfirm по VR, если в политике VR не задано. */
+    autoConfirm?: boolean;
   };
 };
 
@@ -48,11 +55,13 @@ export const PREORDER_SYSTEM_CONFIG_JSON_EXAMPLE = JSON.stringify(
         minLeadTimeHoursBeforeArrival: 0,
         maxLeadTimeHoursBeforeArrival: 168,
         maxCartItems: 50,
+        autoConfirm: false,
       },
     },
     defaults: {
       timeZone: "Europe/Moscow",
       defaultMaxCartItems: 100,
+      autoConfirm: false,
     },
   },
   null,
@@ -137,6 +146,7 @@ export function parsePreorderModuleConfig(raw: Record<string, unknown> | null | 
             : undefined,
         maxCartItems:
           typeof x.maxCartItems === "number" && Number.isFinite(x.maxCartItems) ? Math.floor(x.maxCartItems) : undefined,
+        autoConfirm: typeof x.autoConfirm === "boolean" ? x.autoConfirm : undefined,
       };
     }
   }
@@ -149,6 +159,7 @@ export function parsePreorderModuleConfig(raw: Record<string, unknown> | null | 
             typeof d.defaultMaxCartItems === "number" && Number.isFinite(d.defaultMaxCartItems)
               ? Math.floor(d.defaultMaxCartItems)
               : undefined,
+          autoConfirm: typeof d.autoConfirm === "boolean" ? d.autoConfirm : undefined,
         }
       : undefined;
   return {

@@ -7,11 +7,13 @@
       "serviceHoursLocal": { "start": "09:00", "end": "23:30" },
       "minLeadTimeHoursBeforeArrival": 0,
       "maxLeadTimeHoursBeforeArrival": 168,
-      "maxCartItems": 50
+      "maxCartItems": 50,
+      "autoConfirm": false
     }
   },
   "defaults": {
     "timeZone": "Europe/Moscow",
-    "defaultMaxCartItems": 100
+    "defaultMaxCartItems": 100,
+    "autoConfirm": false
   }
 }

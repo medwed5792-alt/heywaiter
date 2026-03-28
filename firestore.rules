@@ -64,7 +64,7 @@ service cloud.firestore {
         && request.resource.data.status in ['draft', 'sent']
         && request.resource.data.items is list
         && request.resource.data.items.size() <= 100
-        && !request.resource.data.keys().hasAny(['receivedAt', 'receivedByStaffId']);
+        && !request.resource.data.keys().hasAny(['receivedAt', 'receivedByStaffId', 'confirmedAt', 'confirmedByStaffId']);
     }
 
     function guestPreorderUpdateCore(venueId, cartId) {
@@ -74,24 +74,28 @@ service cloud.firestore {
         && resource.data.authUid == request.auth.uid
         && (
           (resource.data.status == 'draft' && request.resource.data.status in ['draft', 'sent'])
-          || (resource.data.status == 'received' && request.resource.data.status == 'draft')
+          || (
+            resource.data.status in ['confirmed', 'ready', 'completed', 'received']
+            && request.resource.data.status == 'draft'
+          )
         );
     }
 
-    function staffPreorderMarkReceivedOk() {
+    /** Персонал: sent → confirmed (заглушка до платежей / остатков). */
+    function staffPreorderConfirmSentOk() {
       return resource.data.status == 'sent'
-        && request.resource.data.status == 'received'
+        && request.resource.data.status == 'confirmed'
         && request.resource.data.customerUid == resource.data.customerUid
         && request.resource.data.authUid == resource.data.authUid
         && request.resource.data.venueId == resource.data.venueId
         && request.resource.data.items == resource.data.items
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'receivedAt', 'receivedByStaffId', 'updatedAt', 'updatedAtMs']);
+             .hasOnly(['status', 'confirmedAt', 'confirmedByStaffId', 'updatedAt', 'updatedAtMs']);
     }
 
     function preorderCartCanUpdate(venueId, cartId) {
       return (request.auth != null && guestPreorderUpdateCore(venueId, cartId))
-        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderMarkReceivedOk());
+        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderConfirmSentOk());
     }
 
     match /preorder_staff_gate/{uid} {

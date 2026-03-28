@@ -34,8 +34,12 @@ function statusLabel(s: PreOrderCartStatus): string {
   switch (s) {
     case "sent":
       return "Отправлен в заведение";
-    case "received":
-      return "Принят персоналом";
+    case "confirmed":
+      return "Подтверждён заведением";
+    case "ready":
+      return "Готов к выдаче";
+    case "completed":
+      return "Выполнен";
     case "cancelled":
       return "Отменён";
     default:
@@ -76,6 +80,9 @@ export function GuestCabinetPreOrderPanel({
   }, [venueFirestoreId, customerUid]);
 
   const canEdit = status === "draft";
+  /** После отправки / подтверждения гость может начать новый цикл (сброс в draft по правилам Firestore). */
+  const canStartNewPreorder =
+    status === "confirmed" || status === "ready" || status === "completed" || status === "cancelled";
   const vrHint = registrySotaId ? ` · ${registrySotaId}` : "";
 
   useEffect(() => {
@@ -232,6 +239,8 @@ export function GuestCabinetPreOrderPanel({
           sentAt: null,
           receivedAt: null,
           receivedByStaffId: null,
+          confirmedAt: null,
+          confirmedByStaffId: null,
         },
         { merge: true }
       );
@@ -263,6 +272,12 @@ export function GuestCabinetPreOrderPanel({
         <p className="mt-3 text-xs text-amber-800">Войдите через Telegram или откройте приложение как гость — нужен UID для синхронизации.</p>
       ) : !firebaseAuthUid ? (
         <p className="mt-3 text-xs text-amber-800">Подключение к Firebase… корзина сохраняется только на устройстве, пока не готова анонимная сессия.</p>
+      ) : null}
+
+      {status === "confirmed" ? (
+        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-100/70 px-3 py-2 text-sm font-medium text-emerald-950">
+          Заказ подтвержден заведением
+        </p>
       ) : null}
 
       {canEdit && customerUid?.trim() && firebaseAuthUid && !submissionAllowed && submissionBlockedReason ? (
@@ -371,7 +386,7 @@ export function GuestCabinetPreOrderPanel({
             {sending ? "Отправка…" : "Отправить в заведение"}
           </button>
         ) : null}
-        {status === "received" ? (
+        {canStartNewPreorder ? (
           <button
             type="button"
             onClick={() => void startNewPreorder()}

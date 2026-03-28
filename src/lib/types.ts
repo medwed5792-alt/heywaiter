@@ -3,6 +3,12 @@
  * ID мессенджера = паспорт/идентификация в системе.
  */
 
+/**
+ * Жизненный цикл предзаказа (модуль Предзаказ).
+ * Заглушки под платёжный шлюз / остатки — переходы ready/completed расширятся позже.
+ */
+export type PreOrderStatus = "draft" | "sent" | "confirmed" | "ready" | "completed";
+
 /** 8 каналов (Dual-Bot: Client + Staff). Платформы: TG, WA, VK, Viber, WeChat, Insta, FB, Line */
 export type MessengerChannel =
   | "telegram"
@@ -140,6 +146,8 @@ export interface VenueSettings {
 export interface VenueModuleConfig {
   preOrder?: {
     enabled?: boolean;
+    /** Автоподтверждение предзаказа без участия персонала (платёжный шлюз / ЦУП); по умолчанию false. */
+    autoConfirm?: boolean;
   };
 }
 

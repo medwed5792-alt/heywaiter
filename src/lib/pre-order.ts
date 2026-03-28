@@ -4,6 +4,7 @@
  */
 
 import { normalizeSotaId } from "@/lib/sota-id";
+import type { PreOrderStatus } from "@/lib/types";
 import type { PreorderModuleConfig } from "@/lib/system-configs/preorder-module-config";
 import {
   isNowWithinServiceWindow,
@@ -18,7 +19,8 @@ export type PreOrderGlobalConfigSlice = {
 
 export const PREORDER_CARTS_SUBCOLLECTION = "preorder_carts";
 
-export type PreOrderCartStatus = "draft" | "sent" | "received" | "cancelled";
+/** Статус документа корзины: канонические PreOrderStatus + отмена. Legacy `received` в Firestore → `completed`. */
+export type PreOrderCartStatus = PreOrderStatus | "cancelled";
 
 export type PreOrderLineItem = {
   id: string;
@@ -183,13 +185,26 @@ export function savePreorderDraftToLocal(venueFirestoreId: string, items: PreOrd
   }
 }
 
+function normalizePreorderCartStatus(raw: string): PreOrderCartStatus {
+  const s = raw.trim();
+  if (s === "received") return "completed";
+  if (
+    s === "draft" ||
+    s === "sent" ||
+    s === "confirmed" ||
+    s === "ready" ||
+    s === "completed" ||
+    s === "cancelled"
+  ) {
+    return s;
+  }
+  return "draft";
+}
+
 export function parsePreorderCartDoc(data: Record<string, unknown> | null | undefined): PreOrderCartPayload | null {
   if (!data) return null;
   const statusRaw = typeof data.status === "string" ? data.status.trim() : "draft";
-  const status =
-    statusRaw === "sent" || statusRaw === "received" || statusRaw === "cancelled" || statusRaw === "draft"
-      ? (statusRaw as PreOrderCartStatus)
-      : "draft";
+  const status = normalizePreorderCartStatus(statusRaw);
   const itemsRaw = Array.isArray(data.items) ? data.items : [];
   const items: PreOrderLineItem[] = [];
   for (const row of itemsRaw) {

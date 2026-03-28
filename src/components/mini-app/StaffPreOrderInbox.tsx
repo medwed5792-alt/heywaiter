@@ -50,21 +50,22 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
     return () => unsub();
   }, [venueId]);
 
-  const acknowledge = async (cartDocId: string) => {
+  const confirmOrder = async (cartDocId: string) => {
     const v = venueId.trim();
     if (!v) return;
     setBusy(cartDocId);
     try {
+      console.log("Stub: Order confirmed");
       const ref = doc(db, "venues", v, PREORDER_CARTS_SUBCOLLECTION, cartDocId);
       await updateDoc(ref, {
-        status: "received",
-        receivedAt: serverTimestamp(),
-        receivedByStaffId: staffId?.trim() || null,
+        status: "confirmed",
+        confirmedAt: serverTimestamp(),
+        confirmedByStaffId: staffId?.trim() || null,
         updatedAt: serverTimestamp(),
         updatedAtMs: Date.now(),
       });
     } catch (e) {
-      console.warn("[StaffPreOrderInbox] acknowledge failed", e);
+      console.warn("[StaffPreOrderInbox] confirm failed", e);
     } finally {
       setBusy(null);
     }
@@ -97,11 +98,11 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
                     </div>
                     <button
                       type="button"
-                      onClick={() => void acknowledge(r.id)}
+                      onClick={() => void confirmOrder(r.id)}
                       disabled={busy === r.id}
                       className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
-                      {busy === r.id ? "…" : "Принято"}
+                      {busy === r.id ? "…" : "Подтвердить"}
                     </button>
                   </div>
                   <ul className="mt-2 space-y-1 text-sm text-slate-700">
