@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "status_confirmed": "Ваш заказ №{id} подтвержден!",
+  "status_ready": "Заказ №{id} готов, ждем вас!"
+}
