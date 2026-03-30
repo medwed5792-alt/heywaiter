@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { getIdToken, onAuthStateChanged } from "firebase/auth";
+import { deleteField, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import toast from "react-hot-toast";
 import { auth, db } from "@/lib/firebase";
+import { PREORDER_GUEST_CANCEL_REASON } from "@/lib/preorder-cancel-presets";
 import {
   PREORDER_CARTS_SUBCOLLECTION,
   type PreOrderCartStatus,
@@ -66,6 +67,9 @@ export function GuestCabinetPreOrderPanel({
   const [newPrice, setNewPrice] = useState("");
   const [newQty, setNewQty] = useState("1");
   const [firebaseAuthUid, setFirebaseAuthUid] = useState<string | null>(() => auth.currentUser?.uid ?? null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReasonShown, setCancelReasonShown] = useState<string | null>(null);
+  const [cancelledByShown, setCancelledByShown] = useState<"guest" | "staff" | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setFirebaseAuthUid(u?.uid ?? null));
@@ -93,6 +97,8 @@ export function GuestCabinetPreOrderPanel({
       if (parsed) {
         setStatus(parsed.status);
         setItems(parsed.items);
+        setCancelReasonShown(parsed.cancelReason ?? null);
+        setCancelledByShown(parsed.cancelledBy ?? null);
         setHydrated(true);
         if (parsed.status === "draft") savePreorderDraftToLocal(venueFirestoreId, parsed.items);
         return;
@@ -100,6 +106,8 @@ export function GuestCabinetPreOrderPanel({
       const local = loadPreorderDraftFromLocal(venueFirestoreId);
       setItems(local);
       setStatus("draft");
+      setCancelReasonShown(null);
+      setCancelledByShown(null);
       setHydrated(true);
     });
     return () => unsub();
@@ -180,6 +188,57 @@ export function GuestCabinetPreOrderPanel({
     setItems((prev) => prev.filter((l) => l.id !== id));
   };
 
+  const cancelGuestOrder = async () => {
+    if (!cartRef || !customerUid?.trim() || !firebaseAuthUid) {
+      toast.error("Нет идентификатора гостя или сессии Firebase");
+      return;
+    }
+    setCancelling(true);
+    try {
+      await updateDoc(cartRef, {
+        status: "cancelled",
+        cancelReason: PREORDER_GUEST_CANCEL_REASON,
+        cancelledBy: "guest",
+        cancelledAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updatedAtMs: Date.now(),
+      });
+      setStatus("cancelled");
+
+      const user = auth.currentUser;
+      if (!user) {
+        toast.error("Нет сессии для уведомления персонала");
+        return;
+      }
+      const token = await getIdToken(user);
+      const res = await fetch("/api/guest/preorder-guest-cancel-notify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          venueId: venueFirestoreId.trim(),
+          cartDocId: customerUid.trim(),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; skipped?: string };
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Не удалось уведомить персонал");
+        return;
+      }
+      if (data.skipped === "notifications_disabled") {
+        toast.success("Заказ отменён");
+      } else {
+        toast.success("Заказ отменён, персонал уведомлён");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось отменить заказ");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const sendToVenue = async () => {
     if (!cartRef || !customerUid?.trim() || !firebaseAuthUid) {
       toast.error("Нет идентификатора гостя или сессии Firebase для отправки");
@@ -241,6 +300,10 @@ export function GuestCabinetPreOrderPanel({
           receivedByStaffId: null,
           confirmedAt: null,
           confirmedByStaffId: null,
+          cancelReason: deleteField(),
+          cancelledBy: deleteField(),
+          cancelledAt: deleteField(),
+          cancelledByStaffId: deleteField(),
         },
         { merge: true }
       );
@@ -277,6 +340,14 @@ export function GuestCabinetPreOrderPanel({
       {status === "confirmed" ? (
         <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-100/70 px-3 py-2 text-sm font-medium text-emerald-950">
           Заказ подтвержден заведением
+        </p>
+      ) : null}
+
+      {status === "cancelled" && cancelReasonShown ? (
+        <p className="mt-3 rounded-xl border border-slate-200 bg-slate-100/80 px-3 py-2 text-xs text-slate-800">
+          {cancelledByShown === "staff" ? "Отмена заведения" : "Отменено вами"}
+          {": "}
+          <span className="font-medium">{cancelReasonShown}</span>
         </p>
       ) : null}
 
@@ -384,6 +455,16 @@ export function GuestCabinetPreOrderPanel({
             className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             {sending ? "Отправка…" : "Отправить в заведение"}
+          </button>
+        ) : null}
+        {status === "sent" ? (
+          <button
+            type="button"
+            onClick={() => void cancelGuestOrder()}
+            disabled={cancelling || !customerUid?.trim() || !firebaseAuthUid}
+            className="flex-1 rounded-xl border border-red-200 bg-white py-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            {cancelling ? "Отмена…" : "Отменить заказ"}
           </button>
         ) : null}
         {canStartNewPreorder ? (

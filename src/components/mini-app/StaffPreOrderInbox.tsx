@@ -10,6 +10,10 @@ import {
   parsePreorderCartDoc,
   type PreOrderLineItem,
 } from "@/lib/pre-order";
+import {
+  PREORDER_STAFF_CANCEL_PRESETS,
+  type PreorderStaffCancelPreset,
+} from "@/lib/preorder-cancel-presets";
 
 type Row = {
   id: string;
@@ -21,6 +25,7 @@ type Row = {
 export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staffId: string | null }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [rejectOpenFor, setRejectOpenFor] = useState<string | null>(null);
 
   useEffect(() => {
     const v = venueId.trim();
@@ -50,6 +55,61 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
     );
     return () => unsub();
   }, [venueId]);
+
+  const rejectOrder = async (row: Row, reason: PreorderStaffCancelPreset) => {
+    const v = venueId.trim();
+    const cartDocId = row.id;
+    if (!v) return;
+    setBusy(cartDocId);
+    setRejectOpenFor(null);
+    try {
+      const ref = doc(db, "venues", v, PREORDER_CARTS_SUBCOLLECTION, cartDocId);
+      await updateDoc(ref, {
+        status: "cancelled",
+        cancelReason: reason,
+        cancelledBy: "staff",
+        cancelledAt: serverTimestamp(),
+        cancelledByStaffId: staffId?.trim() || null,
+        updatedAt: serverTimestamp(),
+        updatedAtMs: Date.now(),
+      });
+
+      const user = auth.currentUser;
+      if (user) {
+        try {
+          const token = await getIdToken(user);
+          const orderDisplayId = cartDocId.length > 8 ? cartDocId.slice(-8) : cartDocId;
+          const res = await fetch("/api/staff/preorder-notify", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              venueId: v,
+              cartDocId,
+              customerUid: row.customerUid,
+              event: "status_cancelled_by_staff",
+              orderDisplayId,
+              cancelReason: reason,
+            }),
+          });
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            console.warn("[StaffPreOrderInbox] preorder-notify (cancel) failed", res.status, errBody);
+          }
+        } catch (e) {
+          console.warn("[StaffPreOrderInbox] preorder-notify (cancel) error", e);
+        }
+      } else {
+        console.warn("[StaffPreOrderInbox] нет Firebase Auth — уведомление гостю не отправлено");
+      }
+    } catch (e) {
+      console.warn("[StaffPreOrderInbox] reject failed", e);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const confirmOrder = async (row: Row) => {
     const v = venueId.trim();
@@ -128,15 +188,43 @@ export function StaffPreOrderInbox({ venueId, staffId }: { venueId: string; staf
                         <p className="mt-1 text-[11px] font-mono text-slate-500">VR: {r.venueSotaId}</p>
                       ) : null}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void confirmOrder(r)}
-                      disabled={busy === r.id}
-                      className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      {busy === r.id ? "…" : "Подтвердить"}
-                    </button>
+                    <div className="flex shrink-0 flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void confirmOrder(r)}
+                        disabled={busy === r.id}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {busy === r.id ? "…" : "Подтвердить"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRejectOpenFor((cur) => (cur === r.id ? null : r.id))}
+                        disabled={busy === r.id}
+                        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        Отклонить
+                      </button>
+                    </div>
                   </div>
+                  {rejectOpenFor === r.id ? (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2">
+                      <p className="text-[11px] font-semibold text-amber-950">Причина отклонения</p>
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        {PREORDER_STAFF_CANCEL_PRESETS.map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            disabled={busy === r.id}
+                            onClick={() => void rejectOrder(r, preset)}
+                            className="rounded-md border border-amber-200 bg-white px-2 py-1.5 text-left text-[11px] font-medium text-slate-800 hover:bg-amber-100/50 disabled:opacity-50"
+                          >
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <ul className="mt-2 space-y-1 text-sm text-slate-700">
                     {r.items.map((l) => (
                       <li key={l.id} className="flex justify-between gap-2">

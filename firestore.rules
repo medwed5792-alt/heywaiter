@@ -75,10 +75,43 @@ service cloud.firestore {
         && (
           (resource.data.status == 'draft' && request.resource.data.status in ['draft', 'sent'])
           || (
-            resource.data.status in ['confirmed', 'ready', 'completed', 'received']
+            resource.data.status in ['confirmed', 'ready', 'completed', 'received', 'cancelled']
             && request.resource.data.status == 'draft'
           )
         );
+    }
+
+    /** Гость: отмена только из sent (до подтверждения персоналом). */
+    function guestPreorderCancelFromSentOk(venueId, cartId) {
+      return request.resource.data.customerUid == cartId
+        && request.resource.data.authUid == request.auth.uid
+        && request.resource.data.venueId == venueId
+        && resource.data.authUid == request.auth.uid
+        && resource.data.status == 'sent'
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.cancelReason is string
+        && request.resource.data.cancelReason.size() > 0
+        && request.resource.data.cancelReason.size() <= 500
+        && request.resource.data.cancelledBy == 'guest'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'cancelReason', 'cancelledBy', 'cancelledAt', 'updatedAt', 'updatedAtMs']);
+    }
+
+    /** Персонал: отмена из любого «активного» статуса (не оконченного цикла). */
+    function staffPreorderCancelActiveOk() {
+      return resource.data.status in ['sent', 'confirmed', 'ready', 'completed', 'received']
+        && request.resource.data.status == 'cancelled'
+        && request.resource.data.customerUid == resource.data.customerUid
+        && request.resource.data.authUid == resource.data.authUid
+        && request.resource.data.venueId == resource.data.venueId
+        && request.resource.data.items == resource.data.items
+        && request.resource.data.cancelReason is string
+        && request.resource.data.cancelReason.size() > 0
+        && request.resource.data.cancelReason.size() <= 500
+        && request.resource.data.cancelledBy == 'staff'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'cancelReason', 'cancelledBy', 'cancelledAt', 'cancelledByStaffId', 'updatedAt', 'updatedAtMs']);
     }
 
     /** Персонал: sent → confirmed (заглушка до платежей / остатков). */
@@ -95,7 +128,9 @@ service cloud.firestore {
 
     function preorderCartCanUpdate(venueId, cartId) {
       return (request.auth != null && guestPreorderUpdateCore(venueId, cartId))
-        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderConfirmSentOk());
+        || (request.auth != null && guestPreorderCancelFromSentOk(venueId, cartId))
+        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderConfirmSentOk())
+        || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderCancelActiveOk());
     }
 
     match /preorder_staff_gate/{uid} {

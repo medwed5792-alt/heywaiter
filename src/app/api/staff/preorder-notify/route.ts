@@ -3,8 +3,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyPreorderStaffForVenue } from "@/lib/staff/verify-preorder-staff-gate";
-import { dispatchPreorderStatusNotification } from "@/lib/notifications/preorder-notification-trigger";
-import type { PreorderNotificationTemplateKey } from "@/lib/system-configs/notifications-config";
+import {
+  dispatchPreorderStatusNotification,
+  type PreorderGuestOutboundTemplateKey,
+} from "@/lib/notifications/preorder-notification-trigger";
+import { isPreorderStaffCancelPreset } from "@/lib/preorder-cancel-presets";
 
 type Body = {
   venueId?: string;
@@ -12,12 +15,14 @@ type Body = {
   customerUid?: string;
   event?: string;
   orderDisplayId?: string;
+  cancelReason?: string;
 };
 
-const ALLOWED_EVENTS: PreorderNotificationTemplateKey[] = [
+const ALLOWED_EVENTS: PreorderGuestOutboundTemplateKey[] = [
   "status_confirmed",
   "status_ready",
   "status_completed",
+  "status_cancelled_by_staff",
 ];
 
 /**
@@ -45,11 +50,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "venueId, cartDocId и customerUid обязательны" }, { status: 400 });
     }
 
-    if (!ALLOWED_EVENTS.includes(event as PreorderNotificationTemplateKey)) {
+    if (!ALLOWED_EVENTS.includes(event as PreorderGuestOutboundTemplateKey)) {
       return NextResponse.json(
         { error: `event должен быть одним из: ${ALLOWED_EVENTS.join(", ")}` },
         { status: 400 }
       );
+    }
+
+    if (event === "status_cancelled_by_staff") {
+      const cr = body.cancelReason?.trim() ?? "";
+      if (!isPreorderStaffCancelPreset(cr)) {
+        return NextResponse.json(
+          { error: "cancelReason должна быть одной из пресетов персонала" },
+          { status: 400 }
+        );
+      }
     }
 
     const adminAuth = getAdminAuth();
@@ -67,8 +82,9 @@ export async function POST(request: NextRequest) {
       venueId,
       cartDocId,
       customerUid,
-      templateKey: event as PreorderNotificationTemplateKey,
+      templateKey: event as PreorderGuestOutboundTemplateKey,
       orderDisplayId,
+      cancelReason: event === "status_cancelled_by_staff" ? body.cancelReason?.trim() : undefined,
     });
 
     return NextResponse.json({ ok: true });

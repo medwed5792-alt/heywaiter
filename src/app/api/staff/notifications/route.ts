@@ -144,7 +144,12 @@ export async function GET(request: NextRequest) {
       const data = d.data();
       const type = data.type as string | undefined;
       const targetUids = Array.isArray(data.targetUids) ? data.targetUids : [];
-      if (type !== "split_bill_request" && type !== "full_bill_request") return;
+      if (
+        type !== "split_bill_request" &&
+        type !== "full_bill_request" &&
+        type !== "preorder_guest_cancelled"
+      )
+        return;
       if (targetUids.length > 0 && !targetUids.includes(staffId)) return;
       if (listWithMeta.some((x) => x.id === d.id)) return;
       const createdAtMs = toMs(data.createdAt) ?? 0;

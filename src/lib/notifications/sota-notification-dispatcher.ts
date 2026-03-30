@@ -14,7 +14,7 @@ const FALLBACK_NOTIFICATION_TEXT_RU =
   "Обновление по вашему заказу. Откройте приложение заведения, чтобы увидеть детали.";
 
 export type SendSotaNotificationMeta = {
-  /** Для лога: status_confirmed, status_ready, … */
+  /** Для лога: status_confirmed, status_ready, status_cancelled_by_staff, … */
   statusKey?: string;
 };
 
@@ -64,29 +64,44 @@ export async function sendSotaNotification(
 ): Promise<void> {
   const { channel, rest } = parseSotaGuestChannel(customerId);
   const statusLabel = meta?.statusKey?.trim() || "notify";
+  const isCancelledPreorder = statusLabel === "status_cancelled_by_staff";
   const platform = platformLabelForLog(channel);
   const idForLog = (rest || customerId.trim() || "—").slice(0, 256);
 
   const body = (message ?? "").trim() || FALLBACK_NOTIFICATION_TEXT_RU;
 
-  console.log(`Sending [${statusLabel}] to [${platform}] for ID [${idForLog}]`);
+  console.log(
+    `Sending [${statusLabel}]${isCancelledPreorder ? " [preorder_cancel]" : ""} to [${platform}] for ID [${idForLog}]`
+  );
 
   try {
     switch (channel) {
       case "tg": {
         const chatId = rest;
         // Заглушка: дальше — sendMessage(clientBotToken, { chat_id, text: body })
-        console.log("[SOTA notify][tg] stub sendMessage", { chatId, message: body });
+        console.log("[SOTA notify][tg] stub sendMessage", {
+          chatId,
+          message: body,
+          preorderCancelled: isCancelledPreorder,
+        });
         break;
       }
       case "wa": {
         // TODO: Integration — WhatsApp Cloud API / Business
-        console.log("[SOTA notify][wa] TODO: Integration", { externalId: rest, message: body });
+        console.log("[SOTA notify][wa] TODO: Integration", {
+          externalId: rest,
+          message: body,
+          preorderCancelled: isCancelledPreorder,
+        });
         break;
       }
       case "vk": {
         // TODO: Integration — VK Messages API
-        console.log("[SOTA notify][vk] TODO: Integration", { externalId: rest, message: body });
+        console.log("[SOTA notify][vk] TODO: Integration", {
+          externalId: rest,
+          message: body,
+          preorderCancelled: isCancelledPreorder,
+        });
         break;
       }
       case "anon": {
@@ -104,6 +119,7 @@ export async function sendSotaNotification(
               lastNotification: {
                 text: body,
                 at: FieldValue.serverTimestamp(),
+                ...(isCancelledPreorder ? { kind: "preorder_cancelled" as const } : {}),
               },
               updatedAt: FieldValue.serverTimestamp(),
               updatedAtMs: Date.now(),

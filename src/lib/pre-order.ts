@@ -19,8 +19,8 @@ export type PreOrderGlobalConfigSlice = {
 
 export const PREORDER_CARTS_SUBCOLLECTION = "preorder_carts";
 
-/** Статус документа корзины: канонические PreOrderStatus + отмена. Legacy `received` в Firestore → `completed`. */
-export type PreOrderCartStatus = PreOrderStatus | "cancelled";
+/** Статус документа корзины. Legacy `received` в Firestore → `completed`. */
+export type PreOrderCartStatus = PreOrderStatus;
 
 export type PreOrderLineItem = {
   id: string;
@@ -34,6 +34,8 @@ export type PreOrderCartPayload = {
   items: PreOrderLineItem[];
   status: PreOrderCartStatus;
   updatedAtMs: number;
+  cancelReason?: string;
+  cancelledBy?: "guest" | "staff";
 };
 
 const LS_PREFIX = "heywaiter_preorder_v1:";
@@ -224,5 +226,15 @@ export function parsePreorderCartDoc(data: Record<string, unknown> | null | unde
       : typeof data.updatedAtMs === "number"
         ? data.updatedAtMs
         : 0;
-  return { items, status, updatedAtMs: updatedAt };
+  const cancelReasonRaw = typeof data.cancelReason === "string" ? data.cancelReason.trim() : "";
+  const cancelledByRaw = typeof data.cancelledBy === "string" ? data.cancelledBy.trim() : "";
+  const cancelledBy =
+    cancelledByRaw === "guest" || cancelledByRaw === "staff" ? (cancelledByRaw as "guest" | "staff") : undefined;
+  return {
+    items,
+    status,
+    updatedAtMs: updatedAt,
+    ...(cancelReasonRaw ? { cancelReason: cancelReasonRaw } : {}),
+    ...(cancelledBy ? { cancelledBy } : {}),
+  };
 }

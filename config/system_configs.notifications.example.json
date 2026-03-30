@@ -2,7 +2,9 @@
   "templates": {
     "status_confirmed": "Ваш заказ №{id} подтвержден и передан на кухню!",
     "status_ready": "Заказ №{id} готов! Можете забирать.",
-    "status_completed": "Спасибо за визит! Ждем вас снова."
+    "status_completed": "Спасибо за визит! Ждем вас снова.",
+    "status_cancelled_by_staff": "Заказ №{id} отменён заведением. Причина: {reason}",
+    "preorder_guest_cancelled_staff": "Заказ №{id} отменен гостем"
   },
   "global_enabled": true
 }

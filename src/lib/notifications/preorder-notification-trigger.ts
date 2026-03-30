@@ -8,14 +8,22 @@ import {
 } from "@/lib/system-configs/notifications-config";
 import { sendSotaNotification, type PreorderCartNotificationContext } from "@/lib/notifications/sota-notification-dispatcher";
 
+/** Шаблоны, которые уходят гостю через sendSotaNotification (не алерт персоналу). */
+export type PreorderGuestOutboundTemplateKey = Exclude<
+  PreorderNotificationTemplateKey,
+  "preorder_guest_cancelled_staff"
+>;
+
 export type DispatchPreorderNotificationArgs = {
   firestore: Firestore;
   venueId: string;
   cartDocId: string;
   customerUid: string;
-  templateKey: PreorderNotificationTemplateKey;
+  templateKey: PreorderGuestOutboundTemplateKey;
   /** Подстановка {id} в шаблон из ЦУП */
   orderDisplayId: string;
+  /** Для status_cancelled_by_staff — подстановка {reason} */
+  cancelReason?: string;
 };
 
 /**
@@ -41,7 +49,12 @@ export async function dispatchPreorderStatusNotification(args: DispatchPreorderN
   }
 
   const orderId = args.orderDisplayId.trim() || args.cartDocId;
-  const message = resolvePreorderNotificationText(cfg, args.templateKey, orderId);
+  const message =
+    args.templateKey === "status_cancelled_by_staff"
+      ? resolvePreorderNotificationText(cfg, args.templateKey, orderId, {
+          cancelReason: args.cancelReason,
+        })
+      : resolvePreorderNotificationText(cfg, args.templateKey, orderId);
 
   const cartContext: PreorderCartNotificationContext = {
     venueId: args.venueId,

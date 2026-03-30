@@ -7,7 +7,7 @@
  * Жизненный цикл предзаказа (модуль Предзаказ).
  * Заглушки под платёжный шлюз / остатки — переходы ready/completed расширятся позже.
  */
-export type PreOrderStatus = "draft" | "sent" | "confirmed" | "ready" | "completed";
+export type PreOrderStatus = "draft" | "sent" | "confirmed" | "ready" | "completed" | "cancelled";
 
 /** 8 каналов (Dual-Bot: Client + Staff). Платформы: TG, WA, VK, Viber, WeChat, Insta, FB, Line */
 export type MessengerChannel =
