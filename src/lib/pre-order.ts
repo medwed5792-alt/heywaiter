@@ -132,13 +132,20 @@ export function resolvePreorderMaxCartItems(
 export function resolvePreorderSubmissionGate(args: {
   registrySotaId: string | null;
   preorderModule: PreorderModuleConfig | null | undefined;
+  /** Часовой пояс заведения (venues.timezone); перекрывает TZ из ЦУП для окна приёма. */
+  venueTimeZone?: string | null;
   now?: Date;
 }): { ok: true } | { ok: false; reason: string } {
   const now = args.now ?? new Date();
   const policy = pickPreorderVenuePolicy(args.registrySotaId, args.preorderModule ?? {});
   if (!policy?.serviceHoursLocal) return { ok: true };
-  const tz =
-    (policy.timeZone?.trim() || args.preorderModule?.defaults?.timeZone?.trim() || "Europe/Moscow").trim();
+  const venueTz = args.venueTimeZone?.trim();
+  const tz = (
+    venueTz ||
+    policy.timeZone?.trim() ||
+    args.preorderModule?.defaults?.timeZone?.trim() ||
+    "Europe/Moscow"
+  ).trim();
   const { start, end } = policy.serviceHoursLocal;
   if (!isNowWithinServiceWindow(now, tz, start, end)) {
     return {

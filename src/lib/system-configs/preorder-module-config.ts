@@ -4,6 +4,8 @@
  * Дополняет legacy-ключи в system_settings/global (preOrderBySotaVenueId и т.д.).
  */
 
+import { wallClockMinutesSinceMidnight } from "@/lib/iana-wall-clock";
+
 export type PreorderVenuePolicy = {
   /** Включить предзаказ для этого VR (SOTA-ID заведения, 8 символов, нормализуется). */
   enabled?: boolean;
@@ -78,29 +80,6 @@ function parseHM(raw: string): [number, number] | null {
   return [h, min];
 }
 
-function localHourMinute(now: Date, timeZone: string): { h: number; m: number } {
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(now);
-  let h = 0;
-  let m = 0;
-  for (const p of parts) {
-    if (p.type === "hour") h = Number(p.value);
-    if (p.type === "minute") m = Number(p.value);
-  }
-  return { h, m };
-}
-
-/** Текущее локальное время в зоне — минуты от полуночи. */
-function localMinutesFromMidnight(now: Date, timeZone: string): number {
-  const { h, m } = localHourMinute(now, timeZone);
-  return h * 60 + m;
-}
-
 /**
  * Окно [start,end] в минутах от полуночи; если start > end — интервал через полночь.
  */
@@ -113,7 +92,7 @@ export function isNowWithinServiceWindow(
   const start = parseHM(startHM);
   const end = parseHM(endHM);
   if (!start || !end) return true;
-  const cur = localMinutesFromMidnight(now, timeZone);
+  const cur = wallClockMinutesSinceMidnight(now, timeZone);
   const a = start[0] * 60 + start[1];
   const b = end[0] * 60 + end[1];
   if (a <= b) return cur >= a && cur <= b;

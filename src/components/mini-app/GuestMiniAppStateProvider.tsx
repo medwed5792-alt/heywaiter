@@ -10,6 +10,7 @@ import {
   resolvePreorderMaxCartItems,
   resolvePreorderSubmissionGate,
 } from "@/lib/pre-order";
+import { readVenueTimezone } from "@/lib/venue-timezone";
 import {
   parsePreorderModuleConfig,
   PREORDER_SYSTEM_CONFIG_DOC_ID,
@@ -205,6 +206,8 @@ type GuestMiniAppContextValue = {
   preorderModuleConfig: PreorderModuleConfig;
   getPreorderSubmissionGate: (venueFirestoreId: string) => { ok: boolean; reason: string | null };
   getPreorderMaxCartItems: (venueFirestoreId: string) => number;
+  /** IANA TZ заведения для расписания меню и предзаказа. */
+  getVenueTimeZone: (venueFirestoreId: string) => string;
   /** Каталог предзаказа из venues/{id}/configs/menu (только isActive === true). */
   getVenueMenuCatalog: (venueFirestoreId: string) => VenueMenuVenueBlock | null;
   /** Ссылка на PDF/внешнее меню из venues.config (независимо от каталога). */
@@ -845,10 +848,21 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [venueDocById]
   );
 
+  const getVenueTimeZone = useCallback(
+    (venueFirestoreId: string) => readVenueTimezone(venueDocById[venueFirestoreId.trim()]),
+    [venueDocById]
+  );
+
   const getPreorderSubmissionGate = useCallback(
     (venueFirestoreId: string) => {
-      const vr = readVenueSotaId(venueDocById[venueFirestoreId.trim()]);
-      const r = resolvePreorderSubmissionGate({ registrySotaId: vr, preorderModule: preorderModuleConfig });
+      const id = venueFirestoreId.trim();
+      const vr = readVenueSotaId(venueDocById[id]);
+      const vtz = readVenueTimezone(venueDocById[id]);
+      const r = resolvePreorderSubmissionGate({
+        registrySotaId: vr,
+        preorderModule: preorderModuleConfig,
+        venueTimeZone: vtz,
+      });
       return r.ok ? { ok: true as const, reason: null } : { ok: false as const, reason: r.reason };
     },
     [venueDocById, preorderModuleConfig]
@@ -1123,6 +1137,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       preorderModuleConfig,
       getPreorderSubmissionGate,
       getPreorderMaxCartItems,
+      getVenueTimeZone,
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
     }),
@@ -1152,6 +1167,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       preorderModuleConfig,
       getPreorderSubmissionGate,
       getPreorderMaxCartItems,
+      getVenueTimeZone,
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
     ]

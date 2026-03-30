@@ -3,6 +3,8 @@
  * Каталог блюд для Mini App (ЦУП): VR-ID → категории и позиции (SOTA standard).
  */
 
+import { wallClockMinutesSinceMidnight } from "@/lib/iana-wall-clock";
+
 export type VenueMenuCategory = {
   id: string;
   name: string;
@@ -79,9 +81,12 @@ function parseHHMM(s: unknown): number | null {
   return h * 60 + min;
 }
 
-/** Проверка интервала "availableFrom / availableTo" (учёт перехода через полночь). */
+/** Проверка интервала "availableFrom / availableTo" в часах заведения (IANA), учёт перехода через полночь. */
 export function isNowInMenuGroupInterval(args: {
+  /** UTC-инстант «сейчас» (обычно `new Date()`). */
   now: Date;
+  /** IANA, например Europe/Moscow. */
+  timeZone: string;
   availableFrom?: string | null;
   availableTo?: string | null;
 }): boolean {
@@ -89,7 +94,8 @@ export function isNowInMenuGroupInterval(args: {
   const toM = parseHHMM(args.availableTo);
   if (fromM == null && toM == null) return true;
   if (fromM == null || toM == null) return true;
-  const cur = args.now.getHours() * 60 + args.now.getMinutes();
+  const tz = args.timeZone.trim() || "Europe/Moscow";
+  const cur = wallClockMinutesSinceMidnight(args.now, tz);
   if (fromM <= toM) return cur >= fromM && cur <= toM;
   return cur >= fromM || cur <= toM;
 }

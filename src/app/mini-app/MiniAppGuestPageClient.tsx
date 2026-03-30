@@ -379,6 +379,7 @@ function GuestCabinet() {
     getVenueRegistrySotaId,
     getPreorderSubmissionGate,
     getPreorderMaxCartItems,
+    getVenueTimeZone,
     getVenueMenuCatalog,
     getVenueMenuPdfUrl,
   } = useGuestContext();
@@ -406,6 +407,7 @@ function GuestCabinet() {
                 venueFirestoreId={v.venueId}
                 venueTitle={resolveVenueDisplayName(v.venueId)}
                 registrySotaId={getVenueRegistrySotaId(v.venueId)}
+                venueTimeZone={getVenueTimeZone(v.venueId)}
                 customerUid={guestIdentity.currentUid}
                 enabled
                 maxCartItems={getPreorderMaxCartItems(v.venueId)}

@@ -30,6 +30,8 @@ type Props = {
   venueFirestoreId: string;
   venueTitle: string;
   registrySotaId: string | null;
+  /** IANA, часы заведения для расписания групп меню. */
+  venueTimeZone: string;
   customerUid: string | null;
   enabled: boolean;
   maxCartItems: number;
@@ -62,6 +64,7 @@ export function GuestCabinetPreOrderPanel({
   venueFirestoreId,
   venueTitle,
   registrySotaId,
+  venueTimeZone,
   customerUid,
   enabled,
   maxCartItems,
@@ -103,8 +106,18 @@ export function GuestCabinetPreOrderPanel({
     const cats = menuCatalog?.categories ?? [];
     if (!cats.length) return [];
     const now = new Date(nowMs);
-    return cats.filter((c) => c.isActive === true && isNowInMenuGroupInterval({ now, availableFrom: c.availableFrom, availableTo: c.availableTo }));
-  }, [menuCatalog, nowMs]);
+    const tz = venueTimeZone.trim() || "Europe/Moscow";
+    return cats.filter(
+      (c) =>
+        c.isActive === true &&
+        isNowInMenuGroupInterval({
+          now,
+          timeZone: tz,
+          availableFrom: c.availableFrom,
+          availableTo: c.availableTo,
+        })
+    );
+  }, [menuCatalog, nowMs, venueTimeZone]);
 
   const visibleCategoryIds = useMemo(() => new Set(visibleCategories.map((c) => c.id)), [visibleCategories]);
 
@@ -140,7 +153,7 @@ export function GuestCabinetPreOrderPanel({
   }, [menuCatalog, visibleCategoryIds, selectedCategoryId]);
 
   const notifyGroupTimeStop = useCallback(
-    async (cat: VenueMenuCategory, eventMinute: number) => {
+    async (cat: VenueMenuCategory) => {
       try {
         const user = auth.currentUser;
         if (!user) return;
@@ -155,7 +168,6 @@ export function GuestCabinetPreOrderPanel({
             venueId: venueFirestoreId.trim(),
             categoryId: cat.id,
             categoryName: cat.name,
-            eventMinute,
           }),
         });
       } catch {
@@ -169,12 +181,13 @@ export function GuestCabinetPreOrderPanel({
     const cats = menuCatalog?.categories ?? [];
     if (!cats.length) return;
     const now = new Date(nowMs);
-    const eventMinute = Math.floor(nowMs / 60000);
+    const tz = venueTimeZone.trim() || "Europe/Moscow";
 
     for (const cat of cats) {
       if (cat.isActive !== true) continue;
       const timeAllowed = isNowInMenuGroupInterval({
         now,
+        timeZone: tz,
         availableFrom: cat.availableFrom,
         availableTo: cat.availableTo,
       });
@@ -184,11 +197,11 @@ export function GuestCabinetPreOrderPanel({
         continue;
       }
       if (prev === true && timeAllowed === false) {
-        void notifyGroupTimeStop(cat, eventMinute);
+        void notifyGroupTimeStop(cat);
       }
       prevTimeAllowedByCategoryIdRef.current.set(cat.id, timeAllowed);
     }
-  }, [menuCatalog, nowMs, notifyGroupTimeStop]);
+  }, [menuCatalog, nowMs, notifyGroupTimeStop, venueTimeZone]);
 
   useEffect(() => {
     if (!enabled || !cartRef) return;
@@ -389,21 +402,28 @@ export function GuestCabinetPreOrderPanel({
     }
     setSending(true);
     try {
-      await setDoc(
-        cartRef,
-        {
-          authUid: firebaseAuthUid,
+      const user = auth.currentUser;
+      if (!user) {
+        toast.error("Нет сессии Firebase для отправки");
+        return;
+      }
+      const token = await getIdToken(user);
+      const res = await fetch("/api/guest/preorder-send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           venueId: venueFirestoreId.trim(),
-          venueSotaId: registrySotaId,
           customerUid: customerUid.trim(),
           items: itemsCapped,
-          status: "sent",
-          updatedAt: serverTimestamp(),
-          updatedAtMs: Date.now(),
-          sentAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Не удалось отправить заказ");
+      }
       setStatus("sent");
       toast.success("Заказ отправлен");
     } catch (e) {

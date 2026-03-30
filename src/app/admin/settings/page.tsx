@@ -8,6 +8,7 @@ import { SettingsHallsSection } from "./SettingsHallsSection";
 import { SettingsMenuSection } from "./SettingsMenuSection";
 import { SettingsGeoSection } from "./SettingsGeoSection";
 import { SettingsOperatingHoursSection } from "./SettingsOperatingHoursSection";
+import { SettingsVenueTimezoneSection } from "./SettingsVenueTimezoneSection";
 import { DEFAULT_VENUE_ID as venueId } from "@/lib/standards/venue-default";
 
 function SettingsContent() {
@@ -116,12 +117,19 @@ function SettingsContent() {
           </div>
         </SettingsAccordionSection>
 
-        <SettingsAccordionSection title="1. Режим работы">
+        <SettingsAccordionSection
+          title="1. Часовой пояс заведения"
+          subtitle="Расписание категорий меню и окна предзаказа по времени ресторана (IANA)."
+        >
+          <SettingsVenueTimezoneSection />
+        </SettingsAccordionSection>
+
+        <SettingsAccordionSection title="2. Режим работы">
           <SettingsOperatingHoursSection />
         </SettingsAccordionSection>
 
         <SettingsAccordionSection
-          title="2. Залы и столы"
+          title="3. Залы и столы"
           subtitle={
             <>
               Залы и столы в{" "}
@@ -134,14 +142,14 @@ function SettingsContent() {
         </SettingsAccordionSection>
 
         <SettingsAccordionSection
-          title="3. Меню заведения (конструктор и PDF)"
+          title="4. Меню заведения (конструктор и PDF)"
           subtitle="PDF-ссылка и графический каталог для гостя и предзаказа."
           defaultOpen
         >
           <SettingsMenuSection />
         </SettingsAccordionSection>
 
-        <SettingsAccordionSection title="4. Гео-периметр (GPS)">
+        <SettingsAccordionSection title="5. Гео-периметр (GPS)">
           <SettingsGeoSection />
         </SettingsAccordionSection>
       </div>
