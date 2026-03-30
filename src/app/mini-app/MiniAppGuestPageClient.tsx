@@ -379,6 +379,8 @@ function GuestCabinet() {
     getVenueRegistrySotaId,
     getPreorderSubmissionGate,
     getPreorderMaxCartItems,
+    getVenueMenuCatalog,
+    getVenueMenuPdfUrl,
   } = useGuestContext();
 
   const preorderVenues = useMemo(
@@ -409,6 +411,8 @@ function GuestCabinet() {
                 maxCartItems={getPreorderMaxCartItems(v.venueId)}
                 submissionAllowed={gate.ok}
                 submissionBlockedReason={gate.reason}
+                menuCatalog={getVenueMenuCatalog(v.venueId)}
+                menuPdfUrl={getVenueMenuPdfUrl(v.venueId)}
               />
             );
           })}

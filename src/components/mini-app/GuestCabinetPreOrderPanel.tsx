@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FileText } from "lucide-react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { deleteField, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import toast from "react-hot-toast";
@@ -15,6 +16,7 @@ import {
   parsePreorderCartDoc,
   newPreorderLineId,
 } from "@/lib/pre-order";
+import type { VenueMenuItem, VenueMenuVenueBlock } from "@/lib/system-configs/venue-menu-config";
 
 const SYNC_DEBOUNCE_MS = 700;
 
@@ -24,11 +26,13 @@ type Props = {
   registrySotaId: string | null;
   customerUid: string | null;
   enabled: boolean;
-  /** Лимит строк корзины из system_configs/preorder. */
   maxCartItems: number;
-  /** Окно времени приёма из ЦУП. */
   submissionAllowed: boolean;
   submissionBlockedReason: string | null;
+  /** Каталог ЦУП (system_configs/venue_menu); заказ только отсюда. */
+  menuCatalog: VenueMenuVenueBlock | null;
+  /** PDF / внешняя ссылка из venues.config — только просмотр. */
+  menuPdfUrl: string | null;
 };
 
 function statusLabel(s: PreOrderCartStatus): string {
@@ -57,24 +61,40 @@ export function GuestCabinetPreOrderPanel({
   maxCartItems,
   submissionAllowed,
   submissionBlockedReason,
+  menuCatalog,
+  menuPdfUrl,
 }: Props) {
   const [items, setItems] = useState<PreOrderLineItem[]>([]);
   const [status, setStatus] = useState<PreOrderCartStatus>("draft");
   const [hydrated, setHydrated] = useState(false);
   const [sending, setSending] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [newName, setNewName] = useState("");
-  const [newPrice, setNewPrice] = useState("");
-  const [newQty, setNewQty] = useState("1");
   const [firebaseAuthUid, setFirebaseAuthUid] = useState<string | null>(() => auth.currentUser?.uid ?? null);
   const [cancelling, setCancelling] = useState(false);
   const [cancelReasonShown, setCancelReasonShown] = useState<string | null>(null);
   const [cancelledByShown, setCancelledByShown] = useState<"guest" | "staff" | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+
+  const catalogItemIds = useMemo(
+    () => new Set((menuCatalog?.items ?? []).map((i) => i.id)),
+    [menuCatalog]
+  );
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setFirebaseAuthUid(u?.uid ?? null));
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!menuCatalog?.categories.length) {
+      setSelectedCategoryId(null);
+      return;
+    }
+    setSelectedCategoryId((cur) => {
+      if (cur && menuCatalog.categories.some((c) => c.id === cur)) return cur;
+      return menuCatalog.categories[0]!.id;
+    });
+  }, [menuCatalog]);
 
   const cartRef = useMemo(() => {
     const v = venueFirestoreId.trim();
@@ -84,10 +104,15 @@ export function GuestCabinetPreOrderPanel({
   }, [venueFirestoreId, customerUid]);
 
   const canEdit = status === "draft";
-  /** После отправки / подтверждения гость может начать новый цикл (сброс в draft по правилам Firestore). */
   const canStartNewPreorder =
     status === "confirmed" || status === "ready" || status === "completed" || status === "cancelled";
   const vrHint = registrySotaId ? ` · ${registrySotaId}` : "";
+
+  const visibleMenuItems = useMemo(() => {
+    if (!menuCatalog?.items.length) return [];
+    if (!selectedCategoryId) return menuCatalog.items;
+    return menuCatalog.items.filter((i) => i.categoryId === selectedCategoryId);
+  }, [menuCatalog, selectedCategoryId]);
 
   useEffect(() => {
     if (!enabled || !cartRef) return;
@@ -113,6 +138,19 @@ export function GuestCabinetPreOrderPanel({
     return () => unsub();
   }, [enabled, cartRef, venueFirestoreId]);
 
+  /** Черновик: только позиции из текущего каталога (Zero Input). */
+  useEffect(() => {
+    if (!hydrated || status !== "draft") return;
+    if (!menuCatalog) {
+      setItems((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    setItems((prev) => {
+      const next = prev.filter((l) => Boolean(l.catalogItemId && catalogItemIds.has(l.catalogItemId!)));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [hydrated, status, menuCatalog, catalogItemIds]);
+
   const itemsCapped = useMemo(() => items.slice(0, maxCartItems), [items, maxCartItems]);
 
   const pushDraftToFirestore = useCallback(async () => {
@@ -133,7 +171,7 @@ export function GuestCabinetPreOrderPanel({
         { merge: true }
       );
     } catch {
-      // сеть / правила — тихо; локальный черновик уже сохранён
+      // ignore
     }
   }, [cartRef, customerUid, firebaseAuthUid, itemsCapped, registrySotaId, venueFirestoreId]);
 
@@ -151,27 +189,29 @@ export function GuestCabinetPreOrderPanel({
     };
   }, [items, enabled, hydrated, canEdit, venueFirestoreId, cartRef, pushDraftToFirestore, firebaseAuthUid]);
 
-  const addLine = () => {
-    if (!canEdit) return;
+  const addFromCatalog = (item: VenueMenuItem) => {
+    if (!canEdit || !menuCatalog) return;
+    const existing = items.find((l) => l.catalogItemId === item.id);
+    if (existing) {
+      setItems((prev) =>
+        prev.map((l) => (l.id === existing.id ? { ...l, qty: l.qty + 1 } : l))
+      );
+      return;
+    }
     if (items.length >= maxCartItems) {
-      toast.error(`Не более ${maxCartItems} позиций в предзаказе`);
+      toast.error(`Не более ${maxCartItems} позиций в заказе`);
       return;
     }
-    const name = newName.trim();
-    if (!name) {
-      toast.error("Укажите название позиции");
-      return;
-    }
-    const unitPrice = Number(newPrice.replace(",", "."));
-    const qty = Math.max(1, Math.floor(Number(newQty.replace(",", ".")) || 1));
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
-      toast.error("Укажите цену (число)");
-      return;
-    }
-    setItems((prev) => [...prev, { id: newPreorderLineId(), name, qty, unitPrice }]);
-    setNewName("");
-    setNewPrice("");
-    setNewQty("1");
+    setItems((prev) => [
+      ...prev,
+      {
+        id: newPreorderLineId(),
+        catalogItemId: item.id,
+        name: item.name,
+        qty: 1,
+        unitPrice: item.price,
+      },
+    ]);
   };
 
   const bumpQty = (id: string, delta: number) => {
@@ -186,6 +226,16 @@ export function GuestCabinetPreOrderPanel({
   const removeLine = (id: string) => {
     if (!canEdit) return;
     setItems((prev) => prev.filter((l) => l.id !== id));
+  };
+
+  const openPdfMenu = () => {
+    const u = menuPdfUrl?.trim();
+    if (!u) return;
+    try {
+      window.open(u, "_blank", "noopener,noreferrer");
+    } catch {
+      toast.error("Не удалось открыть меню");
+    }
   };
 
   const cancelGuestOrder = async () => {
@@ -244,12 +294,21 @@ export function GuestCabinetPreOrderPanel({
       toast.error("Нет идентификатора гостя или сессии Firebase для отправки");
       return;
     }
+    if (!menuCatalog) {
+      toast.error("Каталог недоступен");
+      return;
+    }
     if (!submissionAllowed) {
-      toast.error(submissionBlockedReason ?? "Сейчас нельзя отправить предзаказ");
+      toast.error(submissionBlockedReason ?? "Сейчас нельзя отправить заказ");
       return;
     }
     if (items.length === 0) {
-      toast.error("Добавьте позиции в корзину");
+      toast.error("Выберите блюда на витрине");
+      return;
+    }
+    const bad = items.some((l) => !l.catalogItemId || !catalogItemIds.has(l.catalogItemId));
+    if (bad) {
+      toast.error("В корзине есть устаревшие позиции — очистите и добавьте заново");
       return;
     }
     setSending(true);
@@ -270,7 +329,7 @@ export function GuestCabinetPreOrderPanel({
         { merge: true }
       );
       setStatus("sent");
-      toast.success("Предзаказ отправлен");
+      toast.success("Заказ отправлен");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
@@ -331,10 +390,25 @@ export function GuestCabinetPreOrderPanel({
         </span>
       </div>
 
+      {menuPdfUrl?.trim() ? (
+        <button
+          type="button"
+          onClick={openPdfMenu}
+          className="mt-3 flex w-full min-h-[52px] items-center justify-center gap-2 rounded-2xl border-2 border-slate-300 bg-white py-3 text-base font-bold text-slate-800 shadow-sm active:scale-[0.99]"
+        >
+          <FileText className="h-6 w-6 shrink-0 text-slate-600" aria-hidden />
+          Меню (PDF)
+        </button>
+      ) : null}
+
       {!customerUid?.trim() ? (
-        <p className="mt-3 text-xs text-amber-800">Войдите через Telegram или откройте приложение как гость — нужен UID для синхронизации.</p>
+        <p className="mt-3 text-xs text-amber-800">
+          Войдите через Telegram или откройте приложение как гость — нужен UID для синхронизации.
+        </p>
       ) : !firebaseAuthUid ? (
-        <p className="mt-3 text-xs text-amber-800">Подключение к Firebase… корзина сохраняется только на устройстве, пока не готова анонимная сессия.</p>
+        <p className="mt-3 text-xs text-amber-800">
+          Подключение к Firebase… корзина сохраняется только на устройстве, пока не готова анонимная сессия.
+        </p>
       ) : null}
 
       {status === "confirmed" ? (
@@ -357,9 +431,74 @@ export function GuestCabinetPreOrderPanel({
         </p>
       ) : null}
 
-      <div className="mt-3 space-y-2">
+      {canEdit && menuCatalog ? (
+        <>
+          <h3 className="mt-4 text-center text-lg font-bold text-slate-900">Заказать</h3>
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+            {menuCatalog.categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setSelectedCategoryId(c.id)}
+                className={`flex shrink-0 items-center gap-2 rounded-full border-2 px-4 py-2 text-sm font-bold ${
+                  selectedCategoryId === c.id
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-slate-200 bg-white text-slate-800"
+                }`}
+              >
+                {c.imageUrl ? (
+                  <img src={c.imageUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                ) : (
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs">🍽</span>
+                )}
+                {c.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {visibleMenuItems.map((item) => (
+              <article
+                key={item.id}
+                className="flex flex-col overflow-hidden rounded-2xl border-2 border-slate-200 bg-white shadow-sm"
+              >
+                <div className="relative aspect-square w-full bg-slate-100">
+                  {item.imageUrl ? (
+                    <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-5xl" aria-hidden>
+                      🍽
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col p-2">
+                  <p className="line-clamp-2 text-sm font-bold text-slate-900">{item.name}</p>
+                  {item.description ? (
+                    <p className="mt-0.5 line-clamp-2 text-[11px] text-slate-600">{item.description}</p>
+                  ) : null}
+                  <p className="mt-1 text-base font-bold text-emerald-800">{Math.round(item.price)} ₽</p>
+                  <button
+                    type="button"
+                    disabled={!customerUid?.trim() || !firebaseAuthUid}
+                    onClick={() => addFromCatalog(item)}
+                    className="mt-2 min-h-14 w-full rounded-xl bg-emerald-600 text-3xl font-bold leading-none text-white shadow-md active:bg-emerald-700 disabled:opacity-40"
+                  >
+                    +
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : canEdit && !menuCatalog ? (
+        <p className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-sm text-slate-600">
+          Витрина загружается из ЦУП. Если есть кнопка «Меню (PDF)» — можно открыть привычный формат.
+        </p>
+      ) : null}
+
+      <div className="mt-4 space-y-2">
         {items.length === 0 ? (
-          <p className="text-xs text-slate-600">Корзина пуста. Добавьте блюда до визита.</p>
+          <p className="text-xs text-slate-600">Корзина пуста. Нажимайте «+» на карточках.</p>
         ) : (
           items.map((l) => (
             <div
@@ -375,21 +514,21 @@ export function GuestCabinetPreOrderPanel({
                   <button
                     type="button"
                     onClick={() => bumpQty(l.id, -1)}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
+                    className="min-h-11 min-w-11 rounded-xl border-2 border-slate-300 bg-white text-lg font-bold text-slate-800 active:bg-slate-50"
                   >
                     −
                   </button>
                   <button
                     type="button"
                     onClick={() => bumpQty(l.id, 1)}
-                    className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700"
+                    className="min-h-11 min-w-11 rounded-xl border-2 border-slate-300 bg-white text-lg font-bold text-slate-800 active:bg-slate-50"
                   >
                     +
                   </button>
                   <button
                     type="button"
                     onClick={() => removeLine(l.id)}
-                    className="ml-1 rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-700"
+                    className="ml-1 min-h-11 min-w-11 rounded-xl border-2 border-red-200 bg-white text-lg font-bold text-red-700 active:bg-red-50"
                   >
                     ×
                   </button>
@@ -401,43 +540,7 @@ export function GuestCabinetPreOrderPanel({
       </div>
 
       {items.length > 0 ? (
-        <p className="mt-3 text-right text-sm font-bold text-slate-900">Итого: {Math.round(total)} ₽</p>
-      ) : null}
-
-      {canEdit ? (
-        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Добавить позицию</p>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Название"
-              className="min-w-[140px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              value={newPrice}
-              onChange={(e) => setNewPrice(e.target.value)}
-              placeholder="Цена ₽"
-              inputMode="decimal"
-              className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              value={newQty}
-              onChange={(e) => setNewQty(e.target.value)}
-              placeholder="Кол-во"
-              inputMode="numeric"
-              className="w-20 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            />
-            <button
-              type="button"
-              onClick={addLine}
-              disabled={!customerUid?.trim() || !firebaseAuthUid || items.length >= maxCartItems}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-            >
-              В корзину
-            </button>
-          </div>
-        </div>
+        <p className="mt-3 text-right text-base font-bold text-slate-900">Итого: {Math.round(total)} ₽</p>
       ) : null}
 
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -450,9 +553,10 @@ export function GuestCabinetPreOrderPanel({
               !customerUid?.trim() ||
               !firebaseAuthUid ||
               items.length === 0 ||
-              !submissionAllowed
+              !submissionAllowed ||
+              !menuCatalog
             }
-            className="flex-1 rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="min-h-14 flex-1 rounded-2xl bg-emerald-600 py-4 text-base font-bold text-white shadow-md active:bg-emerald-700 disabled:opacity-50"
           >
             {sending ? "Отправка…" : "Отправить в заведение"}
           </button>
@@ -462,7 +566,7 @@ export function GuestCabinetPreOrderPanel({
             type="button"
             onClick={() => void cancelGuestOrder()}
             disabled={cancelling || !customerUid?.trim() || !firebaseAuthUid}
-            className="flex-1 rounded-xl border border-red-200 bg-white py-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+            className="min-h-14 flex-1 rounded-2xl border-2 border-red-200 bg-white py-4 text-base font-bold text-red-700 active:bg-red-50 disabled:opacity-50"
           >
             {cancelling ? "Отмена…" : "Отменить заказ"}
           </button>
@@ -471,7 +575,7 @@ export function GuestCabinetPreOrderPanel({
           <button
             type="button"
             onClick={() => void startNewPreorder()}
-            className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            className="min-h-14 flex-1 rounded-2xl border-2 border-slate-300 bg-white py-4 text-base font-bold text-slate-800 active:bg-slate-50"
           >
             Новый предзаказ
           </button>

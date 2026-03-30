@@ -15,6 +15,13 @@ import {
   PREORDER_SYSTEM_CONFIG_DOC_ID,
   type PreorderModuleConfig,
 } from "@/lib/system-configs/preorder-module-config";
+import {
+  parseVenueMenuModuleConfig,
+  pickVenueMenuCatalog,
+  VENUE_MENU_SYSTEM_CONFIG_DOC_ID,
+  type VenueMenuModuleConfig,
+  type VenueMenuVenueBlock,
+} from "@/lib/system-configs/venue-menu-config";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
@@ -200,6 +207,10 @@ type GuestMiniAppContextValue = {
   preorderModuleConfig: PreorderModuleConfig;
   getPreorderSubmissionGate: (venueFirestoreId: string) => { ok: boolean; reason: string | null };
   getPreorderMaxCartItems: (venueFirestoreId: string) => number;
+  /** Каталог из system_configs/venue_menu для VR заведения. */
+  getVenueMenuCatalog: (venueFirestoreId: string) => VenueMenuVenueBlock | null;
+  /** Ссылка на PDF/внешнее меню из venues.config (независимо от каталога). */
+  getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -228,6 +239,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
   const [venueDocById, setVenueDocById] = useState<Record<string, Record<string, unknown>>>({});
   const [preorderModuleConfig, setPreorderModuleConfig] = useState<PreorderModuleConfig>({});
+  const [venueMenuModuleConfig, setVenueMenuModuleConfig] = useState<VenueMenuModuleConfig>({});
   const checkInSyncRef = useRef<string | null>(null);
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
@@ -820,6 +832,26 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [venueDocById, preorderModuleConfig]
   );
 
+  const getVenueMenuCatalog = useCallback(
+    (venueFirestoreId: string) => {
+      const vr = readVenueSotaId(venueDocById[venueFirestoreId.trim()]);
+      return pickVenueMenuCatalog(vr, venueMenuModuleConfig);
+    },
+    [venueDocById, venueMenuModuleConfig]
+  );
+
+  const getVenueMenuPdfUrl = useCallback(
+    (venueFirestoreId: string) => {
+      const d = venueDocById[venueFirestoreId.trim()] as Record<string, unknown> | undefined;
+      const cfg = (d?.config ?? {}) as Record<string, unknown>;
+      const pdf = typeof cfg.menuPdfUrl === "string" ? cfg.menuPdfUrl.trim() : "";
+      const link = typeof cfg.menuLink === "string" ? cfg.menuLink.trim() : "";
+      const u = pdf || link;
+      return u || null;
+    },
+    [venueDocById]
+  );
+
   const openVenueMenu = useCallback(
     (venueId: string) => {
       void switchLocation(venueId, null);
@@ -1063,6 +1095,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       preorderModuleConfig,
       getPreorderSubmissionGate,
       getPreorderMaxCartItems,
+      getVenueMenuCatalog,
+      getVenueMenuPdfUrl,
     }),
     [
       guestIdentity,
@@ -1090,6 +1124,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       preorderModuleConfig,
       getPreorderSubmissionGate,
       getPreorderMaxCartItems,
+      getVenueMenuCatalog,
+      getVenueMenuPdfUrl,
     ]
   );
 

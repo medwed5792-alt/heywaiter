@@ -28,6 +28,8 @@ export type PreOrderLineItem = {
   qty: number;
   unitPrice: number;
   note?: string;
+  /** ID позиции из system_configs/venue_menu (обязателен для новых черновиков из витрины). */
+  catalogItemId?: string;
 };
 
 export type PreOrderCartPayload = {
@@ -169,8 +171,17 @@ export function loadPreorderDraftFromLocal(venueFirestoreId: string): PreOrderLi
         const unitPrice =
           typeof x.unitPrice === "number" && Number.isFinite(x.unitPrice) ? Math.max(0, x.unitPrice) : 0;
         const note = typeof x.note === "string" ? x.note.trim() : undefined;
+        const catalogItemId =
+          typeof x.catalogItemId === "string" && x.catalogItemId.trim() ? x.catalogItemId.trim() : undefined;
         if (!name) return null;
-        return { id, name, qty, unitPrice, ...(note ? { note } : {}) } satisfies PreOrderLineItem;
+        return {
+          id,
+          name,
+          qty,
+          unitPrice,
+          ...(note ? { note } : {}),
+          ...(catalogItemId ? { catalogItemId } : {}),
+        } satisfies PreOrderLineItem;
       })
       .filter(Boolean) as PreOrderLineItem[];
   } catch {
@@ -217,8 +228,17 @@ export function parsePreorderCartDoc(data: Record<string, unknown> | null | unde
     const unitPrice =
       typeof x.unitPrice === "number" && Number.isFinite(x.unitPrice) ? Math.max(0, x.unitPrice) : 0;
     const note = typeof x.note === "string" ? x.note.trim() : undefined;
+    const catalogItemId =
+      typeof x.catalogItemId === "string" && x.catalogItemId.trim() ? x.catalogItemId.trim() : undefined;
     if (!name) continue;
-    items.push({ id, name, qty, unitPrice, ...(note ? { note } : {}) });
+    items.push({
+      id,
+      name,
+      qty,
+      unitPrice,
+      ...(note ? { note } : {}),
+      ...(catalogItemId ? { catalogItemId } : {}),
+    });
   }
   const updatedAt =
     data.updatedAt && typeof (data.updatedAt as { toMillis?: () => number }).toMillis === "function"
