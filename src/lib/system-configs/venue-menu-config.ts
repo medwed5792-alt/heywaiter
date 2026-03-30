@@ -72,6 +72,26 @@ function parseMenuItem(x: Record<string, unknown>): VenueMenuItem | null {
   };
 }
 
+/** Документ venues/{venueId}/configs/menu — тот же каркас, что блок VR в ЦУП. */
+export function parseVenueMenuVenueBlock(raw: Record<string, unknown> | null | undefined): VenueMenuVenueBlock | null {
+  if (!raw || typeof raw !== "object") return null;
+  const catsRaw = Array.isArray(raw.categories) ? raw.categories : [];
+  const itemsRaw = Array.isArray(raw.items) ? raw.items : [];
+  const categories: VenueMenuCategory[] = [];
+  for (const c of catsRaw) {
+    const p = parseCategory((c ?? {}) as Record<string, unknown>);
+    if (p) categories.push(p);
+  }
+  const items: VenueMenuItem[] = [];
+  for (const it of itemsRaw) {
+    const p = parseMenuItem((it ?? {}) as Record<string, unknown>);
+    if (p) items.push(p);
+  }
+  categories.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  items.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  return { categories, items };
+}
+
 export function parseVenueMenuModuleConfig(raw: Record<string, unknown> | null | undefined): VenueMenuModuleConfig {
   if (!raw || typeof raw !== "object") return {};
   const venuesRaw = raw.venuesBySotaId;

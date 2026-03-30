@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
+import { SettingsVenueMenuCatalogSection } from "./SettingsVenueMenuCatalogSection";
 
 /** Ссылка на внешнее облачное хранилище (Google Диск, PDF и т.д.). При нажатии гостем кнопки «Меню» в Mini App происходит переход по этой ссылке в браузере. */
 type VenueMenuConfig = {
@@ -86,6 +87,8 @@ export function SettingsMenuSection() {
         </button>
         {message && <p className={`text-sm ${message.type === "ok" ? "text-green-600" : "text-red-600"}`}>{message.text}</p>}
       </div>
+
+      <SettingsVenueMenuCatalogSection />
     </div>
   );
 }

@@ -147,7 +147,8 @@ export async function GET(request: NextRequest) {
       if (
         type !== "split_bill_request" &&
         type !== "full_bill_request" &&
-        type !== "preorder_guest_cancelled"
+        type !== "preorder_guest_cancelled" &&
+        type !== "menu_stoplist_change"
       )
         return;
       if (targetUids.length > 0 && !targetUids.includes(staffId)) return;
