@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "venuesBySotaId": {
+    "VR000000": {
+      "categories": [
+        {
+          "id": "cat_breakfast",
+          "name": "Завтраки",
+          "imageUrl": "https://example.com/cat-breakfast.jpg",
+          "sortOrder": 0
+        },
+        {
+          "id": "cat_drinks",
+          "name": "Напитки",
+          "sortOrder": 1
+        }
+      ],
+      "items": [
+        {
+          "id": "item_omelette",
+          "categoryId": "cat_breakfast",
+          "name": "Омлет",
+          "description": "С сыром и травами",
+          "price": 250,
+          "imageUrl": "https://example.com/omelette.jpg",
+          "sortOrder": 0,
+          "active": true
+        },
+        {
+          "id": "item_coffee",
+          "categoryId": "cat_drinks",
+          "name": "Кофе",
+          "description": "Американо",
+          "price": 150,
+          "sortOrder": 0,
+          "active": true
+        }
+      ]
+    }
+  }
+}
