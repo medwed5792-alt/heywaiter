@@ -16,7 +16,13 @@ import {
   parsePreorderCartDoc,
   newPreorderLineId,
 } from "@/lib/pre-order";
-import type { VenueMenuItem, VenueMenuVenueBlock } from "@/lib/system-configs/venue-menu-config";
+import {
+  isNowInMenuGroupInterval,
+  type VenueMenuCategory,
+  type VenueMenuItem,
+  type VenueMenuVenueBlock,
+} from "@/lib/system-configs/venue-menu-config";
+import { ImageModalViewer } from "@/components/mini-app/ImageModalViewer";
 
 const SYNC_DEBOUNCE_MS = 700;
 
@@ -74,6 +80,14 @@ export function GuestCabinetPreOrderPanel({
   const [cancelReasonShown, setCancelReasonShown] = useState<string | null>(null);
   const [cancelledByShown, setCancelledByShown] = useState<"guest" | "staff" | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
+  const prevTimeAllowedByCategoryIdRef = useRef<Map<string, boolean>>(new Map());
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 30000);
+    return () => window.clearInterval(t);
+  }, []);
 
   const catalogItemIds = useMemo(
     () => new Set((menuCatalog?.items ?? []).map((i) => i.id)),
@@ -85,16 +99,25 @@ export function GuestCabinetPreOrderPanel({
     return () => unsub();
   }, []);
 
+  const visibleCategories = useMemo(() => {
+    const cats = menuCatalog?.categories ?? [];
+    if (!cats.length) return [];
+    const now = new Date(nowMs);
+    return cats.filter((c) => c.isActive === true && isNowInMenuGroupInterval({ now, availableFrom: c.availableFrom, availableTo: c.availableTo }));
+  }, [menuCatalog, nowMs]);
+
+  const visibleCategoryIds = useMemo(() => new Set(visibleCategories.map((c) => c.id)), [visibleCategories]);
+
   useEffect(() => {
-    if (!menuCatalog?.categories.length) {
+    if (!visibleCategories.length) {
       setSelectedCategoryId(null);
       return;
     }
     setSelectedCategoryId((cur) => {
-      if (cur && menuCatalog.categories.some((c) => c.id === cur)) return cur;
-      return menuCatalog.categories[0]!.id;
+      if (cur && visibleCategoryIds.has(cur)) return cur;
+      return visibleCategories[0]!.id;
     });
-  }, [menuCatalog]);
+  }, [visibleCategories, visibleCategoryIds]);
 
   const cartRef = useMemo(() => {
     const v = venueFirestoreId.trim();
@@ -110,9 +133,62 @@ export function GuestCabinetPreOrderPanel({
 
   const visibleMenuItems = useMemo(() => {
     if (!menuCatalog?.items.length) return [];
-    if (!selectedCategoryId) return menuCatalog.items;
-    return menuCatalog.items.filter((i) => i.categoryId === selectedCategoryId);
-  }, [menuCatalog, selectedCategoryId]);
+    const activeItems = menuCatalog.items.filter((item) => item.isActive === true);
+    const withinVisibleCats = activeItems.filter((item) => visibleCategoryIds.has(item.categoryId));
+    if (!selectedCategoryId) return withinVisibleCats;
+    return withinVisibleCats.filter((i) => i.categoryId === selectedCategoryId);
+  }, [menuCatalog, visibleCategoryIds, selectedCategoryId]);
+
+  const notifyGroupTimeStop = useCallback(
+    async (cat: VenueMenuCategory, eventMinute: number) => {
+      try {
+        const user = auth.currentUser;
+        if (!user) return;
+        const token = await getIdToken(user);
+        await fetch("/api/guest/menu-group-time-stop-notify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            venueId: venueFirestoreId.trim(),
+            categoryId: cat.id,
+            categoryName: cat.name,
+            eventMinute,
+          }),
+        });
+      } catch {
+        // best-effort
+      }
+    },
+    [venueFirestoreId]
+  );
+
+  useEffect(() => {
+    const cats = menuCatalog?.categories ?? [];
+    if (!cats.length) return;
+    const now = new Date(nowMs);
+    const eventMinute = Math.floor(nowMs / 60000);
+
+    for (const cat of cats) {
+      if (cat.isActive !== true) continue;
+      const timeAllowed = isNowInMenuGroupInterval({
+        now,
+        availableFrom: cat.availableFrom,
+        availableTo: cat.availableTo,
+      });
+      const prev = prevTimeAllowedByCategoryIdRef.current.get(cat.id);
+      if (prev === undefined) {
+        prevTimeAllowedByCategoryIdRef.current.set(cat.id, timeAllowed);
+        continue;
+      }
+      if (prev === true && timeAllowed === false) {
+        void notifyGroupTimeStop(cat, eventMinute);
+      }
+      prevTimeAllowedByCategoryIdRef.current.set(cat.id, timeAllowed);
+    }
+  }, [menuCatalog, nowMs, notifyGroupTimeStop]);
 
   useEffect(() => {
     if (!enabled || !cartRef) return;
@@ -376,7 +452,8 @@ export function GuestCabinetPreOrderPanel({
   const total = items.reduce((acc, l) => acc + l.qty * l.unitPrice, 0);
 
   return (
-    <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm">
+    <>
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-slate-900">Предзаказ</p>
@@ -431,11 +508,11 @@ export function GuestCabinetPreOrderPanel({
         </p>
       ) : null}
 
-      {canEdit && menuCatalog ? (
+      {canEdit && menuCatalog && visibleMenuItems.length > 0 ? (
         <>
           <h3 className="mt-4 text-center text-lg font-bold text-slate-900">Заказать</h3>
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            {menuCatalog.categories.map((c) => (
+            {visibleCategories.map((c) => (
               <button
                 key={c.id}
                 type="button"
@@ -447,7 +524,15 @@ export function GuestCabinetPreOrderPanel({
                 }`}
               >
                 {c.imageUrl ? (
-                  <img src={c.imageUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                  <img
+                    src={c.imageUrl}
+                    alt=""
+                    width={32}
+                    height={32}
+                    className="h-8 w-8 rounded-full object-cover"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 ) : (
                   <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-xs">🍽</span>
                 )}
@@ -464,7 +549,22 @@ export function GuestCabinetPreOrderPanel({
               >
                 <div className="relative aspect-square w-full bg-slate-100">
                   {item.imageUrl ? (
-                    <img src={item.imageUrl} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setZoomedImageUrl(item.imageUrl || null)}
+                      className="block h-full w-full cursor-zoom-in"
+                      aria-label="Увеличить изображение блюда"
+                    >
+                      <img
+                        src={item.imageUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                          width={320}
+                          height={320}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    </button>
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-5xl" aria-hidden>
                       🍽
@@ -497,6 +597,10 @@ export function GuestCabinetPreOrderPanel({
       ) : canEdit && !menuCatalog && !menuPdfUrl?.trim() ? (
         <p className="mt-4 rounded-xl border border-slate-200 bg-amber-50 px-3 py-3 text-center text-sm text-amber-900">
           Каталог предзаказа и ссылка на меню не настроены.
+        </p>
+      ) : canEdit && menuCatalog && menuPdfUrl?.trim() ? (
+        <p className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-sm text-slate-600">
+          Витрина временно недоступна (по расписанию или выключены группы). Откройте «Меню (PDF)».
         </p>
       ) : null}
 
@@ -591,6 +695,8 @@ export function GuestCabinetPreOrderPanel({
           </button>
         ) : null}
       </div>
-    </section>
+      </section>
+      {zoomedImageUrl ? <ImageModalViewer imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} /> : null}
+    </>
   );
 }

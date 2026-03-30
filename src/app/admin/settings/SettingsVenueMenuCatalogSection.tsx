@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import toast from "react-hot-toast";
-import { GripVertical, ImageIcon, LayoutGrid, Loader2, Plus, Pencil, Trash2 } from "lucide-react";
-import { db, storage } from "@/lib/firebase";
+import { ChevronDown, GripVertical, ImageIcon, LayoutGrid, Plus, Pencil, Trash2 } from "lucide-react";
+import { db } from "@/lib/firebase";
 import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 import {
   parseVenueMenuVenueBlock,
@@ -23,7 +22,7 @@ function newId(): string {
 }
 
 function itemEffectiveActive(i: VenueMenuItem): boolean {
-  return i.active !== false;
+  return i.isActive !== false;
 }
 
 /** Единый порядок: категории по sortOrder; внутри категории — блюда по sortOrder; сироты — в последнюю категорию. */
@@ -66,11 +65,11 @@ export function SettingsVenueMenuCatalogSection() {
   const [message, setMessage] = useState<{ type: "ok" | "error"; text: string } | null>(null);
   const prevActiveByItemIdRef = useRef<Map<string, boolean>>(new Map());
   const dragPayloadRef = useRef<DragPayload | null>(null);
-  const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
 
   const [newCategoryName, setNewCategoryName] = useState("");
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [openCategoryId, setOpenCategoryId] = useState<string | null>(null);
 
   const [confirmState, setConfirmState] = useState<{
     open: boolean;
@@ -128,6 +127,20 @@ export function SettingsVenueMenuCatalogSection() {
     [categories, items, applyNormalized]
   );
 
+  const patchCategory = useCallback(
+    (id: string, patch: Partial<VenueMenuCategory>) => {
+      applyNormalized(
+        categories.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+        items
+      );
+    },
+    [categories, items, applyNormalized]
+  );
+
+  useEffect(() => {
+    if (!openCategoryId && categories.length) setOpenCategoryId(categories[0]!.id);
+  }, [categories, openCategoryId]);
+
   const addCategory = () => {
     const name = newCategoryName.trim();
     if (!name) {
@@ -135,7 +148,10 @@ export function SettingsVenueMenuCatalogSection() {
       return;
     }
     const id = newId();
-    applyNormalized([...categories, { id, name, sortOrder: categories.length }], items);
+    applyNormalized(
+      [...categories, { id, name, sortOrder: categories.length, isActive: true }],
+      items
+    );
     setNewCategoryName("");
     toast.success("Категория добавлена (сохраните каталог)");
   };
@@ -179,7 +195,7 @@ export function SettingsVenueMenuCatalogSection() {
       name: "Новая позиция",
       price: 0,
       description: "",
-      active: true,
+      isActive: true,
       sortOrder: sub.length,
     };
     applyNormalized(categories, [...items, it]);
@@ -278,30 +294,6 @@ export function SettingsVenueMenuCatalogSection() {
     applyNormalized(categories, [...others, ...reindexed]);
   };
 
-  const uploadPhoto = async (itemId: string, file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.error("Нужен файл изображения");
-      return;
-    }
-    if (file.size > 6 * 1024 * 1024) {
-      toast.error("Файл больше 6 МБ");
-      return;
-    }
-    setUploadingItemId(itemId);
-    try {
-      const safe = `${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
-      const r = ref(storage, `venues/${VENUE_ID}/menu/${safe}`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      patchItem(itemId, { imageUrl: url });
-      toast.success("Фото загружено");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Ошибка загрузки в Storage");
-    } finally {
-      setUploadingItemId(null);
-    }
-  };
-
   const seedDemo = async () => {
     setSaving(true);
     setMessage(null);
@@ -311,7 +303,7 @@ export function SettingsVenueMenuCatalogSection() {
       await setDoc(
         MENU_DOC(),
         {
-          categories: [{ id: catId, name: "Основное", sortOrder: 0 }],
+          categories: [{ id: catId, name: "Основное", sortOrder: 0, isActive: true }],
           items: [
             {
               id: itemId,
@@ -320,7 +312,7 @@ export function SettingsVenueMenuCatalogSection() {
               description: "Классический",
               price: 350,
               sortOrder: 0,
-              active: true,
+              isActive: true,
             },
           ],
           updatedAt: serverTimestamp(),
@@ -466,6 +458,20 @@ export function SettingsVenueMenuCatalogSection() {
                 <div className="flex min-w-0 items-center gap-2">
                   <button
                     type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenCategoryId((cur) => (cur === cat.id ? null : cat.id));
+                    }}
+                    className="rounded p-1 text-gray-500 hover:bg-gray-200"
+                    aria-label={openCategoryId === cat.id ? "Свернуть" : "Развернуть"}
+                    title={openCategoryId === cat.id ? "Свернуть" : "Развернуть"}
+                  >
+                    <ChevronDown
+                      className={`h-4 w-4 transition-transform ${openCategoryId === cat.id ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                  <button
+                    type="button"
                     draggable
                     onDragStart={() => onDragStartCategory(cat.id)}
                     onDragEnd={onDragEnd}
@@ -494,65 +500,116 @@ export function SettingsVenueMenuCatalogSection() {
                     <h5 className="font-medium text-gray-900 truncate">{cat.name}</h5>
                   )}
                 </div>
-                <div className="flex shrink-0 gap-1">
-                  {editingCategoryId === cat.id ? (
-                    <>
+                <div className="flex shrink-0 items-center gap-2">
+                  {(() => {
+                    const catIsActive = cat.isActive !== false;
+                    return (
                       <button
                         type="button"
-                        className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
-                        onClick={() => saveCategoryName(cat)}
-                      >
-                        Сохранить
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
-                        onClick={() => {
-                          setEditingCategoryId(null);
-                          setEditingCategoryName("");
+                        role="switch"
+                        aria-checked={catIsActive}
+                        title={catIsActive ? "Группа активна" : "Группа стоп-лист"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          patchCategory(cat.id, { isActive: !catIsActive });
                         }}
+                        className={`relative h-8 w-14 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 ${
+                          catIsActive ? "bg-green-600" : "bg-gray-400"
+                        }`}
                       >
-                        Отмена
+                        <span
+                          className={`absolute top-1 left-1 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                            catIsActive ? "translate-x-[1.5rem]" : "translate-x-0"
+                          }`}
+                        />
                       </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-gray-500 hover:bg-gray-200"
-                        onClick={() => {
-                          setEditingCategoryId(cat.id);
-                          setEditingCategoryName(cat.name);
-                        }}
-                        title="Переименовать"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50"
-                        onClick={() => openDeleteCategory(cat)}
-                        title="Удалить категорию"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </>
-                  )}
+                    );
+                  })()}
+
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="time"
+                      value={cat.availableFrom ?? ""}
+                      onChange={(e) =>
+                        patchCategory(cat.id, { availableFrom: e.target.value || undefined })
+                      }
+                      className="h-8 w-24 rounded border border-gray-300 px-1 text-xs text-gray-900"
+                      aria-label="Доступно с"
+                    />
+                    <span className="text-xs text-gray-500">—</span>
+                    <input
+                      type="time"
+                      value={cat.availableTo ?? ""}
+                      onChange={(e) =>
+                        patchCategory(cat.id, { availableTo: e.target.value || undefined })
+                      }
+                      className="h-8 w-24 rounded border border-gray-300 px-1 text-xs text-gray-900"
+                      aria-label="Доступно до"
+                    />
+                  </div>
+
+                  <div className="flex shrink-0 gap-1">
+                    {editingCategoryId === cat.id ? (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
+                          onClick={() => saveCategoryName(cat)}
+                        >
+                          Сохранить
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
+                          onClick={() => {
+                            setEditingCategoryId(null);
+                            setEditingCategoryName("");
+                          }}
+                        >
+                          Отмена
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-gray-500 hover:bg-gray-200"
+                          onClick={() => {
+                            setEditingCategoryId(cat.id);
+                            setEditingCategoryName(cat.name);
+                          }}
+                          title="Переименовать"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-gray-500 hover:text-red-600 hover:bg-red-50"
+                          onClick={() => openDeleteCategory(cat)}
+                          title="Удалить категорию"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-3">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 hover:bg-gray-50"
-                  onClick={() => addItem(cat.id)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Добавить позицию
-                </button>
-              </div>
+              {openCategoryId === cat.id ? (
+                <>
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                      onClick={() => addItem(cat.id)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Добавить позицию
+                    </button>
+                  </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {hallItems.map((it) => {
                   const on = itemEffectiveActive(it);
                   return (
@@ -589,38 +646,28 @@ export function SettingsVenueMenuCatalogSection() {
 
                       <div className="mt-2 aspect-video w-full overflow-hidden rounded-md bg-gray-100">
                         {it.imageUrl ? (
-                          <img src={it.imageUrl} alt="" className="h-full w-full object-cover" />
+                          <img
+                            src={it.imageUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
                         ) : (
                           <div className="flex h-full items-center justify-center text-gray-400">
                             <ImageIcon className="h-10 w-10" />
                           </div>
                         )}
                       </div>
-                      <label className="mt-2 flex cursor-pointer flex-col">
+                      <label className="mt-2 block text-xs text-gray-600">
+                        Ссылка на фото блюда (URL)
                         <input
-                          type="file"
-                          accept="image/*"
-                          className="sr-only"
-                          disabled={uploadingItemId === it.id}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            e.target.value = "";
-                            if (f) void uploadPhoto(it.id, f);
-                          }}
+                          type="url"
+                          value={it.imageUrl ?? ""}
+                          placeholder="https://..."
+                          onChange={(e) => patchItem(it.id, { imageUrl: e.target.value })}
+                          className="mt-0.5 w-full rounded border border-gray-300 px-2 py-1 text-sm text-gray-900"
                         />
-                        <span className="flex items-center justify-center gap-2 rounded border border-dashed border-gray-300 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
-                          {uploadingItemId === it.id ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Загрузка…
-                            </>
-                          ) : (
-                            <>
-                              <ImageIcon className="h-3.5 w-3.5" />
-                              Фото
-                            </>
-                          )}
-                        </span>
                       </label>
 
                       <label className="mt-2 block text-xs text-gray-600">
@@ -661,7 +708,7 @@ export function SettingsVenueMenuCatalogSection() {
                           type="button"
                           role="switch"
                           aria-checked={on}
-                          onClick={() => patchItem(it.id, { active: !on })}
+                          onClick={() => patchItem(it.id, { isActive: !on })}
                           className={`relative h-8 w-14 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2 ${
                             on ? "bg-green-600" : "bg-gray-400"
                           }`}
@@ -676,7 +723,9 @@ export function SettingsVenueMenuCatalogSection() {
                     </div>
                   );
                 })}
-              </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           );
         })}

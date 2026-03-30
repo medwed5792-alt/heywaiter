@@ -7,6 +7,12 @@ export type VenueMenuCategory = {
   id: string;
   name: string;
   imageUrl?: string;
+  /** false — скрыть из витрины и предзаказа. */
+  isActive?: boolean;
+  /** "HH:mm" */
+  availableFrom?: string;
+  /** "HH:mm" */
+  availableTo?: string;
   sortOrder?: number;
 };
 
@@ -46,7 +52,46 @@ function parseCategory(x: Record<string, unknown>): VenueMenuCategory | null {
   if (!id || !name) return null;
   const imageUrl = typeof x.imageUrl === "string" ? x.imageUrl.trim() : undefined;
   const sortOrder = typeof x.sortOrder === "number" && Number.isFinite(x.sortOrder) ? x.sortOrder : undefined;
-  return { id, name, ...(imageUrl ? { imageUrl } : {}), ...(sortOrder != null ? { sortOrder } : {}) };
+  const explicitOff = x.isActive === false || x.active === false;
+  const isActive = !explicitOff;
+  const availableFrom = typeof x.availableFrom === "string" ? x.availableFrom.trim() : undefined;
+  const availableTo = typeof x.availableTo === "string" ? x.availableTo.trim() : undefined;
+  return {
+    id,
+    name,
+    ...(imageUrl ? { imageUrl } : {}),
+    isActive,
+    ...(availableFrom ? { availableFrom } : {}),
+    ...(availableTo ? { availableTo } : {}),
+    ...(sortOrder != null ? { sortOrder } : {}),
+  };
+}
+
+function parseHHMM(s: unknown): number | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (!t) return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/** Проверка интервала "availableFrom / availableTo" (учёт перехода через полночь). */
+export function isNowInMenuGroupInterval(args: {
+  now: Date;
+  availableFrom?: string | null;
+  availableTo?: string | null;
+}): boolean {
+  const fromM = parseHHMM(args.availableFrom);
+  const toM = parseHHMM(args.availableTo);
+  if (fromM == null && toM == null) return true;
+  if (fromM == null || toM == null) return true;
+  const cur = args.now.getHours() * 60 + args.now.getMinutes();
+  if (fromM <= toM) return cur >= fromM && cur <= toM;
+  return cur >= fromM || cur <= toM;
 }
 
 function parseMenuItem(x: Record<string, unknown>): VenueMenuItem | null {
