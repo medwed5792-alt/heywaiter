@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import {
   NOTIFICATIONS_SYSTEM_CONFIG_DOC_ID,
   type PreorderNotificationTemplateKey,
+  isNotificationsGloballyEnabled,
   parseNotificationsSystemConfig,
   resolvePreorderNotificationText,
 } from "@/lib/system-configs/notifications-config";
@@ -22,18 +23,34 @@ export type DispatchPreorderNotificationArgs = {
  * Вызывается из API персонала и в будущем — из Cloud Function onWrite(preorder_carts).
  */
 export async function dispatchPreorderStatusNotification(args: DispatchPreorderNotificationArgs): Promise<void> {
-  const cfgSnap = await args.firestore.collection("system_configs").doc(NOTIFICATIONS_SYSTEM_CONFIG_DOC_ID).get();
-  const cfg = parseNotificationsSystemConfig(
-    cfgSnap.exists ? (cfgSnap.data() as Record<string, unknown>) : undefined
-  );
-  const message = resolvePreorderNotificationText(cfg, args.templateKey, args.orderDisplayId.trim() || args.cartDocId);
+  let cfg = parseNotificationsSystemConfig(undefined);
+
+  try {
+    const cfgSnap = await args.firestore.collection("system_configs").doc(NOTIFICATIONS_SYSTEM_CONFIG_DOC_ID).get();
+    cfg = parseNotificationsSystemConfig(
+      cfgSnap.exists ? (cfgSnap.data() as Record<string, unknown>) : undefined
+    );
+  } catch (e) {
+    console.warn("[dispatch preorder notify] не удалось прочитать system_configs/notifications, используем дефолты", e);
+    cfg = {};
+  }
+
+  if (!isNotificationsGloballyEnabled(cfg)) {
+    console.log("[dispatch preorder notify] пропуск: global_enabled = false");
+    return;
+  }
+
+  const orderId = args.orderDisplayId.trim() || args.cartDocId;
+  const message = resolvePreorderNotificationText(cfg, args.templateKey, orderId);
 
   const cartContext: PreorderCartNotificationContext = {
     venueId: args.venueId,
     cartDocId: args.cartDocId,
   };
 
-  await sendSotaNotification(args.firestore, args.customerUid, message, cartContext);
+  await sendSotaNotification(args.firestore, args.customerUid, message, cartContext, {
+    statusKey: args.templateKey,
+  });
 }
 
 /**

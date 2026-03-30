@@ -11,7 +11,9 @@
     "start": "next start",
     "lint": "next lint",
     "migrate:uids:dry": "npx tsx src/scripts/migrate-uids.ts --dry-run",
-    "migrate:uids": "npx tsx src/scripts/migrate-uids.ts --write"
+    "migrate:uids": "npx tsx src/scripts/migrate-uids.ts --write",
+    "init:notifications:dry": "npx tsx src/scripts/init-system-config-notifications.ts --dry-run",
+    "init:notifications": "npx tsx src/scripts/init-system-config-notifications.ts --write"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",

@@ -14,11 +14,15 @@ type Body = {
   orderDisplayId?: string;
 };
 
-const ALLOWED_EVENTS: PreorderNotificationTemplateKey[] = ["status_confirmed", "status_ready"];
+const ALLOWED_EVENTS: PreorderNotificationTemplateKey[] = [
+  "status_confirmed",
+  "status_ready",
+  "status_completed",
+];
 
 /**
  * POST /api/staff/preorder-notify
- * Body: { venueId, cartDocId, customerUid, event: 'status_confirmed' | 'status_ready', orderDisplayId? }
+ * Body: { venueId, cartDocId, customerUid, event: status_confirmed | status_ready | status_completed, orderDisplayId? }
  * Authorization: Bearer <Firebase ID token> — uid должен иметь preorder_staff_gate для venueId.
  */
 export async function POST(request: NextRequest) {

@@ -1,5 +1,8 @@
 {
-  "version": 1,
-  "status_confirmed": "Ваш заказ №{id} подтвержден!",
-  "status_ready": "Заказ №{id} готов, ждем вас!"
+  "templates": {
+    "status_confirmed": "Ваш заказ №{id} подтвержден и передан на кухню!",
+    "status_ready": "Заказ №{id} готов! Можете забирать.",
+    "status_completed": "Спасибо за визит! Ждем вас снова."
+  },
+  "global_enabled": true
 }
