@@ -28,7 +28,7 @@ export type PreOrderLineItem = {
   qty: number;
   unitPrice: number;
   note?: string;
-  /** ID позиции из system_configs/venue_menu (обязателен для новых черновиков из витрины). */
+  /** ID позиции из venues/.../configs/menu (обязателен для черновиков с витрины). */
   catalogItemId?: string;
 };
 

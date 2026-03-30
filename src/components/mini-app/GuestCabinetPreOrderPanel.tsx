@@ -29,7 +29,7 @@ type Props = {
   maxCartItems: number;
   submissionAllowed: boolean;
   submissionBlockedReason: string | null;
-  /** Каталог ЦУП (system_configs/venue_menu); заказ только отсюда. */
+  /** Каталог из venues/.../configs/menu (уже без стоп-листа: только isActive === true). */
   menuCatalog: VenueMenuVenueBlock | null;
   /** PDF / внешняя ссылка из venues.config — только просмотр. */
   menuPdfUrl: string | null;
@@ -490,15 +490,25 @@ export function GuestCabinetPreOrderPanel({
             ))}
           </div>
         </>
-      ) : canEdit && !menuCatalog ? (
+      ) : canEdit && !menuCatalog && menuPdfUrl?.trim() ? (
         <p className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-sm text-slate-600">
-          Витрина загружается из ЦУП. Если есть кнопка «Меню (PDF)» — можно открыть привычный формат.
+          Заведение пока не заполнило витрину предзаказа. Откройте «Меню (PDF)» — полный перечень в привычном формате.
+        </p>
+      ) : canEdit && !menuCatalog && !menuPdfUrl?.trim() ? (
+        <p className="mt-4 rounded-xl border border-slate-200 bg-amber-50 px-3 py-3 text-center text-sm text-amber-900">
+          Каталог предзаказа и ссылка на меню не настроены.
         </p>
       ) : null}
 
       <div className="mt-4 space-y-2">
         {items.length === 0 ? (
-          <p className="text-xs text-slate-600">Корзина пуста. Нажимайте «+» на карточках.</p>
+          <p className="text-xs text-slate-600">
+            {menuCatalog
+              ? "Корзина пуста. Нажимайте «+» на карточках."
+              : menuPdfUrl?.trim()
+                ? "Витрина не заполнена — добавление блюд из списка недоступно; при необходимости откройте «Меню (PDF)»."
+                : "Корзина пуста."}
+          </p>
         ) : (
           items.map((l) => (
             <div

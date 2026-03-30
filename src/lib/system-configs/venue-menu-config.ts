@@ -18,8 +18,13 @@ export type VenueMenuItem = {
   price: number;
   imageUrl?: string;
   sortOrder?: number;
-  /** false — скрыть из витрины */
+  /** false — скрыть из витрины (конструктор админки). */
   active?: boolean;
+  /**
+   * В продаже на витрине гостя. Жёсткое правило витрины: только `isActive === true`.
+   * Заполняется из Firestore `isActive` или зеркалится с `active`.
+   */
+  isActive?: boolean;
 };
 
 export type VenueMenuVenueBlock = {
@@ -60,15 +65,34 @@ function parseMenuItem(x: Record<string, unknown>): VenueMenuItem | null {
   const imageUrl = typeof x.imageUrl === "string" ? x.imageUrl.trim() : undefined;
   const sortOrder = typeof x.sortOrder === "number" && Number.isFinite(x.sortOrder) ? x.sortOrder : undefined;
   const active = typeof x.active === "boolean" ? x.active : undefined;
+  const explicitOff = x.isActive === false || x.active === false;
+  const isActive = !explicitOff;
   return {
     id,
     categoryId,
     name,
     price,
+    isActive,
     ...(description ? { description } : {}),
     ...(imageUrl ? { imageUrl } : {}),
     ...(sortOrder != null ? { sortOrder } : {}),
     ...(active != null ? { active } : {}),
+  };
+}
+
+/**
+ * Блок для витрины предзаказа гостя: только позиции с isActive === true и категории, где они есть.
+ */
+export function buildGuestPreorderShowcase(raw: VenueMenuVenueBlock | null): VenueMenuVenueBlock | null {
+  if (!raw || !raw.categories.length || !raw.items.length) return null;
+  const items = raw.items.filter((item) => item.isActive === true);
+  if (!items.length) return null;
+  const catIds = new Set(raw.categories.map((c) => c.id));
+  const filteredItems = items.filter((i) => catIds.has(i.categoryId));
+  if (!filteredItems.length) return null;
+  return {
+    categories: raw.categories.filter((c) => filteredItems.some((i) => i.categoryId === c.id)),
+    items: filteredItems,
   };
 }
 
@@ -132,7 +156,7 @@ export function pickVenueMenuCatalog(
   if (!sid || !module.venuesBySotaId) return null;
   const block = module.venuesBySotaId[sid];
   if (!block || !block.categories?.length || !block.items?.length) return null;
-  const items = block.items.filter((i) => i.active !== false);
+  const items = block.items.filter((i) => i.isActive === true);
   if (!items.length) return null;
   const catIds = new Set(block.categories.map((c) => c.id));
   const filteredItems = items.filter((i) => catIds.has(i.categoryId));

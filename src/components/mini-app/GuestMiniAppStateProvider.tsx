@@ -16,10 +16,8 @@ import {
   type PreorderModuleConfig,
 } from "@/lib/system-configs/preorder-module-config";
 import {
-  parseVenueMenuModuleConfig,
-  pickVenueMenuCatalog,
-  VENUE_MENU_SYSTEM_CONFIG_DOC_ID,
-  type VenueMenuModuleConfig,
+  buildGuestPreorderShowcase,
+  parseVenueMenuVenueBlock,
   type VenueMenuVenueBlock,
 } from "@/lib/system-configs/venue-menu-config";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
@@ -207,7 +205,7 @@ type GuestMiniAppContextValue = {
   preorderModuleConfig: PreorderModuleConfig;
   getPreorderSubmissionGate: (venueFirestoreId: string) => { ok: boolean; reason: string | null };
   getPreorderMaxCartItems: (venueFirestoreId: string) => number;
-  /** Каталог из system_configs/venue_menu для VR заведения. */
+  /** Каталог предзаказа из venues/{id}/configs/menu (только isActive === true). */
   getVenueMenuCatalog: (venueFirestoreId: string) => VenueMenuVenueBlock | null;
   /** Ссылка на PDF/внешнее меню из venues.config (независимо от каталога). */
   getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
@@ -239,7 +237,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
   const [venueDocById, setVenueDocById] = useState<Record<string, Record<string, unknown>>>({});
   const [preorderModuleConfig, setPreorderModuleConfig] = useState<PreorderModuleConfig>({});
-  const [venueMenuModuleConfig, setVenueMenuModuleConfig] = useState<VenueMenuModuleConfig>({});
+  /** Снимки витрины по venueId (после фильтра стоп-листа). */
+  const [guestVenueMenuShowcaseByVenueId, setGuestVenueMenuShowcaseByVenueId] = useState<
+    Record<string, VenueMenuVenueBlock | null>
+  >({});
   const checkInSyncRef = useRef<string | null>(null);
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
@@ -775,8 +776,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const id = v.venueId?.trim();
       if (id) s.add(id);
     }
+    const cur = currentLocation.venueId?.trim();
+    if (cur) s.add(cur);
     return [...s].sort().join("|");
-  }, [visitHistory]);
+  }, [visitHistory, currentLocation.venueId]);
 
   useEffect(() => {
     if (!isSdkReady) return;
@@ -794,6 +797,33 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         },
         () => {
           setVenueDocById((prev) => ({ ...prev, [id]: {} }));
+        }
+      );
+      unsubs.push(unsub);
+    }
+    return () => unsubs.forEach((u) => u());
+  }, [isSdkReady, visitVenueIdsKey]);
+
+  /** Локальный каталог заведения для витрины предзаказа (Live). */
+  useEffect(() => {
+    if (!isSdkReady) return;
+    const ids = visitVenueIdsKey ? visitVenueIdsKey.split("|").filter(Boolean) : [];
+    const unsubs: Array<() => void> = [];
+    for (const id of ids) {
+      const menuRef = doc(db, "venues", id, "configs", "menu");
+      const unsub = onSnapshot(
+        menuRef,
+        (snap) => {
+          if (!snap.exists()) {
+            setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: null }));
+            return;
+          }
+          const block = parseVenueMenuVenueBlock(snap.data() as Record<string, unknown>);
+          const showcase = buildGuestPreorderShowcase(block);
+          setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: showcase }));
+        },
+        () => {
+          setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: null }));
         }
       );
       unsubs.push(unsub);
@@ -832,13 +862,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [venueDocById, preorderModuleConfig]
   );
 
-  const getVenueMenuCatalog = useCallback(
-    (venueFirestoreId: string) => {
-      const vr = readVenueSotaId(venueDocById[venueFirestoreId.trim()]);
-      return pickVenueMenuCatalog(vr, venueMenuModuleConfig);
-    },
-    [venueDocById, venueMenuModuleConfig]
-  );
+  const getVenueMenuCatalog = useCallback((venueFirestoreId: string) => {
+    const id = venueFirestoreId.trim();
+    if (!id) return null;
+    return guestVenueMenuShowcaseByVenueId[id] ?? null;
+  }, [guestVenueMenuShowcaseByVenueId]);
 
   const getVenueMenuPdfUrl = useCallback(
     (venueFirestoreId: string) => {
