@@ -69,11 +69,11 @@ export function SettingsMenuSection() {
     }
   }, [menuUrl]);
 
-  if (!loaded) return <p className="mt-3 text-sm text-gray-500">Загрузка…</p>;
+  if (!loaded) return <p className="text-sm text-gray-500">Загрузка…</p>;
 
   return (
-    <div className="mt-3 space-y-6">
-      <div className="rounded-xl border border-gray-200 bg-white p-6">
+    <div className="space-y-6">
+      <div className="border-b border-gray-100 pb-6">
         <h4 className="flex items-center gap-2 font-medium text-gray-900">
           <FileText className="h-5 w-5 text-gray-500" />
           Меню (PDF) — отдельная ссылка

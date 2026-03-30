@@ -105,10 +105,10 @@ export function SettingsGeoSection() {
     navigator.geolocation.getCurrentPosition((pos) => { setLat(pos.coords.latitude); setLng(pos.coords.longitude); }, () => setGeocodeError("Не удалось определить местоположение."));
   }, []);
 
-  if (!loaded) return <p className="mt-3 text-sm text-gray-500">Загрузка…</p>;
+  if (!loaded) return <p className="text-sm text-gray-500">Загрузка…</p>;
 
   return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-6" style={{ zoom: 0.75 }}>
+    <div className="rounded-lg border border-gray-100 bg-gray-50/40 p-5" style={{ zoom: 0.75 }}>
       <p className="text-sm text-gray-600">
         Интерактивная карта: поиск по адресу, перетаскивание маркера, красная зона по радиусу.
       </p>

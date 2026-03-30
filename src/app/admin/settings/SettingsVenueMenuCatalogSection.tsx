@@ -394,7 +394,7 @@ export function SettingsVenueMenuCatalogSection() {
   if (!loaded) return <p className="mt-3 text-sm text-gray-500">Загрузка конструктора…</p>;
 
   return (
-    <div className="mt-6 rounded-xl border border-gray-200 bg-white p-6">
+    <div className="rounded-xl border border-gray-100 bg-gray-50/40 p-5">
       <h4 className="flex items-center gap-2 font-medium text-gray-900">
         <LayoutGrid className="h-5 w-5 text-gray-500" />
         Графический каталог (предзаказ / витрина)

@@ -40,11 +40,11 @@ export function AdminSidebar({ role = "owner" }: AdminSidebarProps) {
   const tabs = getTabsForRole(role);
 
   return (
-    <aside className="flex w-56 flex-col border-r border-gray-200 bg-white">
-      <div className="flex h-14 items-center border-b border-gray-200 px-4">
+    <aside className="sticky top-0 flex h-screen max-h-[100dvh] w-56 shrink-0 flex-col self-start overflow-hidden border-r border-gray-200 bg-white">
+      <div className="flex h-14 shrink-0 items-center border-b border-gray-200 px-4">
         <span className="text-base font-semibold text-gray-900">HeyWaiter</span>
       </div>
-      <nav className="flex-1 space-y-0.5 p-3">
+      <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-3">
         {tabs.map((tab) => {
           const Icon = ICONS[tab.id] ?? LayoutDashboard;
           const isActive = pathname === tab.path || (tab.path !== "/admin" && pathname.startsWith(tab.path));

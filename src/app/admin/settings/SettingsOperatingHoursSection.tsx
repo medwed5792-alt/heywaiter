@@ -105,7 +105,7 @@ export function SettingsOperatingHoursSection() {
   };
 
   return (
-    <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-gray-100 bg-gray-50/40 p-4">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium text-gray-900">Режим работы</h4>
         <button

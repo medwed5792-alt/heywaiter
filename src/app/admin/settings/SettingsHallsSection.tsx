@@ -503,7 +503,7 @@ export function SettingsHallsSection() {
   const unassignedTables = tables.filter((t) => !halls.some((h) => h.id === t.hallId));
 
   return (
-    <div className="mt-3 space-y-6">
+    <div className="space-y-6">
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <h4 className="font-medium text-gray-900">Тип заведения</h4>
         <p className="mt-1 text-xs text-gray-500">Полный сервис — столы и вызов официанта; фастфуд — заказ по номеру и уведомление «Готово».</p>
