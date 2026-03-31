@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileText } from "lucide-react";
 import { getIdToken, onAuthStateChanged } from "firebase/auth";
 import { deleteField, doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import toast from "react-hot-toast";
@@ -23,6 +22,7 @@ import {
   type VenueMenuVenueBlock,
 } from "@/lib/system-configs/venue-menu-config";
 import { ImageModalViewer } from "@/components/mini-app/ImageModalViewer";
+import { GuestFeedbackModal } from "@/components/mini-app/GuestFeedbackModal";
 
 const SYNC_DEBOUNCE_MS = 700;
 
@@ -85,7 +85,12 @@ export function GuestCabinetPreOrderPanel({
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
+  const [menuGatewayOpen, setMenuGatewayOpen] = useState(false);
+  const [menuUnlocked, setMenuUnlocked] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [staffIdForTip, setStaffIdForTip] = useState<string | null>(null);
   const prevTimeAllowedByCategoryIdRef = useRef<Map<string, boolean>>(new Map());
+  const prevStatusRef = useRef<PreOrderCartStatus>("draft");
 
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 30000);
@@ -207,6 +212,15 @@ export function GuestCabinetPreOrderPanel({
     if (!enabled || !cartRef) return;
     const unsub = onSnapshot(cartRef, (snap) => {
       const data = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+      const completedByStaffId =
+        typeof data?.completedByStaffId === "string" && data.completedByStaffId.trim()
+          ? data.completedByStaffId.trim()
+          : typeof data?.receivedByStaffId === "string" && data.receivedByStaffId.trim()
+            ? data.receivedByStaffId.trim()
+            : typeof data?.confirmedByStaffId === "string" && data.confirmedByStaffId.trim()
+              ? data.confirmedByStaffId.trim()
+              : null;
+      setStaffIdForTip(completedByStaffId);
       const parsed = parsePreorderCartDoc(data);
       if (parsed) {
         setStatus(parsed.status);
@@ -226,6 +240,14 @@ export function GuestCabinetPreOrderPanel({
     });
     return () => unsub();
   }, [enabled, cartRef, venueFirestoreId]);
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    if (prev !== "completed" && status === "completed") {
+      setFeedbackOpen(true);
+    }
+    prevStatusRef.current = status;
+  }, [status]);
 
   /** Черновик: только позиции из текущего каталога (Zero Input). */
   useEffect(() => {
@@ -324,6 +346,54 @@ export function GuestCabinetPreOrderPanel({
       window.open(u, "_blank", "noopener,noreferrer");
     } catch {
       toast.error("Не удалось открыть меню");
+    }
+  };
+
+  const openMenuGateway = () => {
+    if (!menuCatalog && !menuPdfUrl?.trim()) {
+      toast.error("Каталог предзаказа и ссылка на меню не настроены.");
+      return;
+    }
+    if (!menuPdfUrl?.trim()) {
+      setMenuUnlocked(true);
+      return;
+    }
+    setMenuGatewayOpen(true);
+  };
+
+  const leaveTip = async (amount: number) => {
+    if (!customerUid?.trim()) {
+      toast.error("Не удалось определить гостя");
+      return;
+    }
+    const user = auth.currentUser;
+    if (!user) {
+      toast.error("Нет сессии Firebase для чаевых");
+      return;
+    }
+    try {
+      const token = await getIdToken(user);
+      const res = await fetch("/api/guest/tips", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          venueId: venueFirestoreId.trim(),
+          customerUid: customerUid.trim(),
+          amount,
+          staffId: staffIdForTip,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Не удалось отправить чаевые");
+      }
+      toast.success("Чаевые отправлены. Спасибо!");
+      setFeedbackOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось отправить чаевые");
     }
   };
 
@@ -487,16 +557,13 @@ export function GuestCabinetPreOrderPanel({
         </span>
       </div>
 
-      {menuPdfUrl?.trim() ? (
-        <button
-          type="button"
-          onClick={openPdfMenu}
-          className="mt-3 flex w-full min-h-[52px] items-center justify-center gap-2 rounded-2xl border-2 border-slate-300 bg-white py-3 text-base font-bold text-slate-800 shadow-sm active:scale-[0.99]"
-        >
-          <FileText className="h-6 w-6 shrink-0 text-slate-600" aria-hidden />
-          Меню (PDF)
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={openMenuGateway}
+        className="mt-3 flex w-full min-h-[54px] items-center justify-center rounded-2xl border-2 border-slate-300 bg-white py-3 text-base font-bold text-slate-800 shadow-sm active:scale-[0.99]"
+      >
+        Меню и Предзаказ
+      </button>
 
       {!customerUid?.trim() ? (
         <p className="mt-3 text-xs text-amber-800">
@@ -528,7 +595,7 @@ export function GuestCabinetPreOrderPanel({
         </p>
       ) : null}
 
-      {canEdit && menuCatalog && visibleMenuItems.length > 0 ? (
+      {menuUnlocked && canEdit && menuCatalog && visibleMenuItems.length > 0 ? (
         <>
           <h3 className="mt-4 text-center text-lg font-bold text-slate-900">Заказать</h3>
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
@@ -610,21 +677,21 @@ export function GuestCabinetPreOrderPanel({
             ))}
           </div>
         </>
-      ) : canEdit && !menuCatalog && menuPdfUrl?.trim() ? (
+      ) : menuUnlocked && canEdit && !menuCatalog && menuPdfUrl?.trim() ? (
         <p className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-sm text-slate-600">
           Заведение пока не заполнило витрину предзаказа. Откройте «Меню (PDF)» — полный перечень в привычном формате.
         </p>
-      ) : canEdit && !menuCatalog && !menuPdfUrl?.trim() ? (
+      ) : menuUnlocked && canEdit && !menuCatalog && !menuPdfUrl?.trim() ? (
         <p className="mt-4 rounded-xl border border-slate-200 bg-amber-50 px-3 py-3 text-center text-sm text-amber-900">
           Каталог предзаказа и ссылка на меню не настроены.
         </p>
-      ) : canEdit && menuCatalog && menuPdfUrl?.trim() ? (
+      ) : menuUnlocked && canEdit && menuCatalog && menuPdfUrl?.trim() ? (
         <p className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-sm text-slate-600">
           Витрина временно недоступна (по расписанию или выключены группы). Откройте «Меню (PDF)».
         </p>
       ) : null}
 
-      <div className="mt-4 space-y-2">
+      {menuUnlocked ? <div className="mt-4 space-y-2">
         {items.length === 0 ? (
           <p className="text-xs text-slate-600">
             {menuCatalog
@@ -671,13 +738,13 @@ export function GuestCabinetPreOrderPanel({
             </div>
           ))
         )}
-      </div>
+      </div> : null}
 
       {items.length > 0 ? (
         <p className="mt-3 text-right text-base font-bold text-slate-900">Итого: {Math.round(total)} ₽</p>
       ) : null}
 
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+      {menuUnlocked ? <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         {canEdit ? (
           <button
             type="button"
@@ -714,9 +781,47 @@ export function GuestCabinetPreOrderPanel({
             Новый предзаказ
           </button>
         ) : null}
-      </div>
+      </div> : null}
       </section>
       {zoomedImageUrl ? <ImageModalViewer imageUrl={zoomedImageUrl} onClose={() => setZoomedImageUrl(null)} /> : null}
+      {menuGatewayOpen ? (
+        <div className="fixed inset-0 z-[65] bg-slate-950 p-4">
+          <div className="mx-auto flex h-full w-full max-w-md flex-col">
+            <div className="flex items-center justify-between py-2">
+              <p className="text-sm font-semibold text-white">Меню и Предзаказ</p>
+              <button
+                type="button"
+                onClick={() => setMenuGatewayOpen(false)}
+                className="rounded-lg border border-white/30 px-3 py-1.5 text-xs font-semibold text-white"
+              >
+                Закрыть
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {menuPdfUrl?.trim() ? (
+                <button
+                  type="button"
+                  onClick={openPdfMenu}
+                  className="flex min-h-28 items-center justify-center rounded-2xl border border-slate-700 bg-slate-900 px-5 text-center text-lg font-bold text-white"
+                >
+                  Открыть PDF-меню
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuUnlocked(true);
+                  setMenuGatewayOpen(false);
+                }}
+                className="flex min-h-28 items-center justify-center rounded-2xl border border-emerald-300 bg-emerald-600 px-5 text-center text-lg font-bold text-white"
+              >
+                Перейти к предзаказу
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <GuestFeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} onLeaveTip={leaveTip} />
     </>
   );
 }

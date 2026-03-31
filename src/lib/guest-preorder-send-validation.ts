@@ -98,8 +98,8 @@ export async function validateGuestPreorderSend(args: {
       return {
         ok: false,
         error: {
-          status: 403,
-          message: `Сейчас нельзя заказать из группы «${cat.name}» (расписание заведения)`,
+          status: 409,
+          message: "Извините, время заказа этой группы истекло. Пожалуйста, измените состав корзины",
         },
       };
     }

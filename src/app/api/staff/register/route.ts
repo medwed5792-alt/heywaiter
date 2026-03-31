@@ -85,6 +85,22 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    // Виртуальный кошелек сотрудника: ключ = unified_id (global_users.id).
+    await firestore.collection("staff_wallets").doc(userId).set(
+      {
+        staffUnifiedId: userId,
+        staffSotaId: sotaId,
+        staffId: staffDocId,
+        venueId,
+        balance: 0,
+        totalTips: 0,
+        txCount: 0,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
     return NextResponse.json({
       userId,
       staffId: staffDocId,
