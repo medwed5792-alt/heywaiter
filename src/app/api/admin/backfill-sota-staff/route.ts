@@ -10,8 +10,11 @@ const MAX_BATCH_OPS = 500;
 
 function trimSotaId(v: unknown): string | null {
   if (typeof v !== "string") return null;
-  const s = v.trim();
-  return s ? s : null;
+  const s = v.trim().toUpperCase();
+  if (!s) return null;
+  if (/^[VGSA][A-Z0-9]{7}$/.test(s)) return s;
+  if (/^(VR|SW|GP|GN)[A-Z0-9]{2,}$/.test(s)) return s;
+  return null;
 }
 
 /**

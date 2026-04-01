@@ -90,7 +90,8 @@ function getRoleFromUrl(
   const botNorm = rawBot.toLowerCase();
 
   if (roleNorm === "staff" || botNorm === "staff") return "staff";
-  if (roleNorm === "guest" || botNorm === "guest") return "guest";
+  // `vip` в клиентском боте — гостевой контур с приоритетным UX.
+  if (roleNorm === "guest" || roleNorm === "vip" || botNorm === "guest" || botNorm === "vip") return "guest";
 
   const botUsernameLike = normalizeBotUsername(rawBot);
   if (botUsernameLike && botUsernameLike === staffBot) return "staff";

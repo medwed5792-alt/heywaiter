@@ -7,6 +7,15 @@ import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { generateSotaId } from "@/lib/sota-id";
 
+function normalizeIncomingSotaId(raw: string | null): string | null {
+  const normalized = (raw ?? "").trim().toUpperCase();
+  if (!normalized) return null;
+  // Поддерживаем текущие семейства: 8-char canonical и префиксные VR/SW/GP/GN.
+  if (/^[VGSA][A-Z0-9]{7}$/.test(normalized)) return normalized;
+  if (/^(VR|SW|GP|GN)[A-Z0-9]{2,}$/.test(normalized)) return normalized;
+  return null;
+}
+
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
  * Возвращает запись сотрудника для Mini App: userId, staffId, onShift.
@@ -28,7 +37,11 @@ export async function GET(request: NextRequest) {
 
     const telegramId = searchParams.get("telegramId")?.trim();
     const platformIdParam = searchParams.get("platformId")?.trim();
-    const sotaIdParam = searchParams.get("sotaId")?.trim() || "";
+    const rawSotaIdParam = searchParams.get("sotaId");
+    const sotaIdParam = normalizeIncomingSotaId(rawSotaIdParam);
+    if (rawSotaIdParam && !sotaIdParam) {
+      return NextResponse.json({ error: "Некорректный sotaId" }, { status: 400 });
+    }
 
     const PLATFORM_ID_PARAM_BY_KEY: Record<string, string> = {
       tg: "tgId",

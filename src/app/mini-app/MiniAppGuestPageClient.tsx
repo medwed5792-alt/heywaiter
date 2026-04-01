@@ -157,24 +157,6 @@ function GuestSession() {
   const [ordersOpen, setOrdersOpen] = useState(false);
   const [revealCallWaiter, setRevealCallWaiter] = useState(false);
 
-  useEffect(() => {
-    if (!isSessionActive) return;
-    const id = window.setTimeout(() => setRevealCallWaiter(true), 72);
-    return () => clearTimeout(id);
-  }, [isSessionActive]);
-
-  if (!isSessionActive) {
-    return (
-      <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />
-    );
-  }
-
-  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
-  const currentUid = guestIdentity.currentUid ?? "";
-  const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
-  const isPrivate = activeSession?.isPrivate === true;
-  const ordersHidden = isPrivate && !isMaster;
-
   const orderLines = useMemo(() => {
     const map = new Map<string, { name: string; qty: number; totalAmount: number }>();
 
@@ -195,6 +177,24 @@ function GuestSession() {
   const grandTotal = useMemo(() => {
     return orderLines.reduce((acc, l) => acc + l.totalAmount, 0);
   }, [orderLines]);
+
+  useEffect(() => {
+    if (!isSessionActive) return;
+    const id = window.setTimeout(() => setRevealCallWaiter(true), 72);
+    return () => clearTimeout(id);
+  }, [isSessionActive]);
+
+  if (!isSessionActive) {
+    return (
+      <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />
+    );
+  }
+
+  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
+  const currentUid = guestIdentity.currentUid ?? "";
+  const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
+  const isPrivate = activeSession?.isPrivate === true;
+  const ordersHidden = isPrivate && !isMaster;
 
   return (
     <div className="space-y-5">

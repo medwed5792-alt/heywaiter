@@ -48,6 +48,10 @@ type TelegramWebAppInit = {
   close?: () => void;
 };
 
+function normalizeBotUsername(raw: string | undefined | null): string {
+  return (raw ?? "").trim().replace(/^@/, "").toLowerCase();
+}
+
 function getTelegramWebApp(): TelegramWebAppInit | undefined {
   if (typeof window === "undefined") return undefined;
   return (window as unknown as { Telegram?: { WebApp?: TelegramWebAppInit } }).Telegram?.WebApp;
@@ -253,7 +257,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
-  const subOrdersLoadedRef = useRef(false);
 
   const guestIdentity = useMemo(() => {
     const currentUid = resolveUnifiedCustomerUid({
@@ -516,8 +519,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   useEffect(() => {
     if (!isSdkReady) return;
     const tg = getTelegramWebApp();
-    const receiver = tg?.initDataUnsafe?.receiver?.username?.toLowerCase().trim() ?? "";
-    if (receiver === "waitertalk_bot") {
+    const receiver = normalizeBotUsername(tg?.initDataUnsafe?.receiver?.username);
+    const staffBot = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
+    if (receiver && staffBot && receiver === staffBot) {
       setIsGuestBlocked(true);
       setGuestBlockedReason("Откройте гостевое приложение из меню бота заведения");
       setIsInitializing(false);
@@ -712,29 +716,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const tableId = currentLocation.tableId;
 
     let rootOrders: GuestTableOrder[] = [];
-    let subOrders: GuestTableOrder[] = [];
-
-    const applyMerged = () => {
-      if (rootOrdersLoadedRef.current && rootOrders.length > 0) {
-        setCurrentTableOrders(rootOrders);
-        return;
-      }
-
-      if (subOrdersLoadedRef.current && subOrders.length > 0) {
-        setCurrentTableOrders(subOrders);
-        return;
-      }
-
-      if (rootOrdersLoadedRef.current) {
-        setCurrentTableOrders([]);
-        return;
-      }
-
-      setCurrentTableOrders(subOrdersLoadedRef.current ? subOrders : []);
-    };
 
     rootOrdersLoadedRef.current = false;
-    subOrdersLoadedRef.current = false;
 
     const parseOrdersSnap = (snap: any): GuestTableOrder[] => {
       return snap.docs.map((d: any) => parseGuestTableOrder(d.id, d.data() as Record<string, unknown>));
@@ -750,21 +733,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const unsubRoot = onSnapshot(qRoot, (snap) => {
       rootOrders = parseOrdersSnap(snap);
       rootOrdersLoadedRef.current = true;
-      applyMerged();
-    });
-
-    // Required subscription per spec: activeSessions/${venueId}_${tableId}/orders
-    const docId = `${venueId}_${tableId}`;
-    const ordersSubRef = collection(db, "activeSessions", docId, "orders");
-    const unsubSub = onSnapshot(ordersSubRef, (snap) => {
-      subOrders = parseOrdersSnap(snap);
-      subOrdersLoadedRef.current = true;
-      applyMerged();
+      setCurrentTableOrders(rootOrders);
     });
 
     return () => {
       unsubRoot();
-      unsubSub();
     };
   }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
 
@@ -1056,8 +1029,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
     },
     [
-      currentLocation.tableId,
-      currentLocation.venueId,
       guestBlockedReason,
       isGuestBlocked,
       isSessionActive,
@@ -1101,12 +1072,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
     },
     [
-      currentLocation.tableId,
-      currentLocation.venueId,
       guestIdentity.currentUid,
       guestBlockedReason,
       isGuestBlocked,
-      isSessionActive,
     ]
   );
 

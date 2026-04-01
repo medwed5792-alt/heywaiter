@@ -1,4 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore";
+import { normalizeSotaId } from "@/lib/sota-id";
 
 /**
  * Проверка доступа персонала к площадке по документу preorder_staff_gate/{firebaseUid}.
@@ -29,6 +30,9 @@ export async function verifyPreorderStaffForVenue(
   if (!venueSnap.exists) return false;
   const sotaId = venueSnap.data()?.sotaId;
   if (typeof sotaId !== "string" || !sotaId.trim()) return false;
+  const normalizedVenueSotaId = normalizeSotaId(sotaId);
 
-  return venueSotaIds.some((x) => typeof x === "string" && x.trim() === sotaId.trim());
+  return venueSotaIds.some(
+    (x) => typeof x === "string" && normalizeSotaId(x) === normalizedVenueSotaId
+  );
 }
