@@ -1,11 +1,12 @@
 import { ImageResponse } from "next/og";
 
-/** Бамп при смене превью в Telegram / соцсетях (или задайте NEXT_PUBLIC_SOTA_OG_REVISION в CI). */
-export const alt = "HeyWaiter — SOTA";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+/**
+ * Route Handler вместо opengraph-image.tsx: не участвует в статическом prerender при build.
+ * На Windows с кириллицей в пути к проекту @vercel/og при prerender давал TypeError: Invalid URL.
+ */
+export const dynamic = "force-dynamic";
 
-export default function OpenGraphImage() {
+export async function GET() {
   return new ImageResponse(
     (
       <div
@@ -27,6 +28,6 @@ export default function OpenGraphImage() {
         <span style={{ marginTop: 24, fontSize: 28, fontWeight: 500, color: "#94a3b8" }}>SOTA</span>
       </div>
     ),
-    { ...size }
+    { width: 1200, height: 630 }
   );
 }

@@ -13,16 +13,23 @@ import { Suspense } from "react";
 const SOTA_GATEWAY_OG_REVISION =
   process.env.NEXT_PUBLIC_SOTA_OG_REVISION?.trim() || "2.0";
 
+const DEFAULT_SITE_ORIGIN = "https://heywaiter.vercel.app";
+
 function gatewayMetadataBase(): URL {
   const raw =
     process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
     process.env.VERCEL_URL?.trim() ||
-    "https://heywaiter.vercel.app";
+    DEFAULT_SITE_ORIGIN;
   const normalized = raw.replace(/\/$/, "");
-  if (/^https?:\/\//i.test(normalized)) {
-    return new URL(normalized);
+  try {
+    if (/^https?:\/\//i.test(normalized)) {
+      return new URL(normalized);
+    }
+    const withProto = `https://${normalized.replace(/^https?:\/\//, "")}`;
+    return new URL(withProto);
+  } catch {
+    return new URL(DEFAULT_SITE_ORIGIN);
   }
-  return new URL(`https://${normalized.replace(/^https?:\/\//, "")}`);
 }
 
 export async function generateMetadata(): Promise<Metadata> {
