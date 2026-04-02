@@ -343,6 +343,7 @@ export function SettingsHallsSection() {
       setTables(tableList);
       setLoaded(true);
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount load; VENUE_ID-scoped refs
   }, []);
 
   const loadHallsAndTables = async () => {

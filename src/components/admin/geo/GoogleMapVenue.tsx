@@ -128,6 +128,7 @@ export function GoogleMapVenue({
       markerRef.current = null;
       autocompleteRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- init on apiKey; geometry in next effect
   }, [apiKey]);
 
   useEffect(() => {

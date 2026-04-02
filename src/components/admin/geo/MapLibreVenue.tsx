@@ -149,6 +149,7 @@ export function MapLibreVenue({ lat, lng, radius, onLatLngChange, staffGeos = []
       mapRef.current = null;
       markerRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- init once; sync in next effect
   }, []);
 
   useEffect(() => {

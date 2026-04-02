@@ -39,6 +39,7 @@ interface TableRow {
 }
 
 const LATE_NOTIFY_INTERVAL_MS = 15 * 60 * 1000; // 15 мин
+const BOOKING_MAX_AGE_FOR_ALERT_MS = 12 * 60 * 60 * 1000; // 12 часов — старые брони не спамят в ленту
 
 function toStartAt(date: string, startTime: string): Date {
   const [h, m] = startTime.split(":").map(Number);
@@ -600,8 +601,6 @@ export default function AdminBookingsPage() {
       toast.error("Ошибка переключателя");
     }
   }, [bookingSwitch.enabled]);
-
-  const BOOKING_MAX_AGE_FOR_ALERT_MS = 12 * 60 * 60 * 1000; // 12 часов — старые брони не спамят в ленту
 
   const sendLateReminder = useCallback(async (bookingId: string) => {
     try {

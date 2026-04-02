@@ -224,7 +224,10 @@ export default function AdminSchedulePage() {
     [cleanEntries, filterDate, filterRole]
   );
 
-  const managedVenues = useMemo(() => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]), [venues, VENUE_ID]);
+  const managedVenues = useMemo(
+    () => (venues.length > 0 ? venues : [{ id: VENUE_ID, name: "Текущая точка", address: "" } as Venue]),
+    [venues]
+  );
 
   /** Роли, которые реально есть среди активных сотрудников — только их показываем во вкладках фильтра */
   const rolesPresent = useMemo(() => {

@@ -406,7 +406,7 @@ function AdminDashboardContent() {
         setEndOfDayLoading(false);
       }
     },
-    [staffFirstName]
+    [staffFirstName, venueId]
   );
 
   useEffect(() => {
@@ -513,7 +513,7 @@ function AdminDashboardContent() {
       setStaffInsideById(next);
     });
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
@@ -538,7 +538,7 @@ function AdminDashboardContent() {
       }
     );
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   // Авто-сброс «забытых» смен: сотрудники с onShift из venues/.../staff, смена с вчера — сбросить
   useEffect(() => {
@@ -570,7 +570,7 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [operatingHours, venueType, performEndOfDayReset]);
+  }, [operatingHours, venueType, performEndOfDayReset, venueId]);
 
   useEffect(() => {
     if (!venueType || venueType !== "full_service") return;
@@ -666,7 +666,7 @@ function AdminDashboardContent() {
       }
     );
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   // onShift только из venues/venue_andrey_alt/staff (единая точка с Mini App)
   useEffect(() => {
@@ -683,7 +683,7 @@ function AdminDashboardContent() {
       setOnShiftCount(count);
     });
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   // Список официантов на смене для селекта (имена из root staff, onShift из venue staff)
   const onShiftWaitersFromVenue = useMemo(() => {
@@ -797,7 +797,7 @@ function AdminDashboardContent() {
       });
     });
     return () => unsub();
-  }, [venueType]);
+  }, [venueType, venueId]);
 
   // Cleanup: убираем «фантомные» номера столов из профиля сотрудника,
   // чтобы карточки/предвыбор не опирались на несуществующие таблицы.
@@ -855,7 +855,7 @@ function AdminDashboardContent() {
       setAssignmentsWaiterRawByTable((prev) => ({ ...prev, ...nextRaw }));
     });
     return () => unsub();
-  }, [tables.length]);
+  }, [tables.length, venueId]);
 
   const tableIds = tables.map((t) => t?.id).filter(Boolean).join(",");
   useEffect(() => {
@@ -887,11 +887,15 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [tableIds, tables]);
+  }, [tableIds, tables, venueId]);
 
-  const guestIds = Object.values(sessionsByTable)
-    .map((s) => s.guestId)
-    .filter(Boolean) as string[];
+  const guestIds = useMemo(
+    () =>
+      Object.values(sessionsByTable)
+        .map((s) => s.guestId)
+        .filter(Boolean) as string[],
+    [sessionsByTable]
+  );
   const [guestTypeByGuestId, setGuestTypeByGuestId] = useState<Record<string, string>>({});
   useEffect(() => {
     if (guestIds.length === 0) {
@@ -928,7 +932,7 @@ function AdminDashboardContent() {
     return () => {
       cancelled = true;
     };
-  }, [guestIds.join(",")]);
+  }, [guestIds, venueId]);
 
   useEffect(() => {
     const q = query(
@@ -963,7 +967,7 @@ function AdminDashboardContent() {
       }
     });
     return () => unsub();
-  }, []);
+  }, [venueId, isKnownTableFromNotification]);
 
   // На случай, если SOS пришёл раньше загрузки справочника столов — пересчитаем активную модалку после обновления `tables`.
   useEffect(() => {
@@ -971,7 +975,7 @@ function AdminDashboardContent() {
       (e) => e.type === "sos" && e.read === false && isKnownTableFromNotification(e.tableId)
     );
     setActiveSos(sosValid ?? null);
-  }, [feedEvents, tables, isKnownTableFromNotification]);
+  }, [feedEvents, tables, isKnownTableFromNotification, venueId]);
 
   useEffect(() => {
     const q = query(
@@ -1005,7 +1009,7 @@ function AdminDashboardContent() {
       }
     });
     return () => unsub();
-  }, []);
+  }, [venueId]);
 
   const archiveEvent = useCallback(async (event: FeedEvent) => {
     const eventId = event?.id ?? "";
@@ -1030,7 +1034,7 @@ function AdminDashboardContent() {
       console.error("[archiveEvent] удаление не прошло:", ref.path, e);
       toast.error(msg);
     }
-  }, []);
+  }, [venueId]);
 
   const saveTableWaiter = useCallback(
     async (tableId: string, staffId: string) => {
@@ -1050,7 +1054,7 @@ function AdminDashboardContent() {
         toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
       }
     },
-    []
+    [venueId]
   );
 
   const closeTableConfirm = useCallback(async () => {
@@ -1112,7 +1116,7 @@ function AdminDashboardContent() {
       }, { merge: true });
     });
     await batch.commit();
-  }, [sessionsByTable]);
+  }, [sessionsByTable, venueId]);
 
   const confirmCloseVenueWithTables = useCallback(async () => {
     if (closeVenueConfirm !== true) return;
@@ -1150,7 +1154,7 @@ function AdminDashboardContent() {
     } finally {
       setToggleVenueLoading(false);
     }
-  }, [closeVenueConfirm, closeAllTablesAndVenue, staffFirstName]);
+  }, [closeVenueConfirm, closeAllTablesAndVenue, staffFirstName, venueId]);
 
   useEffect(() => {
     const q = query(
@@ -1190,13 +1194,13 @@ function AdminDashboardContent() {
       );
     });
     return () => unsubClosed();
-  }, []);
+  }, [venueId]);
 
   const openGuestModal = useCallback(async (guestId: string) => {
     const snap = await getDoc(doc(db, "venues", venueId, "guests", guestId));
     if (snap.exists()) setGuestModal({ id: snap.id, ...snap.data() } as Guest);
     else toast.error("Гость не найден");
-  }, []);
+  }, [venueId]);
 
   const nextBookingInMinutes = useMemo(() => {
     const bookings = bookingsByTable ?? {};
@@ -1282,7 +1286,7 @@ function AdminDashboardContent() {
 
   const safeStaffList = staffList ?? [];
   const safeBookingsByTable = bookingsByTable ?? {};
-  const safeTables = tables ?? [];
+  const safeTables = useMemo(() => tables ?? [], [tables]);
   const sortedTables = useMemo(() => {
     const list = [...safeTables];
     list.sort((a, b) => {
@@ -1404,7 +1408,7 @@ function AdminDashboardContent() {
     } finally {
       setToggleVenueLoading(false);
     }
-  }, [toggleVenueLoading, isVenueClosed, occupiedCount, staffFirstName]);
+  }, [toggleVenueLoading, isVenueClosed, occupiedCount, staffFirstName, venueId]);
 
   /** Время закрытия по графику сегодня и минут до закрытия (null если нет графика или уже после закрытия) */
   const scheduleCloseTimeAndMins = useMemo(() => {
@@ -1449,7 +1453,7 @@ function AdminDashboardContent() {
     maybeCreateReminder();
     const interval = setInterval(maybeCreateReminder, 15 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [manualStatus, scheduleCloseTimeAndMins]);
+  }, [manualStatus, scheduleCloseTimeAndMins, venueId]);
 
   if (venueLoading) {
     return (

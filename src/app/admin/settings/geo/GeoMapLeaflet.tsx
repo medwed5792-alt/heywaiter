@@ -81,6 +81,7 @@ export function GeoMapLeaflet({
       circleRef.current = null;
       layerRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- init once; sync in next effect
   }, []);
 
   useEffect(() => {
