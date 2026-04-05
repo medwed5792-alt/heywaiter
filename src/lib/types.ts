@@ -572,6 +572,10 @@ export interface ActiveSession {
   guestId?: string;
   waiterId?: string;
   waiterDisplayName?: string;
+  /** Явное поле сессии: закреплённый staff id (swid) — при закрытии визита подставляется из стола. */
+  assignedStaffId?: string;
+  /** Агрегат для UI: swid из полей сессии (assignedStaffId | waiterId | assignments.waiter). */
+  resolvedWaiterStaffId?: string;
   /** UID первого вошедшего гостя (Master). */
   masterId?: string;
   /** Участники стола (коллективная сессия). */
@@ -580,7 +584,7 @@ export interface ActiveSession {
   isPrivate?: boolean;
   /** Закреплённые сотрудники по ролям за этим столом (для Stealth Routing) */
   assignments?: TableAssignments;
-  status: "check_in_success" | "awaiting_guest_feedback" | "table_conflict" | "closed";
+  status: "check_in_success" | "awaiting_guest_feedback" | "completed" | "table_conflict" | "closed";
   closedAt?: unknown;
   /** После оценки визита ЛПР в Дашборде — чтобы не показывать повторно */
   ratedAt?: unknown;

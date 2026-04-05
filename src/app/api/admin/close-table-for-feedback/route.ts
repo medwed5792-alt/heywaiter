@@ -6,6 +6,7 @@ import {
   activeSessionsIndexDocIdForTelegramUser,
   collectTelegramNumericIdsFromSessionDoc,
 } from "@/lib/active-sessions-index";
+import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "session_mismatch" }, { status: 400 });
     }
     const st = String(sData.status ?? "").trim();
-    if (st !== "check_in_success" && st !== "awaiting_guest_feedback") {
+    if (st !== "check_in_success" && st !== "awaiting_guest_feedback" && st !== "completed") {
       return NextResponse.json({ error: "session_not_active" }, { status: 409 });
     }
 
@@ -49,12 +50,14 @@ export async function POST(request: NextRequest) {
     const tableSnap = await tableRef.get();
     const existing = tableSnap.exists ? (tableSnap.data() ?? {}) : {};
     const assignments = (existing.assignments as Record<string, string> | undefined) ?? {};
+    const waiterSwid = getWaiterIdFromTablePayload(existing as Record<string, unknown>);
 
     const batch = fs.batch();
     batch.update(sessionRef, {
       status: "awaiting_guest_feedback",
       feedbackRequestedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
+      ...(waiterSwid ? { assignedStaffId: waiterSwid } : {}),
     });
     batch.set(
       tableRef,

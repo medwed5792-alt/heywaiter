@@ -1,15 +1,55 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
+import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 
 type Body = {
   venueId?: string;
   customerUid?: string;
   amount?: unknown;
   staffId?: string | null;
+  /** Чаевые с привязкой к activeSessions без корзины предзаказа */
+  sessionTip?: boolean;
+  activeSessionId?: string;
 };
+
+function sessionAllowsFeedbackTip(statusRaw: string): boolean {
+  const s = statusRaw.trim();
+  const u = s.toUpperCase();
+  return (
+    s === "awaiting_guest_feedback" ||
+    u === "AWAITING_FEEDBACK" ||
+    s === "completed" ||
+    u === "COMPLETED"
+  );
+}
+
+async function verifySessionTipContext(args: {
+  firestore: Firestore;
+  sessionId: string;
+  venueId: string;
+  customerUid: string;
+  staffId: string;
+}): Promise<boolean> {
+  const snap = await args.firestore.collection("activeSessions").doc(args.sessionId).get();
+  if (!snap.exists) return false;
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (String(data.venueId ?? "").trim() !== args.venueId) return false;
+  const st = String(data.status ?? "");
+  if (!sessionAllowsFeedbackTip(st)) return false;
+  const resolved = resolveWaiterStaffIdFromSessionDoc(data);
+  if (!resolved || resolved !== args.staffId) return false;
+  const masterId = typeof data.masterId === "string" ? data.masterId.trim() : "";
+  if (guestCustomerUidsMatch(masterId, args.customerUid)) return true;
+  for (const p of Array.isArray(data.participants) ? data.participants : []) {
+    const uid = typeof (p as { uid?: string })?.uid === "string" ? (p as { uid: string }).uid.trim() : "";
+    if (uid && guestCustomerUidsMatch(uid, args.customerUid)) return true;
+  }
+  return false;
+}
 
 function parseAmount(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return Math.max(1, Math.floor(raw));
@@ -37,6 +77,8 @@ export async function POST(request: NextRequest) {
     const venueId = body.venueId?.trim() ?? "";
     const customerUid = body.customerUid?.trim() ?? "";
     const staffIdFromBody = body.staffId?.trim() ?? "";
+    const sessionTip = body.sessionTip === true;
+    const activeSessionId = body.activeSessionId?.trim() ?? "";
     const amount = parseAmount(body.amount);
     if (!venueId || !customerUid) {
       return NextResponse.json({ error: "venueId и customerUid обязательны" }, { status: 400 });
@@ -47,24 +89,42 @@ export async function POST(request: NextRequest) {
     const uid = decoded.uid;
     const firestore = getAdminFirestore();
 
-    const cartRef = firestore.collection("venues").doc(venueId).collection("preorder_carts").doc(customerUid);
-    const cartSnap = await cartRef.get();
-    if (!cartSnap.exists) {
-      return NextResponse.json({ error: "Корзина не найдена" }, { status: 404 });
-    }
-    const cart = (cartSnap.data() ?? {}) as Record<string, unknown>;
-    if (cart.authUid !== uid) {
-      return NextResponse.json({ error: "Нет доступа к этой корзине" }, { status: 403 });
-    }
+    let candidateStaffId = staffIdFromBody;
 
-    const candidateStaffId =
-      staffIdFromBody ||
-      (typeof cart.completedByStaffId === "string" ? cart.completedByStaffId.trim() : "") ||
-      (typeof cart.receivedByStaffId === "string" ? cart.receivedByStaffId.trim() : "") ||
-      (typeof cart.confirmedByStaffId === "string" ? cart.confirmedByStaffId.trim() : "");
+    if (sessionTip && activeSessionId) {
+      if (!staffIdFromBody) {
+        return NextResponse.json({ error: "staffId обязателен для чаевых по сессии" }, { status: 400 });
+      }
+      const ok = await verifySessionTipContext({
+        firestore,
+        sessionId: activeSessionId,
+        venueId,
+        customerUid,
+        staffId: staffIdFromBody,
+      });
+      if (!ok) {
+        return NextResponse.json({ error: "Сессия не найдена или чаевые недоступны" }, { status: 403 });
+      }
+    } else {
+      const cartRef = firestore.collection("venues").doc(venueId).collection("preorder_carts").doc(customerUid);
+      const cartSnap = await cartRef.get();
+      if (!cartSnap.exists) {
+        return NextResponse.json({ error: "Корзина не найдена" }, { status: 404 });
+      }
+      const cart = (cartSnap.data() ?? {}) as Record<string, unknown>;
+      if (cart.authUid !== uid) {
+        return NextResponse.json({ error: "Нет доступа к этой корзине" }, { status: 403 });
+      }
 
-    if (!candidateStaffId) {
-      return NextResponse.json({ error: "Не удалось определить сотрудника для чаевых" }, { status: 400 });
+      candidateStaffId =
+        staffIdFromBody ||
+        (typeof cart.completedByStaffId === "string" ? cart.completedByStaffId.trim() : "") ||
+        (typeof cart.receivedByStaffId === "string" ? cart.receivedByStaffId.trim() : "") ||
+        (typeof cart.confirmedByStaffId === "string" ? cart.confirmedByStaffId.trim() : "");
+
+      if (!candidateStaffId) {
+        return NextResponse.json({ error: "Не удалось определить сотрудника для чаевых" }, { status: 400 });
+      }
     }
 
     const staffSnap = await firestore.collection("staff").doc(candidateStaffId).get();

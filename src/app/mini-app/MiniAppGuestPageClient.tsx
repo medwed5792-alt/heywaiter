@@ -11,7 +11,7 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
 import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
 import { GuestTableMenuGateway } from "@/components/mini-app/GuestTableMenuGateway";
-import { GuestFeedbackModal } from "@/components/mini-app/GuestFeedbackModal";
+import { GuestFeedbackStars } from "@/components/mini-app/GuestFeedbackStars";
 
 type GuestTab = "service" | "cabinet";
 
@@ -515,6 +515,8 @@ function MiniAppScreenRouter() {
     systemConfig,
     guestAwaitingTableFeedback,
     completeTableFeedbackSession,
+    feedbackTargetStaffId,
+    guestIdentity,
   } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
 
@@ -598,14 +600,19 @@ function MiniAppScreenRouter() {
         </main>
       </div>
 
-      {guestAtTable && guestAwaitingTableFeedback ? (
-        <GuestFeedbackModal
-          open
-          onClose={() => void completeTableFeedbackSession()}
-          onLeaveTip={async () => {}}
-          tipsEnabled={false}
+      {guestAtTable &&
+      guestAwaitingTableFeedback &&
+      activeSession?.id &&
+      currentLocation.venueId?.trim() &&
+      guestIdentity.currentUid?.trim() ? (
+        <GuestFeedbackStars
+          walletStaffId={feedbackTargetStaffId}
+          venueId={currentLocation.venueId.trim()}
+          customerUid={guestIdentity.currentUid.trim()}
+          activeSessionId={activeSession.id}
           title="Отзыв и чаевые"
-          subtitle="Заведение закрыло ваш стол. Поставьте оценку — после «Готово» вы вернётесь к списку мест."
+          subtitle="Заведение завершило визит. Звёзды и кнопка «Спасибо» привязаны к официанту из сессии (обновляется в реальном времени)."
+          onFinalize={() => void completeTableFeedbackSession()}
         />
       ) : null}
     </>

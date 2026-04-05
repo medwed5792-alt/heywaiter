@@ -73,7 +73,7 @@ export async function verifyGuestSeatStillActive(
     collection(db, "activeSessions"),
     where("venueId", "==", venueId.trim()),
     where("tableId", "==", tableId.trim()),
-    where("status", "in", ["check_in_success", "awaiting_guest_feedback"]),
+    where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed"]),
     limit(1)
   );
   const snap = await getDocs(q);

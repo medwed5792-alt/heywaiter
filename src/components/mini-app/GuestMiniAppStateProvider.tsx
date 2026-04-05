@@ -41,6 +41,10 @@ import {
   writeWelcomeDone,
 } from "@/lib/guest-table-persistence";
 import { guestSessionClaim, guestSessionClear, guestSessionRecover } from "@/lib/guest-session-bridge";
+import {
+  normalizeActiveSessionStatus,
+  resolveWaiterStaffIdFromSessionDoc,
+} from "@/lib/active-session-waiter";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -233,6 +237,11 @@ type GuestMiniAppContextValue = {
   guestAwaitingTableFeedback: boolean;
   /** После отзыва: закрыть сессию на сервере и выйти со стола в UI. */
   completeTableFeedbackSession: () => Promise<void>;
+  /**
+   * swid для чаевых в фазе отзыва: из последнего снимка activeSessions (onSnapshot),
+   * иначе fallback — currentWaiterId с документа стола.
+   */
+  feedbackTargetStaffId: string | null;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -816,7 +825,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
-      where("status", "in", ["check_in_success", "awaiting_guest_feedback"]),
+      where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed"]),
       limit(1)
     );
 
@@ -851,14 +860,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       const tableNumber = typeof d.tableNumber === "number" ? d.tableNumber : 0;
       const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
-      const sessionStatus: ActiveSession["status"] =
-        rawStatus === "awaiting_guest_feedback"
-          ? "awaiting_guest_feedback"
-          : rawStatus === "closed"
-            ? "closed"
-            : rawStatus === "table_conflict"
-              ? "table_conflict"
-              : "check_in_success";
+      const sessionStatus = normalizeActiveSessionStatus(rawStatus);
+      const sessionAssigned =
+        typeof d.assignedStaffId === "string" && d.assignedStaffId.trim() ? d.assignedStaffId.trim() : undefined;
+      const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
 
       const session: ActiveSession = {
         id: snap.docs[0]!.id,
@@ -869,6 +874,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         isPrivate,
         participants: parsedParticipants,
         status: sessionStatus,
+        assignedStaffId: sessionAssigned,
+        resolvedWaiterStaffId: resolvedWaiter,
+        waiterId: typeof d.waiterId === "string" && d.waiterId.trim() ? d.waiterId.trim() : undefined,
         createdAt: d.createdAt ?? null,
         updatedAt: d.updatedAt ?? null,
       };
@@ -1282,9 +1290,17 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   );
 
   const guestAwaitingTableFeedback = useMemo(
-    () => activeSession?.status === "awaiting_guest_feedback",
+    () =>
+      activeSession?.status === "awaiting_guest_feedback" || activeSession?.status === "completed",
     [activeSession?.status]
   );
+
+  const feedbackTargetStaffId = useMemo(() => {
+    if (!guestAwaitingTableFeedback) return null;
+    const fromSession = activeSession?.resolvedWaiterStaffId?.trim();
+    if (fromSession) return fromSession;
+    return assignedStaffId?.trim() || null;
+  }, [guestAwaitingTableFeedback, activeSession?.resolvedWaiterStaffId, assignedStaffId]);
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
@@ -1338,6 +1354,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setTablePrivacyAllowJoin,
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
+      feedbackTargetStaffId,
     }),
     [
       guestIdentity,
@@ -1371,6 +1388,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setTablePrivacyAllowJoin,
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
+      feedbackTargetStaffId,
     ]
   );
 

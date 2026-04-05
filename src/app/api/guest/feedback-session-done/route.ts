@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       .collection("activeSessions")
       .where("venueId", "==", vrId)
       .where("tableId", "==", tableId)
-      .where("status", "==", "awaiting_guest_feedback")
+      .where("status", "in", ["awaiting_guest_feedback", "completed"])
       .limit(1)
       .get();
 
