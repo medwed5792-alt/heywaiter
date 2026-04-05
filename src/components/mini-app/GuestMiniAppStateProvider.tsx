@@ -32,6 +32,14 @@ import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
+import {
+  clearPersistedGuestSeat,
+  readPersistedGuestSeat,
+  readWelcomeDone,
+  verifyGuestSeatStillActive,
+  writePersistedGuestSeat,
+  writeWelcomeDone,
+} from "@/lib/guest-table-persistence";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -234,6 +242,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     venueId: null,
     tableId: null,
   });
+  const currentLocationRef = useRef(currentLocation);
+  useEffect(() => {
+    currentLocationRef.current = currentLocation;
+  }, [currentLocation]);
+  const guestSeatRestoreRanRef = useRef(false);
+
   const [visitHistory, setVisitHistory] = useState<GuestVisitEntry[]>([]);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
   const [participants, setParticipants] = useState<ActiveSessionParticipant[]>([]);
@@ -345,6 +359,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const switchLocation = useCallback(
     async (venueId: string | null, tableId: string | null) => {
+      const prev = currentLocationRef.current;
+      const hadTable = Boolean(prev.venueId?.trim() && prev.tableId?.trim());
       const nextVenueId = venueId?.trim() || null;
       const nextTableId = tableId?.trim() || null;
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
@@ -352,12 +368,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setParticipants([]);
       setCurrentTableOrders([]);
       if (nextVenueId && !nextTableId) {
+        clearPersistedGuestSeat();
         setVisitHistory((prev) => {
           const deduped = prev.filter((v) => v.venueId !== nextVenueId);
           return [{ venueId: nextVenueId }, ...deduped].slice(0, 5);
         });
       }
       if (!nextVenueId && !nextTableId) {
+        if (hadTable) clearPersistedGuestSeat();
         await refreshVisitHistory();
       }
     },
@@ -461,12 +479,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setIsSessionActive(true);
       return;
     }
-    try {
-      const done = sessionStorage.getItem(`sota_welcome_${v}_${t}`) === "1";
-      setIsSessionActive(done);
-    } catch {
-      setIsSessionActive(false);
-    }
+    setIsSessionActive(readWelcomeDone(v, t));
   }, [currentLocation.venueId, currentLocation.tableId]);
 
   // Тот же currentWaiterId, что и на бэкенде при pushCallWaiterNotification.
@@ -566,7 +579,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
         }
-        await switchLocation(null, null);
+        // Не сбрасываем стол: при открытии из меню start_param пуст — восстановим из localStorage, когда появится UID.
         setIsInitializing(false);
         return;
       }
@@ -583,6 +596,47 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     void resolveRoute();
   }, [isSdkReady, searchParams, switchLocation]);
+
+  // Восстановление стола после перезапуска Mini App (нет start_param / нет v&t в URL).
+  useEffect(() => {
+    if (!isSdkReady) return;
+    if (guestSeatRestoreRanRef.current) return;
+
+    const inTg = isTelegramContext();
+    const sp = getStartParamFromTelegramWebApp()?.trim() ?? "";
+    const vParam = (searchParams.get("v") ?? "").trim();
+    const tParam = (searchParams.get("t") ?? "").trim();
+    if (inTg && sp) return;
+    if (!inTg && vParam && tParam) return;
+
+    const uid = guestIdentity.currentUid?.trim();
+    if (!uid) return;
+
+    const persisted = readPersistedGuestSeat();
+    if (!persisted || persisted.participantUid !== uid) {
+      guestSeatRestoreRanRef.current = true;
+      return;
+    }
+
+    guestSeatRestoreRanRef.current = true;
+    void (async () => {
+      const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
+      if (!ok) {
+        clearPersistedGuestSeat();
+        return;
+      }
+      await switchLocation(persisted.venueId, persisted.tableId);
+    })();
+  }, [isSdkReady, guestIdentity.currentUid, switchLocation, searchParams]);
+
+  // Запоминаем открытый стол для повторных заходов в приложение.
+  useEffect(() => {
+    const uid = guestIdentity.currentUid?.trim();
+    const v = currentLocation.venueId?.trim();
+    const t = currentLocation.tableId?.trim();
+    if (!uid || !v || !t || !activeSession) return;
+    writePersistedGuestSeat(v, t, uid);
+  }, [activeSession, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
 
   // Poll table status. When the backend marks it as "closed" we return the guest to dashboard.
   useEffect(() => {
@@ -988,11 +1042,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const v = currentLocation.venueId?.trim();
     const t = currentLocation.tableId?.trim();
     if (v && t) {
-      try {
-        sessionStorage.setItem(`sota_welcome_${v}_${t}`, "1");
-      } catch {
-        // ignore
-      }
+      writeWelcomeDone(v, t);
     }
     setIsSessionActive(true);
   }, [currentLocation.venueId, currentLocation.tableId]);
