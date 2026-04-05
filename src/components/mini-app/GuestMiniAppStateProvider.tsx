@@ -40,6 +40,11 @@ import {
   writePersistedGuestSeat,
   writeWelcomeDone,
 } from "@/lib/guest-table-persistence";
+import {
+  guestSessionContextBind,
+  guestSessionContextClear,
+  guestSessionContextRecover,
+} from "@/lib/guest-session-context-api";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -378,6 +383,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const hadTable = Boolean(prev.venueId?.trim() && prev.tableId?.trim());
       const nextVenueId = venueId?.trim() || null;
       const nextTableId = tableId?.trim() || null;
+      const nextFullTable = Boolean(nextVenueId && nextTableId);
+      if (hadTable && !nextFullTable) {
+        const tg = getTelegramWebApp();
+        const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+        if (init) void guestSessionContextClear(init);
+      }
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
       setActiveSession(null);
       setParticipants([]);
@@ -606,6 +617,27 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     void (async () => {
       const inTg = isTelegramContext();
 
+      const bindGuestActiveSession = (venueId: string, tableId: string) => {
+        const tg = getTelegramWebApp();
+        const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+        const v = venueId.trim();
+        const t = tableId.trim();
+        if (init && v && t) void guestSessionContextBind(init, v, t);
+      };
+
+      const tryRecoverGuestFromServerIndex = async (): Promise<boolean> => {
+        const tg = getTelegramWebApp();
+        const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+        if (!init) return false;
+        const rec = await guestSessionContextRecover(init);
+        if (cancelled || !rec.active) return false;
+        const v = rec.vrId?.trim() ?? "";
+        const t = rec.tableId?.trim() ?? "";
+        if (!v || !t) return false;
+        await switchLocation(v, t);
+        return true;
+      };
+
       if (inTg) {
         const sp = getStartParamFromTelegramWebApp();
         if (sp) {
@@ -622,8 +654,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             try {
               const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
               if (cancelled) return;
-              if (resolved) {
-                await switchLocation(resolved.venueId, resolved.tableId || null);
+              if (resolved?.venueId && resolved.tableId) {
+                await switchLocation(resolved.venueId, resolved.tableId);
+                bindGuestActiveSession(resolved.venueId, resolved.tableId);
                 finish();
                 return;
               }
@@ -633,12 +666,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           }
 
           const payload = parseStartParamPayload(decoded);
-          if (payload) {
+          if (payload?.venueId && payload.tableId) {
             if (cancelled) return;
-            await switchLocation(payload.venueId, payload.tableId || null);
+            await switchLocation(payload.venueId, payload.tableId);
+            bindGuestActiveSession(payload.venueId, payload.tableId);
             finish();
             return;
           }
+        }
+
+        if (await tryRecoverGuestFromServerIndex()) {
+          if (cancelled) return;
+          finish();
+          return;
         }
 
         const uid = guestIdentity.currentUid?.trim() ?? "";
