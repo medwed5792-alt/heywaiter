@@ -2,6 +2,7 @@
  * Сохранение «гость сидит за столом» между перезапусками Mini App (Telegram без start_param).
  */
 import { collection, getDocs, limit, query, where, type Firestore } from "firebase/firestore";
+import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 
 const SEAT_KEY = "heywaiter_guest_seat_v1";
 
@@ -79,12 +80,12 @@ export async function verifyGuestSeatStillActive(
   if (snap.empty) return false;
   const d = (snap.docs[0].data() ?? {}) as Record<string, unknown>;
   const masterId = typeof d.masterId === "string" ? d.masterId.trim() : "";
-  if (masterId === uid) return true;
+  if (guestCustomerUidsMatch(masterId, uid)) return true;
   const raw = Array.isArray(d.participants) ? d.participants : [];
   for (const p of raw) {
     const x = (p ?? {}) as Record<string, unknown>;
     const u = typeof x.uid === "string" ? x.uid.trim() : "";
-    if (u === uid) return true;
+    if (u && guestCustomerUidsMatch(u, uid)) return true;
   }
   return false;
 }

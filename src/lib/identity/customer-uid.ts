@@ -69,8 +69,21 @@ export function resolveUnifiedCustomerUid(args: {
 }
 
 /**
- * Кандидаты путей users/{uid}/visits при смене формата UID (tg: ↔ telegram_user_id:).
+ * Один и тот же гость в разных формах записи (tg: ↔ telegram_user_id:, anon: ↔ anonymous_id:).
  */
+export function guestCustomerUidsMatch(a: string, b: string): boolean {
+  const ta = String(a ?? "").trim();
+  const tb = String(b ?? "").trim();
+  if (!ta || !tb) return false;
+  if (ta === tb) return true;
+  const setB = new Set(visitHistoryUidCandidates(tb));
+  for (const c of visitHistoryUidCandidates(ta)) {
+    if (setB.has(c)) return true;
+  }
+  return false;
+}
+
+/** Кандидаты путей users/{uid}/visits при смене формата UID (tg: ↔ telegram_user_id:). */
 export function visitHistoryUidCandidates(primaryUid: string): string[] {
   const u = primaryUid.trim();
   if (!u) return [];

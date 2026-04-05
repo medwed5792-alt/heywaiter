@@ -29,7 +29,7 @@ import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
-import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
+import { guestCustomerUidsMatch, resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import {
@@ -246,7 +246,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   useEffect(() => {
     currentLocationRef.current = currentLocation;
   }, [currentLocation]);
-  const guestSeatRestoreRanRef = useRef(false);
 
   const [visitHistory, setVisitHistory] = useState<GuestVisitEntry[]>([]);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
@@ -255,6 +254,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [systemConfig, setSystemConfig] = useState<SotaSystemConfig>(DEFAULT_SYSTEM_CONFIG);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSdkReady, setIsSdkReady] = useState(false);
+  /** В Telegram ждём user id (или таймаут опроса), чтобы не «сжечь» восстановление стола на anon:… */
+  const [telegramIdentityReady, setTelegramIdentityReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
@@ -292,22 +293,36 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [telegramUid, visitorId]);
 
-  // До isSdkReady initData может быть пустым; после ready() и при поздней подгрузке — опрос как в StaffProvider.
+  // До isSdkReady initData может быть пустым; после ready() — опрос user id; затем один конвейер bootstrap.
   useEffect(() => {
     if (!isSdkReady || typeof window === "undefined") return;
+    const tg = getTelegramWebApp();
+    if (!tg || !isTelegramContext()) {
+      setTelegramIdentityReady(true);
+      return;
+    }
     const read = () => getTelegramUserIdFromWebApp(getTelegramWebApp());
     const apply = () => {
       const id = read();
       if (id) setTelegramUid(id);
       return Boolean(id);
     };
-    if (apply()) return;
+    if (apply()) {
+      setTelegramIdentityReady(true);
+      return;
+    }
     let n = 0;
     const timer = window.setInterval(() => {
       n += 1;
-      if (apply() || n >= 17) window.clearInterval(timer);
+      if (apply() || n >= 17) {
+        window.clearInterval(timer);
+        setTelegramIdentityReady(true);
+      }
     }, 300);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      setTelegramIdentityReady(true);
+    };
   }, [isSdkReady]);
 
   const refreshVisitHistory = useCallback(async () => {
@@ -392,6 +407,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     tg.ready?.();
     queueMicrotask(() => setIsSdkReady(true));
   }, []);
+
+  // Неверный бот — сразу после SDK, без ожидания опроса Telegram user id.
+  useEffect(() => {
+    if (!isSdkReady) return;
+    const tg = getTelegramWebApp();
+    const receiver = normalizeBotUsername(tg?.initDataUnsafe?.receiver?.username);
+    const staffBot = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
+    if (receiver && staffBot && receiver === staffBot) {
+      setIsGuestBlocked(true);
+      setGuestBlockedReason("Откройте гостевое приложение из меню бота заведения");
+      setIsInitializing(false);
+    }
+  }, [isSdkReady]);
 
   // Telegram Mini App UX: suggest pinning app in attachment menu once per device.
   useEffect(() => {
@@ -533,20 +561,51 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [currentLocation.venueId, currentLocation.tableId, assignedStaffId]);
 
+  // Один конвейер: deep link / v&t / восстановление из storage (после стабильной идентичности в TG).
   useEffect(() => {
-    if (!isSdkReady) return;
-    const tg = getTelegramWebApp();
-    const receiver = normalizeBotUsername(tg?.initDataUnsafe?.receiver?.username);
-    const staffBot = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
-    if (receiver && staffBot && receiver === staffBot) {
+    if (!isSdkReady || !telegramIdentityReady) return;
+    const tgGate = getTelegramWebApp();
+    const recvGate = normalizeBotUsername(tgGate?.initDataUnsafe?.receiver?.username);
+    const staffGate = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
+    if (recvGate && staffGate && recvGate === staffGate) {
       setIsGuestBlocked(true);
       setGuestBlockedReason("Откройте гостевое приложение из меню бота заведения");
       setIsInitializing(false);
       return;
     }
 
-    const resolveRoute = async () => {
+    if (currentLocationRef.current.venueId?.trim() && currentLocationRef.current.tableId?.trim()) {
+      setIsInitializing(false);
+      return;
+    }
+
+    let cancelled = false;
+    const finish = () => {
+      if (!cancelled) setIsInitializing(false);
+    };
+
+    const tryRestoreSeat = async (uid: string): Promise<boolean> => {
+      const persisted = readPersistedGuestSeat();
+      if (!persisted || !guestCustomerUidsMatch(persisted.participantUid, uid)) return false;
+      try {
+        const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
+        if (!ok) {
+          clearPersistedGuestSeat();
+          return false;
+        }
+        if (cancelled) return false;
+        await switchLocation(persisted.venueId, persisted.tableId);
+        return true;
+      } catch (e) {
+        console.error("[guest bootstrap] restore failed", e);
+        clearPersistedGuestSeat();
+        return false;
+      }
+    };
+
+    void (async () => {
       const inTg = isTelegramContext();
+
       if (inTg) {
         const sp = getStartParamFromTelegramWebApp();
         if (sp) {
@@ -562,9 +621,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           if (sota) {
             try {
               const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
+              if (cancelled) return;
               if (resolved) {
                 await switchLocation(resolved.venueId, resolved.tableId || null);
-                setIsInitializing(false);
+                finish();
                 return;
               }
             } catch {
@@ -574,60 +634,60 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
           const payload = parseStartParamPayload(decoded);
           if (payload) {
+            if (cancelled) return;
             await switchLocation(payload.venueId, payload.tableId || null);
-            setIsInitializing(false);
+            finish();
             return;
           }
         }
-        // Не сбрасываем стол: при открытии из меню start_param пуст — восстановим из localStorage, когда появится UID.
-        setIsInitializing(false);
+
+        const uid = guestIdentity.currentUid?.trim() ?? "";
+        if (uid) {
+          const restored = await tryRestoreSeat(uid);
+          if (cancelled) return;
+          if (restored) {
+            finish();
+            return;
+          }
+        }
+        finish();
         return;
       }
 
-      const v = (searchParams.get("v") ?? "").trim();
-      const t = (searchParams.get("t") ?? "").trim();
-      if (v && t) {
-        await switchLocation(v, t);
+      const vParam = (searchParams.get("v") ?? "").trim();
+      const tParam = (searchParams.get("t") ?? "").trim();
+      if (vParam && tParam) {
+        if (cancelled) return;
+        await switchLocation(vParam, tParam);
+        finish();
+        return;
+      }
+
+      const uid = guestIdentity.currentUid?.trim() ?? "";
+      if (uid) {
+        const restored = await tryRestoreSeat(uid);
+        if (cancelled) return;
+        if (restored) {
+          finish();
+          return;
+        }
+      }
+
+      if (cancelled) return;
+      const atLanding =
+        !currentLocationRef.current.venueId?.trim() && !currentLocationRef.current.tableId?.trim();
+      if (atLanding) {
+        await refreshVisitHistory();
       } else {
         await switchLocation(null, null);
       }
-      setIsInitializing(false);
-    };
-
-    void resolveRoute();
-  }, [isSdkReady, searchParams, switchLocation]);
-
-  // Восстановление стола после перезапуска Mini App (нет start_param / нет v&t в URL).
-  useEffect(() => {
-    if (!isSdkReady) return;
-    if (guestSeatRestoreRanRef.current) return;
-
-    const inTg = isTelegramContext();
-    const sp = getStartParamFromTelegramWebApp()?.trim() ?? "";
-    const vParam = (searchParams.get("v") ?? "").trim();
-    const tParam = (searchParams.get("t") ?? "").trim();
-    if (inTg && sp) return;
-    if (!inTg && vParam && tParam) return;
-
-    const uid = guestIdentity.currentUid?.trim();
-    if (!uid) return;
-
-    const persisted = readPersistedGuestSeat();
-    if (!persisted || persisted.participantUid !== uid) {
-      guestSeatRestoreRanRef.current = true;
-      return;
-    }
-
-    guestSeatRestoreRanRef.current = true;
-    void (async () => {
-      const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
-      if (!ok) {
-        clearPersistedGuestSeat();
-        return;
-      }
-      await switchLocation(persisted.venueId, persisted.tableId);
+      finish();
     })();
-  }, [isSdkReady, guestIdentity.currentUid, switchLocation, searchParams]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSdkReady, telegramIdentityReady, guestIdentity.currentUid, searchParams, switchLocation, refreshVisitHistory]);
 
   // Запоминаем открытый стол для повторных заходов в приложение.
   useEffect(() => {
