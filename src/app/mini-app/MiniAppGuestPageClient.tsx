@@ -11,6 +11,7 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
 import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
 import { GuestTableMenuGateway } from "@/components/mini-app/GuestTableMenuGateway";
+import { GuestFeedbackModal } from "@/components/mini-app/GuestFeedbackModal";
 
 type GuestTab = "service" | "cabinet";
 
@@ -153,6 +154,7 @@ function GuestSession() {
     assignedStaffDisplayName,
     completeWelcomeSequence,
     setTablePrivacyAllowJoin,
+    guestAwaitingTableFeedback,
   } = useGuestContext();
   const reasonRef = useRef<"menu" | "bill" | "help">("help");
   const [ordersOpen, setOrdersOpen] = useState(false);
@@ -196,6 +198,7 @@ function GuestSession() {
   }
 
   const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
+  const sessionActionsEnabled = canAct && !guestAwaitingTableFeedback;
   const currentUid = guestIdentity.currentUid ?? "";
   const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
   const isPrivate = activeSession?.isPrivate === true;
@@ -218,6 +221,11 @@ function GuestSession() {
         </p>
         {!activeSession ? (
           <p className="mt-2 text-center text-xs text-amber-800">Подключение к сессии… если долго, откройте приложение по QR стола ещё раз.</p>
+        ) : null}
+        {guestAwaitingTableFeedback ? (
+          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-center text-sm text-amber-950">
+            Заведение завершило визит. Откройте форму отзыва ниже — меню недоступно до завершения.
+          </p>
         ) : null}
       </header>
 
@@ -272,11 +280,11 @@ function GuestSession() {
           )}
         </section>
 
-        {venueIdForMenu ? (
+        {!guestAwaitingTableFeedback && venueIdForMenu ? (
           <GuestTableMenuGateway venueFirestoreId={venueIdForMenu} disabled={!canAct} />
         ) : null}
 
-        {isSessionActive && isMaster && activeSession ? (
+        {isSessionActive && isMaster && activeSession && !guestAwaitingTableFeedback ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Мастер стола</p>
             <label className="mt-3 flex cursor-pointer items-center justify-between gap-3">
@@ -300,7 +308,7 @@ function GuestSession() {
             <p className="text-sm font-semibold text-slate-900">Заказы</p>
           <button
             type="button"
-            disabled={!canAct}
+            disabled={!sessionActionsEnabled}
             onClick={() => setOrdersOpen((v) => !v)}
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50"
           >
@@ -346,7 +354,7 @@ function GuestSession() {
                 reasonRef.current = e.target.value as "menu" | "bill" | "help";
               }}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800"
-              disabled={!canAct}
+              disabled={!sessionActionsEnabled}
             >
               <option value="help">Помощь</option>
               <option value="menu">Меню</option>
@@ -356,7 +364,7 @@ function GuestSession() {
 
           <button
             type="button"
-            disabled={!canAct}
+            disabled={!sessionActionsEnabled}
             onClick={() => void callWaiter(reasonRef.current)}
             className="w-full bg-yellow-500 py-4 rounded-xl font-bold text-lg text-black hover:bg-yellow-600 disabled:opacity-50 disabled:pointer-events-none"
           >
@@ -365,7 +373,7 @@ function GuestSession() {
 
           <button
             type="button"
-            disabled={!canAct}
+            disabled={!sessionActionsEnabled}
             onClick={() => void requestBill("split")}
             className="w-full bg-blue-600 py-4 rounded-xl font-bold text-lg text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none"
           >
@@ -374,7 +382,7 @@ function GuestSession() {
 
           <button
             type="button"
-            disabled={!canAct || !isMaster}
+            disabled={!sessionActionsEnabled || !isMaster}
             title={isMaster ? "" : "Оплата доступна только Хозяину стола"}
             onClick={() => void requestBill("full")}
             className={`w-full py-4 rounded-xl font-bold text-lg text-white disabled:opacity-50 disabled:pointer-events-none ${
@@ -505,12 +513,18 @@ function MiniAppScreenRouter() {
     currentLocation,
     activeSession,
     systemConfig,
+    guestAwaitingTableFeedback,
+    completeTableFeedbackSession,
   } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
 
   useEffect(() => {
-    if (currentLocation?.tableId || activeSession) setTab("service");
-  }, [currentLocation?.tableId, activeSession?.id]);
+    if (currentLocation?.tableId?.trim()) setTab("service");
+  }, [currentLocation?.tableId]);
+
+  useEffect(() => {
+    if (guestAwaitingTableFeedback) setTab("cabinet");
+  }, [guestAwaitingTableFeedback]);
 
   if (isInitializing) return <Loading />;
 
@@ -545,10 +559,11 @@ function MiniAppScreenRouter() {
       : (currentLocation.tableId ?? "");
 
   return (
-    <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
-      <main className="flex-1 p-4 pb-10 md:p-6">
-        {guestAtTable && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
-        <div className="space-y-5">
+    <>
+      <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
+        <main className="flex-1 p-4 pb-10 md:p-6">
+          {guestAtTable && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
+          <div className="space-y-5">
           {!guestAtTable ? (
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-center text-lg font-bold text-slate-900">Вас приветствует сервис HeyWaiter</p>
@@ -579,9 +594,21 @@ function MiniAppScreenRouter() {
           ) : (
             <GuestCabinet />
           )}
-        </div>
-      </main>
-    </div>
+          </div>
+        </main>
+      </div>
+
+      {guestAtTable && guestAwaitingTableFeedback ? (
+        <GuestFeedbackModal
+          open
+          onClose={() => void completeTableFeedbackSession()}
+          onLeaveTip={async () => {}}
+          tipsEnabled={false}
+          title="Отзыв и чаевые"
+          subtitle="Заведение закрыло ваш стол. Поставьте оценку — после «Готово» вы вернётесь к списку мест."
+        />
+      ) : null}
+    </>
   );
 }
 

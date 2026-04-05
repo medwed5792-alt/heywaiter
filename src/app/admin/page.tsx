@@ -1062,27 +1062,26 @@ function AdminDashboardContent() {
     if (!payload) return;
     setCloseTableLoading(true);
     try {
-      await updateDoc(doc(db, "activeSessions", payload.sessionId), {
-        status: "closed",
-        closedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const res = await fetch("/api/admin/close-table-for-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          venueId,
+          tableId: payload.tableId,
+          sessionId: payload.sessionId,
+        }),
       });
-      const tableRef = doc(db, "venues", venueId, "tables", payload.tableId);
-      const snap = await getDoc(tableRef);
-      const existing = snap.exists() ? (snap.data() ?? {}) : {};
-      const assignments = (existing.assignments as Record<string, string> | undefined) ?? {};
-      await setDoc(
-        tableRef,
-        {
-          status: "free",
-          currentGuest: null,
-          assignments,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const data = (await res.json().catch(() => ({}))) as { error?: string; indexedGuests?: number };
+      if (!res.ok) {
+        toast.error(typeof data.error === "string" ? data.error : "Ошибка закрытия стола");
+        return;
+      }
       setCloseTableModal(null);
-      toast.success("Стол закрыт. Официант остаётся закреплённым.");
+      toast.success(
+        data.indexedGuests && data.indexedGuests > 0
+          ? "Визит завершён: гости увидят экран отзыва и чаевых в приложении."
+          : "Стол освобождён. Гость без Telegram в индексе — отзыв только вручную."
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка закрытия стола");
     } finally {
@@ -1091,32 +1090,26 @@ function AdminDashboardContent() {
   }, [closeTableModal, venueId]);
 
   const closeAllTablesAndVenue = useCallback(async () => {
-    const sessions = Object.values(sessionsByTable ?? {});
-    const tableData: { ref: ReturnType<typeof doc>; assignments: Record<string, string> }[] = [];
-    for (const s of sessions) {
-      const tableRef = doc(db, "venues", venueId, "tables", s.tableId);
-      const snap = await getDoc(tableRef);
-      const existing = snap.exists() ? (snap.data() ?? {}) : {};
-      const assignments = (existing.assignments as Record<string, string> | undefined) ?? {};
-      tableData.push({ ref: tableRef, assignments });
-    }
-    const batch = writeBatch(db);
-    sessions.forEach((s, i) => {
-      batch.update(doc(db, "activeSessions", s.sessionId), {
-        status: "closed",
-        closedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      const { ref, assignments } = tableData[i];
-      batch.set(ref, {
-        status: "free",
-        currentGuest: null,
-        assignments,
-        updatedAt: serverTimestamp(),
-      }, { merge: true });
-    });
-    await batch.commit();
-  }, [sessionsByTable, venueId]);
+    const snap = await getDocs(
+      query(
+        collection(db, "activeSessions"),
+        where("venueId", "==", venueId),
+        where("status", "in", ["check_in_success", "awaiting_guest_feedback"])
+      )
+    );
+    await Promise.all(
+      snap.docs.map((d) => {
+        const data = d.data() as { tableId?: string };
+        const tableId = typeof data.tableId === "string" ? data.tableId.trim() : "";
+        if (!tableId) return Promise.resolve();
+        return fetch("/api/admin/close-table-for-feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ venueId, tableId, sessionId: d.id }),
+        });
+      })
+    );
+  }, [venueId]);
 
   const confirmCloseVenueWithTables = useCallback(async () => {
     if (closeVenueConfirm !== true) return;
@@ -2139,7 +2132,8 @@ function AdminDashboardContent() {
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <h3 className="font-semibold text-gray-900">Закрыть стол?</h3>
             <p className="mt-2 text-sm text-gray-600">
-              Сессия будет завершена. Официант останется закреплённым за столом.
+              Стол освободится, гости в Telegram увидят экран отзыва и смогут завершить визит в приложении. Официант
+              останется закреплённым за столом.
             </p>
             <div className="mt-4 flex gap-2">
               <button

@@ -1,9 +1,9 @@
-import { createHmac, timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
+import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import type {
   ActiveSessionParticipant,
   ActiveSessionParticipantStatus,
@@ -15,8 +15,6 @@ export const runtime = "nodejs";
 const IDX = "active_sessions";
 /** Максимальный возраст записи active_sessions для recover (как в ТЗ: 4 ч). */
 const CTX_MAX_MS = 4 * 60 * 60 * 1000;
-const INIT_MAX_AGE_SEC = 24 * 60 * 60;
-
 type IndexDoc = { vr_id?: string; table_id?: string; last_seen?: unknown; order_status?: string };
 
 function idxDocId(telegramUserId: string): string {
@@ -24,53 +22,8 @@ function idxDocId(telegramUserId: string): string {
   return id ? `tg_${id}` : "";
 }
 
-function safeEqualHex(a: string, b: string): boolean {
-  try {
-    const ba = Buffer.from(a, "hex");
-    const bb = Buffer.from(b, "hex");
-    return ba.length === bb.length && timingSafeEqual(ba, bb);
-  } catch {
-    return false;
-  }
-}
-
-function verifyInitData(
-  initData: string,
-  botToken: string
-): { ok: true; userId: string } | { ok: false; reason: string } {
-  const raw = initData.trim();
-  if (!raw) return { ok: false, reason: "empty_init_data" };
-  const token = botToken.trim();
-  if (!token) return { ok: false, reason: "missing_bot_token" };
-
-  const params = new URLSearchParams(raw);
-  const hash = params.get("hash");
-  if (!hash) return { ok: false, reason: "missing_hash" };
-  params.delete("hash");
-  const dataCheckString = [...params.keys()]
-    .sort()
-    .map((k) => `${k}=${params.get(k) ?? ""}`)
-    .join("\n");
-
-  const secretKey = createHmac("sha256", "WebAppData").update(token).digest();
-  const calculated = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  if (!safeEqualHex(calculated, hash.trim().toLowerCase())) return { ok: false, reason: "bad_hash" };
-
-  const authDate = Number(params.get("auth_date"));
-  if (!Number.isFinite(authDate)) return { ok: false, reason: "bad_auth_date" };
-  if (Math.floor(Date.now() / 1000) - authDate > INIT_MAX_AGE_SEC) {
-    return { ok: false, reason: "init_data_expired" };
-  }
-
-  let user: { id?: number };
-  try {
-    user = JSON.parse(params.get("user") ?? "null") as { id?: number };
-  } catch {
-    return { ok: false, reason: "bad_user_json" };
-  }
-  if (user?.id == null || !Number.isFinite(Number(user.id))) return { ok: false, reason: "missing_user_id" };
-  return { ok: true, userId: String(user.id) };
-}
+/** Сессии стола, при которых recover по индексу ещё валиден. */
+const SESSION_RECOVER_STATUSES = ["check_in_success", "awaiting_guest_feedback"] as const;
 
 function lastSeenMs(v: unknown): number {
   if (v != null && typeof v === "object" && "toMillis" in v) {
@@ -121,7 +74,7 @@ async function sessionHasTgParticipant(venueId: string, tableId: string, tgUserI
     .collection("activeSessions")
     .where("venueId", "==", venueId.trim())
     .where("tableId", "==", tableId.trim())
-    .where("status", "==", "check_in_success")
+    .where("status", "in", [...SESSION_RECOVER_STATUSES])
     .limit(1)
     .get();
   if (snap.empty) return false;
@@ -228,7 +181,7 @@ async function resolveVerifiedUser(initData: string) {
   if (!token) {
     return { error: NextResponse.json({ error: "guest_bot_token_unconfigured" }, { status: 503 }) };
   }
-  const v = verifyInitData(initData, token);
+  const v = verifyTelegramWebAppInitData(initData, token);
   if (!v.ok) return { error: NextResponse.json({ error: v.reason }, { status: 401 }) };
   return { userId: v.userId };
 }

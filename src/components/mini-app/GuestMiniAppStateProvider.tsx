@@ -229,6 +229,10 @@ type GuestMiniAppContextValue = {
   getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
   /** Только хозяин стола: разрешить/запретить подселение (isPrivate). */
   setTablePrivacyAllowJoin: (allowJoin: boolean) => Promise<{ ok: boolean; error?: string }>;
+  /** Админ завершил визит: показываем отзыв/чаевые вместо меню. */
+  guestAwaitingTableFeedback: boolean;
+  /** После отзыва: закрыть сессию на сервере и выйти со стола в UI. */
+  completeTableFeedbackSession: () => Promise<void>;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -812,7 +816,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
-      where("status", "==", "check_in_success"),
+      where("status", "in", ["check_in_success", "awaiting_guest_feedback"]),
       limit(1)
     );
 
@@ -846,7 +850,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         .filter(Boolean) as ActiveSessionParticipant[];
 
       const tableNumber = typeof d.tableNumber === "number" ? d.tableNumber : 0;
-      const status = typeof d.status === "string" ? d.status : "check_in_success";
+      const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
+      const sessionStatus: ActiveSession["status"] =
+        rawStatus === "awaiting_guest_feedback"
+          ? "awaiting_guest_feedback"
+          : rawStatus === "closed"
+            ? "closed"
+            : rawStatus === "table_conflict"
+              ? "table_conflict"
+              : "check_in_success";
 
       const session: ActiveSession = {
         id: snap.docs[0]!.id,
@@ -856,7 +868,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         masterId: masterId || undefined,
         isPrivate,
         participants: parsedParticipants,
-        status: status === "check_in_success" ? "check_in_success" : "check_in_success",
+        status: sessionStatus,
         createdAt: d.createdAt ?? null,
         updatedAt: d.updatedAt ?? null,
       };
@@ -1269,6 +1281,30 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     ]
   );
 
+  const guestAwaitingTableFeedback = useMemo(
+    () => activeSession?.status === "awaiting_guest_feedback",
+    [activeSession?.status]
+  );
+
+  const completeTableFeedbackSession = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const v = currentLocationRef.current.venueId?.trim() || null;
+    const tg = getTelegramWebApp();
+    const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+    if (init) {
+      try {
+        await fetch("/api/guest/feedback-session-done", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: init }),
+        });
+      } catch {
+        // best-effort
+      }
+    }
+    await switchLocation(v, null);
+  }, [switchLocation]);
+
   const value = useMemo<GuestMiniAppContextValue>(
     () => ({
       guestIdentity,
@@ -1300,6 +1336,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
       setTablePrivacyAllowJoin,
+      guestAwaitingTableFeedback,
+      completeTableFeedbackSession,
     }),
     [
       guestIdentity,
@@ -1331,6 +1369,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
       setTablePrivacyAllowJoin,
+      guestAwaitingTableFeedback,
+      completeTableFeedbackSession,
     ]
   );
 
