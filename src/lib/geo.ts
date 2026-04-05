@@ -1,5 +1,15 @@
 export const IS_GEO_DEBUG = false;
 
+/** Если у заведения в Firestore нет `geo.radius`, подставляем это значение (метры). */
+export const DEFAULT_VENUE_GEO_RADIUS_METERS = 100;
+
+/**
+ * Верхняя граница радиуса «приёмной зоны» по умолчанию (метры).
+ * Фактическое значение: `system_settings/global.geoRadiusLimit`; при отсутствии — эта константа.
+ * Эффективный радиус для проверок = min(radius заведения, этот лимит).
+ */
+export const DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS = 500;
+
 const R_EARTH_M = 6_371_000;
 
 /**

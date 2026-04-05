@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { DEFAULT_VENUE_GEO_RADIUS_METERS } from "@/lib/geo";
 
 /**
  * GET /api/venues/[venueId]/geo
@@ -37,7 +38,7 @@ export async function GET(
     return NextResponse.json({
       lat: geo.lat,
       lng: geo.lng,
-      radius: geo.radius ?? 100,
+      radius: geo.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS,
       configured: true,
     });
   } catch (err) {

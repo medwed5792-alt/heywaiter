@@ -30,6 +30,7 @@ import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
+import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -104,7 +105,7 @@ export type SotaSystemConfig = {
 
 const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
   adsNetworkEnabled: true,
-  geoRadiusLimit: 500,
+  geoRadiusLimit: DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS,
   globalMaintenanceMode: false,
   preOrderBySotaVenueId: {},
   preOrderByVenueDocId: {},

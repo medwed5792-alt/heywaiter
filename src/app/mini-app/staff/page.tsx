@@ -17,7 +17,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { IS_GEO_DEBUG } from "@/lib/geo";
+import { DEFAULT_VENUE_GEO_RADIUS_METERS, IS_GEO_DEBUG } from "@/lib/geo";
 import {
   StaffProvider,
   useStaff,
@@ -354,7 +354,7 @@ function StaffContentInner() {
         setGeoBlocked(false);
         setGeoMessage(null);
       } else if (!check.allowed) {
-        const radius = check.effectiveRadius ?? 100;
+        const radius = check.effectiveRadius ?? DEFAULT_VENUE_GEO_RADIUS_METERS;
         setGeoBlocked(true);
         setGeoMessage(`Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`);
       } else {
@@ -563,7 +563,7 @@ function StaffContentInner() {
           return;
         }
         if (!check.allowed) {
-          const radius = check.effectiveRadius ?? 100;
+          const radius = check.effectiveRadius ?? DEFAULT_VENUE_GEO_RADIUS_METERS;
           setGeoBlocked(true);
           setGeoMessage(`Вы вне зоны заведения. Подойдите ближе (радиус ${radius} м), чтобы выйти на смену.`);
         } else {

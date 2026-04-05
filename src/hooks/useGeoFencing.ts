@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { isOutsideVenue, offsetLatLngByMeters } from "@/lib/geo";
+import { DEFAULT_VENUE_GEO_RADIUS_METERS, isOutsideVenue, offsetLatLngByMeters } from "@/lib/geo";
 import { createGuestEscapeAlert, createStaffEscapeAlert } from "@/lib/stealth-notifications";
 import { getSimulateOutOfZone } from "@/components/debug/DebugPanelTrigger";
 import type { VenueGeo } from "@/lib/types";
@@ -109,7 +109,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       if (p.mode === "staff" && p.onShift) {
         const geo = geoRef.current;
         const isInside = geo
-          ? !isOutsideVenue(lat, lng, geo.lat, geo.lng, geo.radius ?? 100)
+          ? !isOutsideVenue(lat, lng, geo.lat, geo.lng, geo.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS)
           : false;
         setDoc(doc(db, "staffLiveGeos", p.staffId), {
           staffId: p.staffId,
@@ -134,7 +134,11 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const venueSnap = await getDoc(doc(db, "venues", venueId));
       const geo = venueSnap.exists() ? venueSnap.data().geo : undefined;
       if (!geo?.lat || !geo?.lng) return;
-      geoRef.current = { lat: geo.lat, lng: geo.lng, radius: geo.radius ?? 100 };
+      geoRef.current = {
+        lat: geo.lat,
+        lng: geo.lng,
+        radius: geo.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS,
+      };
 
       if (typeof navigator === "undefined" || !navigator.geolocation) return;
       const onError = (err: GeolocationPositionError) => {
@@ -174,7 +178,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
         if (!g?.lat || !g?.lng) {
           return { allowed: true };
         }
-        geo = { lat: g.lat, lng: g.lng, radius: g.radius ?? 100 };
+        geo = { lat: g.lat, lng: g.lng, radius: g.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS };
         geoRef.current = geo;
       }
       if (typeof navigator === "undefined" || !navigator.geolocation) {

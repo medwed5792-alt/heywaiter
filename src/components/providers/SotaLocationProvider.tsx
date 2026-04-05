@@ -3,7 +3,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { haversineDistanceM } from "@/lib/geo";
+import {
+  DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS,
+  DEFAULT_VENUE_GEO_RADIUS_METERS,
+  haversineDistanceM,
+} from "@/lib/geo";
 
 type LocationStatus = "idle" | "requesting" | "ready" | "denied" | "unavailable" | "error";
 type LocationSource = "none" | "gps" | "network" | "ip";
@@ -51,7 +55,7 @@ type SotaLocationContextValue = {
   checkInsideVenue: (venueId: string) => Promise<InsideVenueResult>;
 };
 
-const DEFAULT_GLOBAL_RADIUS_LIMIT = 500;
+const DEFAULT_GLOBAL_RADIUS_LIMIT = DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS;
 const HIGH_ACCURACY_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
   timeout: 5000,
@@ -70,7 +74,8 @@ function readVenueGeo(raw: unknown): VenueGeoData | null {
   const d = raw as Record<string, unknown>;
   const lat = typeof d.lat === "number" ? d.lat : NaN;
   const lng = typeof d.lng === "number" ? d.lng : NaN;
-  const radius = typeof d.radius === "number" && Number.isFinite(d.radius) ? d.radius : 100;
+  const radius =
+    typeof d.radius === "number" && Number.isFinite(d.radius) ? d.radius : DEFAULT_VENUE_GEO_RADIUS_METERS;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng, radius };
 }
