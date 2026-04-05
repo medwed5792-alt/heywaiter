@@ -48,10 +48,6 @@ function getFirebaseAdmin(): { firestore: Firestore; auth: Auth } {
     throw new Error("firebase-admin must not be used in the browser");
   }
   const admin = require("firebase-admin");
-  console.log(
-    "Available Env Keys:",
-    Object.keys(process.env).filter((key) => key.includes("FIREBASE"))
-  );
   const existingApps = admin.apps?.length ?? 0;
   if (existingApps === 0) {
     const projectId =
@@ -69,8 +65,6 @@ function getFirebaseAdmin(): { firestore: Firestore; auth: Auth } {
     } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       // ADC: не передаём credential, используется путь из env
     }
-    // Иначе инициализация с projectId или по умолчанию (ADC)
-    console.log("Firebase ID check:", projectId);
     if (Object.keys(opts).length > 0) {
       admin.initializeApp(opts);
     } else {

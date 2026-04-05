@@ -40,11 +40,7 @@ import {
   writePersistedGuestSeat,
   writeWelcomeDone,
 } from "@/lib/guest-table-persistence";
-import {
-  guestSessionContextClaim,
-  guestSessionContextClear,
-  guestSessionContextRecover,
-} from "@/lib/guest-session-context-api";
+import { guestSessionClaim, guestSessionClear, guestSessionRecover } from "@/lib/guest-session-bridge";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -387,7 +383,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (hadTable && !nextFullTable) {
         const tg = getTelegramWebApp();
         const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-        if (init) void guestSessionContextClear(init);
+        if (init) void guestSessionClear(init);
       }
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
       setActiveSession(null);
@@ -603,7 +599,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const claimGuestTable = (venueId: string, tableId: string) => {
         const v = venueId.trim();
         const t = tableId.trim();
-        if (signedInit && v && t) void guestSessionContextClaim(signedInit, v, t);
+        if (signedInit && v && t) void guestSessionClaim(signedInit, v, t);
       };
 
       const tryRestoreSeat = async (uid: string): Promise<boolean> => {
@@ -628,7 +624,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       const tryRecoverGuestFromServerIndex = async (): Promise<boolean> => {
         if (!signedInit) return false;
-        const rec = await guestSessionContextRecover(signedInit);
+        const rec = await guestSessionRecover(signedInit);
         if (cancelled || !rec.active) return false;
         const v = rec.vrId?.trim() ?? "";
         const t = rec.tableId?.trim() ?? "";
