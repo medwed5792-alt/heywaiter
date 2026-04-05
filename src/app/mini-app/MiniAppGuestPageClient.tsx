@@ -179,17 +179,6 @@ function GuestSession() {
     return orderLines.reduce((acc, l) => acc + l.totalAmount, 0);
   }, [orderLines]);
 
-  if (!isSessionActive) {
-    return <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />;
-  }
-
-  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
-  const currentUid = guestIdentity.currentUid ?? "";
-  const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
-  const isPrivate = activeSession?.isPrivate === true;
-  const ordersHidden = isPrivate && !isMaster;
-  const venueIdForMenu = currentLocation.venueId?.trim() ?? "";
-
   const onPrivacyToggle = useCallback(
     async (allowJoin: boolean) => {
       setPrivacyBusy(true);
@@ -201,6 +190,17 @@ function GuestSession() {
     },
     [setTablePrivacyAllowJoin]
   );
+
+  if (!isSessionActive) {
+    return <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />;
+  }
+
+  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
+  const currentUid = guestIdentity.currentUid ?? "";
+  const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
+  const isPrivate = activeSession?.isPrivate === true;
+  const ordersHidden = isPrivate && !isMaster;
+  const venueIdForMenu = currentLocation.venueId?.trim() ?? "";
 
   return (
     <div className="space-y-5">
