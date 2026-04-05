@@ -218,6 +218,8 @@ type GuestMiniAppContextValue = {
   getVenueMenuCatalog: (venueFirestoreId: string) => VenueMenuVenueBlock | null;
   /** Ссылка на PDF/внешнее меню из venues.config (независимо от каталога). */
   getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
+  /** Только хозяин стола: разрешить/запретить подселение (isPrivate). */
+  setTablePrivacyAllowJoin: (allowJoin: boolean) => Promise<{ ok: boolean; error?: string }>;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -1043,6 +1045,36 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     ]
   );
 
+  const setTablePrivacyAllowJoin = useCallback(
+    async (allowJoin: boolean) => {
+      const v = currentLocation.venueId?.trim();
+      const t = currentLocation.tableId?.trim();
+      const uid = guestIdentity.currentUid?.trim();
+      if (!v || !t || !uid) {
+        return { ok: false, error: "Не удалось определить стол или гостя" };
+      }
+      try {
+        const res = await fetch("/api/session/privacy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ venueId: v, tableId: t, actorUid: uid, allowJoin }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || data.ok === false) {
+          toast.error(typeof data.error === "string" ? data.error : "Не удалось изменить настройки стола");
+          return { ok: false, error: typeof data.error === "string" ? data.error : "Ошибка" };
+        }
+        toast.success(allowJoin ? "Подселение без кода разрешено" : "Стол закрыт для подселения");
+        return { ok: true };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Ошибка сети";
+        toast.error(msg);
+        return { ok: false, error: msg };
+      }
+    },
+    [currentLocation.venueId, currentLocation.tableId, guestIdentity.currentUid]
+  );
+
   const requestBill = useCallback(
     async (type: "full" | "split") => {
       if (isGuestBlocked) {
@@ -1115,6 +1147,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       getVenueTimeZone,
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
+      setTablePrivacyAllowJoin,
     }),
     [
       guestIdentity,
@@ -1145,6 +1178,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       getVenueTimeZone,
       getVenueMenuCatalog,
       getVenueMenuPdfUrl,
+      setTablePrivacyAllowJoin,
     ]
   );
 

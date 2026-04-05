@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { AdSpace } from "@/components/common/AdSpace";
 import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
@@ -10,6 +10,7 @@ import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
 import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
+import { GuestTableMenuGateway } from "@/components/mini-app/GuestTableMenuGateway";
 
 type GuestTab = "service" | "cabinet";
 
@@ -151,9 +152,11 @@ function GuestSession() {
     isSessionActive,
     assignedStaffDisplayName,
     completeWelcomeSequence,
+    setTablePrivacyAllowJoin,
   } = useGuestContext();
   const reasonRef = useRef<"menu" | "bill" | "help">("help");
   const [ordersOpen, setOrdersOpen] = useState(false);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
 
   const orderLines = useMemo(() => {
     const map = new Map<string, { name: string; qty: number; totalAmount: number }>();
@@ -185,6 +188,19 @@ function GuestSession() {
   const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
   const isPrivate = activeSession?.isPrivate === true;
   const ordersHidden = isPrivate && !isMaster;
+  const venueIdForMenu = currentLocation.venueId?.trim() ?? "";
+
+  const onPrivacyToggle = useCallback(
+    async (allowJoin: boolean) => {
+      setPrivacyBusy(true);
+      try {
+        await setTablePrivacyAllowJoin(allowJoin);
+      } finally {
+        setPrivacyBusy(false);
+      }
+    },
+    [setTablePrivacyAllowJoin]
+  );
 
   return (
     <div className="space-y-5">
@@ -194,8 +210,15 @@ function GuestSession() {
           {currentLocation.venueId ? `Заведение: ${resolveVenueDisplayName(currentLocation.venueId)}` : "Загрузка заведения"}
         </p>
         <p className="mt-2 text-center text-sm text-slate-600">
-          {currentLocation.tableId ? `Стол: ${currentLocation.tableId}` : "Стол не определен"}
+          {activeSession && activeSession.tableNumber > 0
+            ? `Стол №${activeSession.tableNumber}`
+            : currentLocation.tableId
+              ? `Стол: ${currentLocation.tableId}`
+              : "Стол не определен"}
         </p>
+        {!activeSession ? (
+          <p className="mt-2 text-center text-xs text-amber-800">Подключение к сессии… если долго, откройте приложение по QR стола ещё раз.</p>
+        ) : null}
       </header>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -243,15 +266,38 @@ function GuestSession() {
         </div>
 
         {isPrivate && !isMaster && (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Приватный стол. Заказы скрыты Хозяином.
-          </div>
-        )}
-      </section>
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Приватный стол. Заказы скрыты Хозяином.
+            </div>
+          )}
+        </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-slate-900">Заказы</p>
+        {venueIdForMenu ? (
+          <GuestTableMenuGateway venueFirestoreId={venueIdForMenu} disabled={!canAct} />
+        ) : null}
+
+        {isSessionActive && isMaster && activeSession ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Мастер стола</p>
+            <label className="mt-3 flex cursor-pointer items-center justify-between gap-3">
+              <span className="text-sm text-slate-800">Разрешить подселение без QR</span>
+              <input
+                type="checkbox"
+                className="h-5 w-5 shrink-0 accent-emerald-600"
+                checked={activeSession.isPrivate === false}
+                disabled={privacyBusy}
+                onChange={(e) => void onPrivacyToggle(e.target.checked)}
+              />
+            </label>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Выключено — к столу по QR не подсесть без вашего разрешения (приватный стол).
+            </p>
+          </section>
+        ) : null}
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-900">Заказы</p>
           <button
             type="button"
             disabled={!canAct}
@@ -490,7 +536,8 @@ function MiniAppScreenRouter() {
     );
   }
 
-  const inSession = Boolean(currentLocation.venueId && currentLocation.tableId && activeSession);
+  /** Стол из QR/ссылки: показываем сценарий «за столом» даже пока Firestore ещё не отдал activeSessions. */
+  const guestAtTable = Boolean(currentLocation.venueId?.trim() && currentLocation.tableId?.trim());
   const venueLabel = currentLocation.venueId ? resolveVenueDisplayName(currentLocation.venueId) : "";
   const tableLabel =
     activeSession && activeSession.tableNumber > 0
@@ -500,9 +547,9 @@ function MiniAppScreenRouter() {
   return (
     <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
       <main className="flex-1 p-4 pb-10 md:p-6">
-        {inSession && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
+        {guestAtTable && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
         <div className="space-y-5">
-          {!inSession ? (
+          {!guestAtTable ? (
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-center text-lg font-bold text-slate-900">Вас приветствует сервис HeyWaiter</p>
               <p className="mt-2 text-center text-sm text-slate-600">
@@ -521,7 +568,7 @@ function MiniAppScreenRouter() {
 
           <GuestLandingTabs tab={tab} onTab={setTab} />
 
-          {inSession ? (
+          {guestAtTable ? (
             tab === "service" ? (
               <GuestSession />
             ) : (
