@@ -17,13 +17,14 @@ function telegramGuestLabel(): string {
 }
 
 /**
- * Фоновая геозона во время активной гостевой сессии: один алерт «покинул радиус» на сессию.
+ * Геозона с момента открытой сессии стола (включая экран приветствия). Снимается, когда стол закрыт / гость ушёл с экрана стола.
+ * Уведомление при каждом переходе «были внутри зоны → оказались снаружи».
  */
 export function GuestSessionGeoWatch() {
-  const { currentLocation, activeSession, isSessionActive } = useGuestContext();
+  const { currentLocation, activeSession } = useGuestContext();
   const venueId = currentLocation.venueId?.trim() ?? "";
   const tableId = currentLocation.tableId?.trim() ?? "";
-  const sessionOpen = Boolean(isSessionActive && activeSession && venueId && tableId);
+  const sessionOpen = Boolean(activeSession && venueId && tableId);
 
   useGeoFencing({
     mode: "guest",

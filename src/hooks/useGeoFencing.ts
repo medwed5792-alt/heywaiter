@@ -76,7 +76,8 @@ export function useGeoFencing(params: UseGeoFencingParams) {
 
   const { venueId } = params;
   const geoRef = useRef<VenueGeo | null>(null);
-  const alertedGuestRef = useRef(false);
+  /** Гость: предыдущее измерение «внутри зоны» — для срабатывания при каждом выходе (внутри→снаружи). */
+  const guestPrevInsideRef = useRef<boolean | null>(null);
   const alertedStaffRef = useRef(false);
   const [active, setActive] = useState(!(params.mode === "guest" && params.startAfterUserAction));
 
@@ -88,17 +89,22 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const geo = geoRef.current;
       if (!geo) return;
       const outside = isOutsideVenue(lat, lng, geo.lat, geo.lng, geo.radius);
-      if (!outside) return;
+      const inside = !outside;
 
       const p = paramsRef.current;
-      if (p.mode === "guest" && p.sessionOpen && !alertedGuestRef.current) {
-        alertedGuestRef.current = true;
-        const g = p as UseGeoFencingGuest;
-        await createGuestEscapeAlert(venueId, g.tableId, g.sessionId, {
-          guestLabel: g.guestLabel,
-          tableNumber: g.tableNumber,
-        });
+      if (p.mode === "guest" && p.sessionOpen) {
+        const prev = guestPrevInsideRef.current;
+        if (prev === true && !inside) {
+          const g = p as UseGeoFencingGuest;
+          await createGuestEscapeAlert(venueId, g.tableId, g.sessionId, {
+            guestLabel: g.guestLabel,
+            tableNumber: g.tableNumber,
+          });
+        }
+        guestPrevInsideRef.current = inside;
       }
+
+      if (!outside) return;
       if (p.mode === "staff" && p.onShift && !alertedStaffRef.current) {
         alertedStaffRef.current = true;
         await createStaffEscapeAlert(venueId, p.staffId, p.staffName);
@@ -141,8 +147,8 @@ export function useGeoFencing(params: UseGeoFencingParams) {
   const guestSessionOpen = params.mode === "guest" ? (params as UseGeoFencingGuest).sessionOpen : true;
 
   useEffect(() => {
-    if (params.mode === "guest") alertedGuestRef.current = false;
-  }, [params.mode, sessionIdForDep]);
+    if (params.mode === "guest") guestPrevInsideRef.current = null;
+  }, [params.mode, sessionIdForDep, venueId]);
 
   useEffect(() => {
     if (!active) return;

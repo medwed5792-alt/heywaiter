@@ -451,25 +451,6 @@ function GuestCabinet() {
   );
 }
 
-function GuestLandingLayout() {
-  const [tab, setTab] = useState<GuestTab>("service");
-
-  return (
-    <div className="space-y-5">
-      <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="text-center text-lg font-bold text-slate-900">Вас приветствует сервис HeyWaiter</p>
-        <p className="mt-2 text-center text-sm text-slate-600">
-          Откройте стол по QR‑коду или зайдите в кабинет и выберите заведение рядом.
-        </p>
-      </header>
-
-      <GuestLandingTabs tab={tab} onTab={setTab} />
-
-      {tab === "service" ? <GuestServiceTabContent /> : <GuestCabinet />}
-    </div>
-  );
-}
-
 function MiniAppScreenRouter() {
   const {
     isInitializing,
@@ -478,8 +459,12 @@ function MiniAppScreenRouter() {
     currentLocation,
     activeSession,
     systemConfig,
-    isSessionActive,
   } = useGuestContext();
+  const [tab, setTab] = useState<GuestTab>("service");
+
+  useEffect(() => {
+    if (currentLocation?.tableId || activeSession) setTab("service");
+  }, [currentLocation?.tableId, activeSession?.id]);
 
   if (isInitializing) return <Loading />;
 
@@ -506,14 +491,48 @@ function MiniAppScreenRouter() {
   }
 
   const inSession = Boolean(currentLocation.venueId && currentLocation.tableId && activeSession);
+  const venueLabel = currentLocation.venueId ? resolveVenueDisplayName(currentLocation.venueId) : "";
+  const tableLabel =
+    activeSession && activeSession.tableNumber > 0
+      ? String(activeSession.tableNumber)
+      : (currentLocation.tableId ?? "");
 
   return (
     <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
       <main className="flex-1 p-4 pb-10 md:p-6">
-        {inSession && isSessionActive && activeSession ? (
-          <GuestSessionGeoWatch key={activeSession.id} />
-        ) : null}
-        {inSession ? <GuestSession /> : <GuestLandingLayout />}
+        {inSession && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
+        <div className="space-y-5">
+          {!inSession ? (
+            <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-center text-lg font-bold text-slate-900">Вас приветствует сервис HeyWaiter</p>
+              <p className="mt-2 text-center text-sm text-slate-600">
+                Откройте стол по QR‑коду или зайдите в кабинет и выберите заведение рядом.
+              </p>
+            </header>
+          ) : (
+            <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-center text-sm font-semibold text-slate-900">Вы за столом</p>
+              <p className="mt-1 text-center text-xs text-slate-600">
+                {venueLabel ? `${venueLabel}` : "Заведение"}
+                {tableLabel ? ` · стол №${tableLabel}` : ""}
+              </p>
+            </header>
+          )}
+
+          <GuestLandingTabs tab={tab} onTab={setTab} />
+
+          {inSession ? (
+            tab === "service" ? (
+              <GuestSession />
+            ) : (
+              <GuestCabinet />
+            )
+          ) : tab === "service" ? (
+            <GuestServiceTabContent />
+          ) : (
+            <GuestCabinet />
+          )}
+        </div>
       </main>
     </div>
   );
