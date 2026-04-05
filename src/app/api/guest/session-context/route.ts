@@ -13,7 +13,8 @@ export const runtime = "nodejs";
 
 /** Служебная склейка мессенджер→стол (не доменная activeSessions). */
 const IDX = "active_sessions";
-const CTX_MAX_MS = 3 * 60 * 60 * 1000;
+/** Максимальный возраст записи active_sessions для recover (как в ТЗ: 4 ч). */
+const CTX_MAX_MS = 4 * 60 * 60 * 1000;
 const INIT_MAX_AGE_SEC = 24 * 60 * 60;
 
 type IndexDoc = { vr_id?: string; table_id?: string; last_seen?: unknown; order_status?: string };
