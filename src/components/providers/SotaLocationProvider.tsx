@@ -43,6 +43,8 @@ type InsideVenueResult = {
   effectiveRadius: number | null;
 };
 
+export type GuestQrVenueAccessResult = { ok: true } | { ok: false; message: string };
+
 type SotaLocationContextValue = {
   coords: { lat: number; lng: number } | null;
   status: LocationStatus;
@@ -53,6 +55,8 @@ type SotaLocationContextValue = {
   getEffectiveRadius: (venueId: string) => Promise<EffectiveRadiusResult>;
   getVenueDistance: (venueId: string) => Promise<VenueDistanceResult>;
   checkInsideVenue: (venueId: string) => Promise<InsideVenueResult>;
+  /** Строгая проверка для открытия стола по QR: при настроенной геозоне нужны координаты и вход в радиус. */
+  checkGuestQrVenueAccess: (venueId: string) => Promise<GuestQrVenueAccessResult>;
 };
 
 const DEFAULT_GLOBAL_RADIUS_LIMIT = DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS;
@@ -329,6 +333,31 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
     [getVenueDistance]
   );
 
+  const checkGuestQrVenueAccess = useCallback(
+    async (venueId: string): Promise<GuestQrVenueAccessResult> => {
+      const id = venueId.trim();
+      if (!id) return { ok: false, message: "Не удалось определить заведение из QR." };
+      await requestLocation(true);
+      const dist = await getVenueDistance(id);
+      if (!dist.configured) return { ok: true };
+      if (dist.distanceMeters == null) {
+        return {
+          ok: false,
+          message: "Нужна геолокация: разрешите доступ и подойдите к заведению, чтобы открыть стол по QR.",
+        };
+      }
+      if (!dist.isNear) {
+        const r = dist.effectiveRadius ?? DEFAULT_VENUE_GEO_RADIUS_METERS;
+        return {
+          ok: false,
+          message: `Вы вне зоны заведения. Подойдите ближе (до ${r} м от точки на карте в админке).`,
+        };
+      }
+      return { ok: true };
+    },
+    [requestLocation, getVenueDistance]
+  );
+
   const value = useMemo<SotaLocationContextValue>(
     () => ({
       coords,
@@ -340,8 +369,20 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
       getEffectiveRadius,
       getVenueDistance,
       checkInsideVenue,
+      checkGuestQrVenueAccess,
     }),
-    [coords, status, source, error, globalRadiusLimit, requestLocation, getEffectiveRadius, getVenueDistance, checkInsideVenue]
+    [
+      coords,
+      status,
+      source,
+      error,
+      globalRadiusLimit,
+      requestLocation,
+      getEffectiveRadius,
+      getVenueDistance,
+      checkInsideVenue,
+      checkGuestQrVenueAccess,
+    ]
   );
 
   return <SotaLocationContext.Provider value={value}>{children}</SotaLocationContext.Provider>;

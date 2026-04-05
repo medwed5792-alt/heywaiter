@@ -158,20 +158,21 @@ export const STAFF_NOTIFICATIONS_QUERY = {
 } as const;
 
 /**
- * Escape Alert: гость покинул зону при открытой сессии → уведомление охране.
+ * Гость покинул геозону при активной сессии → лента дашборда + таргет официанту (и ЛПР по каскаду).
  */
 export async function createGuestEscapeAlert(
   venueId: string,
   tableId: string,
-  sessionId?: string
+  sessionId?: string,
+  opts?: { guestLabel?: string; tableNumber?: number }
 ): Promise<string> {
-  const ref = await createTargetedNotification(
-    venueId,
-    tableId,
-    "security",
-    `Гость убегает! Стол №${tableId}`,
-    sessionId
-  );
+  const name = (opts?.guestLabel ?? "Гость").trim() || "Гость";
+  const tbl =
+    opts?.tableNumber != null && Number.isFinite(opts.tableNumber) && opts.tableNumber > 0
+      ? String(Math.floor(opts.tableNumber))
+      : tableId;
+  const message = `Гость ${name} стол №${tbl} покинул радиус`;
+  const ref = await createTargetedNotification(venueId, tableId, "waiter", message, sessionId);
   return ref.id;
 }
 

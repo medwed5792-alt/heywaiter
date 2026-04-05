@@ -3,7 +3,12 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { DEFAULT_VENUE_GEO_RADIUS_METERS, isOutsideVenue, offsetLatLngByMeters } from "@/lib/geo";
+import {
+  DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS,
+  DEFAULT_VENUE_GEO_RADIUS_METERS,
+  isOutsideVenue,
+  offsetLatLngByMeters,
+} from "@/lib/geo";
 import { createGuestEscapeAlert, createStaffEscapeAlert } from "@/lib/stealth-notifications";
 import { getSimulateOutOfZone } from "@/components/debug/DebugPanelTrigger";
 import type { VenueGeo } from "@/lib/types";
@@ -28,6 +33,10 @@ interface UseGeoFencingGuest {
   tableId: string;
   sessionId?: string;
   sessionOpen: boolean;
+  /** Подпись гостя в тексте уведомления официанту */
+  guestLabel?: string;
+  /** Номер стола для текста уведомления (если есть в сессии) */
+  tableNumber?: number;
   /** Ghost: запрашивать GPS только после первого нажатия любой кнопки (с пояснением "Для точности подачи заказа") */
   startAfterUserAction?: boolean;
 }
@@ -84,7 +93,11 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const p = paramsRef.current;
       if (p.mode === "guest" && p.sessionOpen && !alertedGuestRef.current) {
         alertedGuestRef.current = true;
-        await createGuestEscapeAlert(venueId, p.tableId, p.sessionId);
+        const g = p as UseGeoFencingGuest;
+        await createGuestEscapeAlert(venueId, g.tableId, g.sessionId, {
+          guestLabel: g.guestLabel,
+          tableNumber: g.tableNumber,
+        });
       }
       if (p.mode === "staff" && p.onShift && !alertedStaffRef.current) {
         alertedStaffRef.current = true;
@@ -125,8 +138,15 @@ export function useGeoFencing(params: UseGeoFencingParams) {
   );
 
   const sessionIdForDep = params.mode === "guest" ? (params as UseGeoFencingGuest).sessionId : undefined;
+  const guestSessionOpen = params.mode === "guest" ? (params as UseGeoFencingGuest).sessionOpen : true;
+
+  useEffect(() => {
+    if (params.mode === "guest") alertedGuestRef.current = false;
+  }, [params.mode, sessionIdForDep]);
+
   useEffect(() => {
     if (!active) return;
+    if (params.mode === "guest" && !guestSessionOpen) return;
     let watchId: number | null = null;
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
@@ -134,10 +154,17 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const venueSnap = await getDoc(doc(db, "venues", venueId));
       const geo = venueSnap.exists() ? venueSnap.data().geo : undefined;
       if (!geo?.lat || !geo?.lng) return;
+      const globalSnap = await getDoc(doc(db, "system_settings", "global"));
+      const gRaw = (globalSnap.data() ?? {}) as Record<string, unknown>;
+      const globalLimit =
+        typeof gRaw.geoRadiusLimit === "number" && Number.isFinite(gRaw.geoRadiusLimit)
+          ? gRaw.geoRadiusLimit
+          : DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS;
+      const venueR = geo.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS;
       geoRef.current = {
         lat: geo.lat,
         lng: geo.lng,
-        radius: geo.radius ?? DEFAULT_VENUE_GEO_RADIUS_METERS,
+        radius: Math.min(venueR, globalLimit),
       };
 
       if (typeof navigator === "undefined" || !navigator.geolocation) return;
@@ -161,7 +188,7 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       if (watchId != null) navigator.geolocation.clearWatch(watchId);
       if (intervalId != null) clearInterval(intervalId);
     };
-  }, [venueId, onPosition, active, params.mode, sessionIdForDep, getCurrentPositionHybrid]);
+  }, [venueId, onPosition, active, params.mode, sessionIdForDep, guestSessionOpen, getCurrentPositionHybrid]);
 
   const startAfterUserAction = params.mode === "guest" ? (params as UseGeoFencingGuest).startAfterUserAction : undefined;
   const startGeoFencing = useCallback(() => {

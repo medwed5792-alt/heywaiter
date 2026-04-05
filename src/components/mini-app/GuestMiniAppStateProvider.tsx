@@ -28,6 +28,7 @@ import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
+import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
@@ -225,6 +226,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const router = useRouter();
   const searchParams = useSearchParams();
   const { visitorId } = useVisitor();
+  const { checkGuestQrVenueAccess } = useSotaLocation();
 
   const [currentLocation, setCurrentLocation] = useState<{ venueId: string | null; tableId: string | null }>({
     venueId: null,
@@ -427,7 +429,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               : DEFAULT_SYSTEM_CONFIG.globalMaintenanceMode,
         };
         setSystemConfig(next);
-        console.log("SOTA Global Config Updated:", next);
       },
       () => {
         setSystemConfig(DEFAULT_SYSTEM_CONFIG);
@@ -962,6 +963,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             toast.error("Неверный QR");
             return;
           }
+          const access = await checkGuestQrVenueAccess(resolved.venueId);
+          if (!access.ok) {
+            toast.error(access.message);
+            return;
+          }
           await switchLocation(resolved.venueId, resolved.tableId || null);
           tg.closeScanQrPopup?.();
         })();
@@ -974,7 +980,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push(`${origin}/check-in`);
-  }, [router, switchLocation]);
+  }, [router, switchLocation, checkGuestQrVenueAccess]);
 
   const completeWelcomeSequence = useCallback(() => {
     const v = currentLocation.venueId?.trim();
