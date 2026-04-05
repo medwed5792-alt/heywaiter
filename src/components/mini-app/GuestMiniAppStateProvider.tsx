@@ -41,7 +41,7 @@ import {
   writeWelcomeDone,
 } from "@/lib/guest-table-persistence";
 import {
-  guestSessionContextBind,
+  guestSessionContextClaim,
   guestSessionContextClear,
   guestSessionContextRecover,
 } from "@/lib/guest-session-context-api";
@@ -595,41 +595,40 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (!cancelled) setIsInitializing(false);
     };
 
-    const tryRestoreSeat = async (uid: string): Promise<boolean> => {
-      const persisted = readPersistedGuestSeat();
-      if (!persisted || !guestCustomerUidsMatch(persisted.participantUid, uid)) return false;
-      try {
-        const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
-        if (!ok) {
+    void (async () => {
+      const inTg = isTelegramContext();
+      const tgApp = getTelegramWebApp();
+      const signedInit = typeof tgApp?.initData === "string" ? tgApp.initData.trim() : "";
+
+      const claimGuestTable = (venueId: string, tableId: string) => {
+        const v = venueId.trim();
+        const t = tableId.trim();
+        if (signedInit && v && t) void guestSessionContextClaim(signedInit, v, t);
+      };
+
+      const tryRestoreSeat = async (uid: string): Promise<boolean> => {
+        const persisted = readPersistedGuestSeat();
+        if (!persisted || !guestCustomerUidsMatch(persisted.participantUid, uid)) return false;
+        try {
+          const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
+          if (!ok) {
+            clearPersistedGuestSeat();
+            return false;
+          }
+          if (cancelled) return false;
+          await switchLocation(persisted.venueId, persisted.tableId);
+          if (signedInit) claimGuestTable(persisted.venueId, persisted.tableId);
+          return true;
+        } catch (e) {
+          console.error("[guest bootstrap] restore failed", e);
           clearPersistedGuestSeat();
           return false;
         }
-        if (cancelled) return false;
-        await switchLocation(persisted.venueId, persisted.tableId);
-        return true;
-      } catch (e) {
-        console.error("[guest bootstrap] restore failed", e);
-        clearPersistedGuestSeat();
-        return false;
-      }
-    };
-
-    void (async () => {
-      const inTg = isTelegramContext();
-
-      const bindGuestActiveSession = (venueId: string, tableId: string) => {
-        const tg = getTelegramWebApp();
-        const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-        const v = venueId.trim();
-        const t = tableId.trim();
-        if (init && v && t) void guestSessionContextBind(init, v, t);
       };
 
       const tryRecoverGuestFromServerIndex = async (): Promise<boolean> => {
-        const tg = getTelegramWebApp();
-        const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-        if (!init) return false;
-        const rec = await guestSessionContextRecover(init);
+        if (!signedInit) return false;
+        const rec = await guestSessionContextRecover(signedInit);
         if (cancelled || !rec.active) return false;
         const v = rec.vrId?.trim() ?? "";
         const t = rec.tableId?.trim() ?? "";
@@ -656,7 +655,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               if (cancelled) return;
               if (resolved?.venueId && resolved.tableId) {
                 await switchLocation(resolved.venueId, resolved.tableId);
-                bindGuestActiveSession(resolved.venueId, resolved.tableId);
+                claimGuestTable(resolved.venueId, resolved.tableId);
                 finish();
                 return;
               }
@@ -669,7 +668,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           if (payload?.venueId && payload.tableId) {
             if (cancelled) return;
             await switchLocation(payload.venueId, payload.tableId);
-            bindGuestActiveSession(payload.venueId, payload.tableId);
+            claimGuestTable(payload.venueId, payload.tableId);
             finish();
             return;
           }
@@ -694,11 +693,18 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return;
       }
 
+      if (await tryRecoverGuestFromServerIndex()) {
+        if (cancelled) return;
+        finish();
+        return;
+      }
+
       const vParam = (searchParams.get("v") ?? "").trim();
       const tParam = (searchParams.get("t") ?? "").trim();
       if (vParam && tParam) {
         if (cancelled) return;
         await switchLocation(vParam, tParam);
+        claimGuestTable(vParam, tParam);
         finish();
         return;
       }

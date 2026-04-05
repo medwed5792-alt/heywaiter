@@ -21,6 +21,21 @@ export async function guestSessionContextRecover(initData: string): Promise<Gues
   return { active: false };
 }
 
+/** Закрепить стол за tg (склейка anon→tg + active_sessions). Основной путь после start_param. */
+export async function guestSessionContextClaim(
+  initData: string,
+  venueId: string,
+  tableId: string
+): Promise<boolean> {
+  const res = await fetch("/api/guest/session-context", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "claim", initData, venueId, tableId }),
+  });
+  return res.ok;
+}
+
+/** Только запись индекса, если участник уже числится в сессии. */
 export async function guestSessionContextBind(
   initData: string,
   venueId: string,

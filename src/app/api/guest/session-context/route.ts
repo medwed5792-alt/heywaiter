@@ -11,6 +11,7 @@ import {
   type GuestActiveSessionIndexDoc,
 } from "@/lib/guest-active-sessions-index";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-auth";
+import { claimTelegramTableForVerifiedUser } from "@/domain/usecases/check-in/claimTelegramTable";
 
 export const runtime = "nodejs";
 
@@ -71,9 +72,10 @@ async function resolveVerifiedTelegramUser(initData: string) {
 }
 
 /**
- * recover — вернуть контекст стола по tg id из подписанного initData (без доверия к initDataUnsafe).
- * bind — записать/обновить active_sessions после успешного разбора start_param.
- * clear — снять привязку (уход со стола / закрытие).
+ * recover — контекст стола из active_sessions + живая сессия.
+ * claim — закрепить стол за tg (склейка anon→tg, подселение по правилам) и записать active_sessions.
+ * bind — только индекс, если участник уже в activeSessions (без изменения участников).
+ * clear — снять привязку.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -100,6 +102,33 @@ export async function POST(request: NextRequest) {
     if (action === "clear") {
       await ref.delete().catch(() => undefined);
       return NextResponse.json({ ok: true });
+    }
+
+    if (action === "claim") {
+      const vrId = String(body.venueId ?? "").trim();
+      const tableId = String(body.tableId ?? "").trim();
+      if (!vrId || !tableId) {
+        return NextResponse.json({ error: "venueId and tableId required" }, { status: 400 });
+      }
+      const claimed = await claimTelegramTableForVerifiedUser({
+        venueId: vrId,
+        tableId,
+        telegramUserId: userId,
+      });
+      if (!claimed.ok) {
+        const st = claimed.error === "no_session" ? 404 : claimed.error === "invalid_input" ? 400 : 403;
+        return NextResponse.json({ error: claimed.error }, { status: st });
+      }
+      await ref.set(
+        {
+          vr_id: vrId,
+          table_id: tableId,
+          last_seen: FieldValue.serverTimestamp(),
+          order_status: "active",
+        },
+        { merge: true }
+      );
+      return NextResponse.json({ ok: true, sessionId: claimed.sessionId });
     }
 
     if (action === "bind") {

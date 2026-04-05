@@ -5,7 +5,7 @@ import type {
 } from "@/lib/types";
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { buildTelegramCustomerUid } from "@/lib/identity/customer-uid";
+import { buildTelegramCustomerUid, guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -127,11 +127,11 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       };
     }
 
-    const existingParticipantIdx = participants.findIndex((p) => p.uid === currentUid);
+    const existingParticipantIdx = participants.findIndex((p) => guestCustomerUidsMatch(p.uid, currentUid));
     const existingParticipant = existingParticipantIdx >= 0 ? participants[existingParticipantIdx] : null;
 
-    // Private table: only Master can join/rejoin.
-    if (isPrivate && existingMasterId && existingMasterId !== currentUid) {
+    // Private table: только хозяин (с учётом tg ↔ legacy uid в списке участников).
+    if (isPrivate && existingMasterId && !guestCustomerUidsMatch(existingMasterId, currentUid)) {
       return {
         status: "table_private",
         sessionId: existing.id,
@@ -154,7 +154,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
           updatedAt: now,
         });
       }
-    } else if (!existingMasterId || !isPrivate || existingMasterId === currentUid) {
+    } else if (!existingMasterId || !isPrivate || guestCustomerUidsMatch(existingMasterId, currentUid)) {
       // Public table, master check-in, or legacy session without masterId: add participant.
       participants.push(nowParticipant("active"));
       await firestore.collection("activeSessions").doc(existing.id).update({
