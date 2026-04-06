@@ -393,6 +393,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const nextVenueId = venueId?.trim() || null;
       const nextTableId = tableId?.trim() || null;
       const nextFullTable = Boolean(nextVenueId && nextTableId);
+      /** Повторный вызов с тем же столом (restore/bootstrap) не должен сбрасывать activeSessions-снимок — иначе мерцание UI. */
+      if (
+        nextFullTable &&
+        prev.venueId?.trim() === nextVenueId &&
+        prev.tableId?.trim() === nextTableId
+      ) {
+        return;
+      }
       if (hadTable && !nextFullTable) {
         const tg = getTelegramWebApp();
         const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
@@ -519,12 +527,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     return () => unsub();
   }, []);
 
-  // Экран посадки: на каждом столе — отдельный флаг в sessionStorage.
+  // Экран посадки: флаг в localStorage на пару venue+table. Нельзя при неполной паре (только venue или только table)
+  // выставлять isSessionActive=true — иначе на мгновение показывается главный экран без welcome, затем снова welcome (мерцание кнопки).
   useEffect(() => {
     const v = currentLocation.venueId?.trim();
     const t = currentLocation.tableId?.trim();
-    if (!v || !t) {
+    if (!v && !t) {
       setIsSessionActive(true);
+      return;
+    }
+    if (!v || !t) {
       return;
     }
     setIsSessionActive(readWelcomeDone(v, t));
