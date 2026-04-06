@@ -378,7 +378,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     } catch {
       setVisitHistory([]);
     }
-  }, [guestIdentity.currentUid]);
+  }, [guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
 
   const switchLocation = useCallback(
     async (venueId: string | null, tableId: string | null) => {
@@ -744,42 +744,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     writePersistedGuestSeat(v, t, uid);
   }, [activeSession, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
 
-  // Poll table status. When the backend marks it as "closed" we return the guest to dashboard.
-  useEffect(() => {
-    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
-
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const q = query(
-          collection(db, "activeSessions"),
-          where("venueId", "==", currentLocation.venueId),
-          where("tableId", "==", currentLocation.tableId),
-          where("status", "==", "closed"),
-          limit(1)
-        );
-        const snap = await getDocs(q);
-        if (cancelled) return;
-        if (!snap.empty) {
-          await switchLocation(currentLocation.venueId, null);
-        }
-      } catch {
-        // best-effort polling
-      }
-    };
-
-    void poll();
-    const id = window.setInterval(() => {
-      void poll();
-    }, 30000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [currentLocation.venueId, currentLocation.tableId, isSdkReady, switchLocation]);
-
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId || !guestIdentity.currentUid) return;
     const key = `${currentLocation.venueId}:${currentLocation.tableId}:${guestIdentity.currentUid}`;
@@ -806,17 +770,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     })();
   }, [currentLocation.venueId, currentLocation.tableId, guestIdentity.currentUid, isSdkReady]);
 
-  // Live session data: masterId, isPrivate and participants.
+  // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
     const venueId = currentLocation.venueId;
     const tableId = currentLocation.tableId;
 
+    let sawSessionDoc = false;
+
     const q = query(
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
-      where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed"]),
+      where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed", "closed"]),
       limit(1)
     );
 
@@ -824,10 +790,25 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (snap.empty) {
         setActiveSession(null);
         setParticipants([]);
+        if (sawSessionDoc) {
+          sawSessionDoc = false;
+          void switchLocation(venueId, null);
+        }
         return;
       }
 
       const d = (snap.docs[0]!.data() ?? {}) as Record<string, unknown>;
+      const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
+      const sessionStatus = normalizeActiveSessionStatus(rawStatus);
+
+      if (sessionStatus === "closed") {
+        setActiveSession(null);
+        setParticipants([]);
+        sawSessionDoc = false;
+        void switchLocation(venueId, null);
+        return;
+      }
+
       const masterId = typeof d.masterId === "string" ? d.masterId.trim() : "";
       const isPrivate = typeof d.isPrivate === "boolean" ? d.isPrivate : true;
 
@@ -850,8 +831,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         .filter(Boolean) as ActiveSessionParticipant[];
 
       const tableNumber = typeof d.tableNumber === "number" ? d.tableNumber : 0;
-      const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
-      const sessionStatus = normalizeActiveSessionStatus(rawStatus);
       const sessionAssigned =
         typeof d.assignedStaffId === "string" && d.assignedStaffId.trim() ? d.assignedStaffId.trim() : undefined;
       const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
@@ -872,12 +851,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         updatedAt: d.updatedAt ?? null,
       };
 
+      sawSessionDoc = true;
       setActiveSession(session);
       setParticipants(parsedParticipants);
     });
 
     return () => unsub();
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation]);
 
   // Live orders data for the table.
   useEffect(() => {

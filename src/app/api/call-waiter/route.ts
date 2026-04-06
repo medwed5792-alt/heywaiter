@@ -8,8 +8,14 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const venueId = (body.venueId as string)?.trim();
     const tableId = (body.tableId as string)?.trim();
-    const customerUid = (body.customerUid as string)?.trim() || (body.uid as string)?.trim() || undefined;
-    const type = (body.type as PushCallWaiterInput["type"]) ?? "call_waiter";
+    const customerUid =
+      (body.customerUid as string)?.trim() ||
+      (body.uid as string)?.trim() ||
+      (body.visitorId as string)?.trim() ||
+      undefined;
+    const raw = (body.type as string) || "call_waiter";
+    const type: PushCallWaiterInput["type"] =
+      raw === "request_bill" ? "request_bill" : raw === "sos" ? "sos" : "call_waiter";
 
     if (!venueId || !tableId) {
       return NextResponse.json({ ok: false, error: "venueId и tableId обязательны" }, { status: 400 });
