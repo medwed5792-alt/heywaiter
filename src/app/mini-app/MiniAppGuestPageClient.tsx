@@ -8,7 +8,6 @@ import { GuestSessionGeoWatch } from "@/components/mini-app/GuestSessionGeoWatch
 import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
-import { GuestWelcomeScreen } from "@/components/mini-app/GuestWelcomeScreen";
 import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
 import { GuestTableMenuGateway } from "@/components/mini-app/GuestTableMenuGateway";
 import { GuestFeedbackStars } from "@/components/mini-app/GuestFeedbackStars";
@@ -150,9 +149,6 @@ function GuestSession() {
     currentTableOrders,
     callWaiter,
     requestBill,
-    isSessionActive,
-    assignedStaffDisplayName,
-    completeWelcomeSequence,
     setTablePrivacyAllowJoin,
     guestAwaitingTableFeedback,
   } = useGuestContext();
@@ -193,11 +189,7 @@ function GuestSession() {
     [setTablePrivacyAllowJoin]
   );
 
-  if (!isSessionActive) {
-    return <GuestWelcomeScreen staffDisplayName={assignedStaffDisplayName} onComplete={completeWelcomeSequence} />;
-  }
-
-  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId) && isSessionActive;
+  const canAct = Boolean(currentLocation.venueId && currentLocation.tableId);
   const sessionActionsEnabled = canAct && !guestAwaitingTableFeedback;
   const currentUid = guestIdentity.currentUid ?? "";
   const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
@@ -284,7 +276,7 @@ function GuestSession() {
           <GuestTableMenuGateway venueFirestoreId={venueIdForMenu} disabled={!canAct} />
         ) : null}
 
-        {isSessionActive && isMaster && activeSession && !guestAwaitingTableFeedback ? (
+        {isMaster && activeSession && !guestAwaitingTableFeedback ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Мастер стола</p>
             <label className="mt-3 flex cursor-pointer items-center justify-between gap-3">
@@ -409,6 +401,20 @@ function Loading() {
   return <MiniAppIdentifyingFallback />;
 }
 
+/** Стабильный экран до прихода activeSessions — без переключения welcome/сервис. */
+function GuestTableConnectingLoader() {
+  return (
+    <div className="flex min-h-[260px] flex-col items-center justify-center gap-4 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+      <div
+        className="h-10 w-10 rounded-full border-2 border-slate-200 border-t-slate-800 motion-reduce:animate-none animate-spin"
+        aria-hidden
+      />
+      <p className="text-center text-sm font-medium text-slate-800">Подключение к столу…</p>
+      <p className="max-w-xs text-center text-xs text-slate-500">Сессия подтверждается системой. Экран обновится сам.</p>
+    </div>
+  );
+}
+
 function GuestCabinet() {
   const {
     guestIdentity,
@@ -521,10 +527,6 @@ function MiniAppScreenRouter() {
   const [tab, setTab] = useState<GuestTab>("service");
 
   useEffect(() => {
-    if (currentLocation?.tableId?.trim()) setTab("service");
-  }, [currentLocation?.tableId]);
-
-  useEffect(() => {
     if (guestAwaitingTableFeedback) setTab("cabinet");
   }, [guestAwaitingTableFeedback]);
 
@@ -554,6 +556,8 @@ function MiniAppScreenRouter() {
 
   /** Стол из QR/ссылки: показываем сценарий «за столом» даже пока Firestore ещё не отдал activeSessions. */
   const guestAtTable = Boolean(currentLocation.venueId?.trim() && currentLocation.tableId?.trim());
+  const tableSessionLoading =
+    guestAtTable && !activeSession && !guestAwaitingTableFeedback;
   const venueLabel = currentLocation.venueId ? resolveVenueDisplayName(currentLocation.venueId) : "";
   const tableLabel =
     activeSession && activeSession.tableNumber > 0
@@ -587,7 +591,7 @@ function MiniAppScreenRouter() {
 
           {guestAtTable ? (
             tab === "service" ? (
-              <GuestSession />
+              tableSessionLoading ? <GuestTableConnectingLoader /> : <GuestSession />
             ) : (
               <GuestCabinet />
             )

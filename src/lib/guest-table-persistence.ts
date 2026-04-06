@@ -89,30 +89,3 @@ export async function verifyGuestSeatStillActive(
   }
   return false;
 }
-
-const WELCOME_PREFIX = "heywaiter_guest_welcome_v1_";
-
-export function welcomeDoneStorageKey(venueId: string, tableId: string): string {
-  return `${WELCOME_PREFIX}${encodeURIComponent(venueId.trim())}_${encodeURIComponent(tableId.trim())}`;
-}
-
-export function readWelcomeDone(venueId: string, tableId: string): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const k = welcomeDoneStorageKey(venueId, tableId);
-    if (window.localStorage.getItem(k) === "1") return true;
-    // Легаси: sessionStorage из старых версий
-    return window.sessionStorage.getItem(`sota_welcome_${venueId.trim()}_${tableId.trim()}`) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function writeWelcomeDone(venueId: string, tableId: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(welcomeDoneStorageKey(venueId, tableId), "1");
-  } catch {
-    // ignore
-  }
-}

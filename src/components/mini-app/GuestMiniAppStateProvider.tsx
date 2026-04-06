@@ -35,10 +35,8 @@ import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import {
   clearPersistedGuestSeat,
   readPersistedGuestSeat,
-  readWelcomeDone,
   verifyGuestSeatStillActive,
   writePersistedGuestSeat,
-  writeWelcomeDone,
 } from "@/lib/guest-table-persistence";
 import { guestSessionClaim, guestSessionClear, guestSessionRecover } from "@/lib/guest-session-bridge";
 import {
@@ -207,13 +205,10 @@ type GuestMiniAppContextValue = {
   isInitializing: boolean;
   isGuestBlocked: boolean;
   guestBlockedReason: string | null;
-  /** false на экране посадки, пока гость не подтвердил приветствие; сервисные кнопки неактивны. */
-  isSessionActive: boolean;
   /** Закреплённый за столом staff id — совпадает с тем, что бэкенд использует для вызова. */
   assignedStaffId: string | null;
-  /** Имя для строки «Вас обслуживает …». */
+  /** Имя официанта по документу стола (для подсказок / чаевых). */
   assignedStaffDisplayName: string | null;
-  completeWelcomeSequence: () => void;
   switchLocation: (venueId: string | null, tableId: string | null) => Promise<void>;
   openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
@@ -272,7 +267,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [telegramIdentityReady, setTelegramIdentityReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
-  const [isSessionActive, setIsSessionActive] = useState(false);
   const [telegramUid, setTelegramUid] = useState<string | null>(null);
   const [assignedStaffId, setAssignedStaffId] = useState<string | null>(null);
   const [assignedStaffDisplayName, setAssignedStaffDisplayName] = useState<string | null>(null);
@@ -384,7 +378,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     } catch {
       setVisitHistory([]);
     }
-  }, [guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
+  }, [guestIdentity.currentUid]);
 
   const switchLocation = useCallback(
     async (venueId: string | null, tableId: string | null) => {
@@ -526,21 +520,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     );
     return () => unsub();
   }, []);
-
-  // Экран посадки: флаг в localStorage на пару venue+table. Нельзя при неполной паре (только venue или только table)
-  // выставлять isSessionActive=true — иначе на мгновение показывается главный экран без welcome, затем снова welcome (мерцание кнопки).
-  useEffect(() => {
-    const v = currentLocation.venueId?.trim();
-    const t = currentLocation.tableId?.trim();
-    if (!v && !t) {
-      setIsSessionActive(true);
-      return;
-    }
-    if (!v || !t) {
-      return;
-    }
-    setIsSessionActive(readWelcomeDone(v, t));
-  }, [currentLocation.venueId, currentLocation.tableId]);
 
   // Тот же currentWaiterId, что и на бэкенде при pushCallWaiterNotification.
   useEffect(() => {
@@ -934,9 +913,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
 
   useEffect(() => {
-    if (!isSdkReady || isInitializing || currentLocation.venueId || currentLocation.tableId) return;
+    if (!isSdkReady || isInitializing || !guestIdentity.currentUid) return;
     void refreshVisitHistory();
-  }, [isSdkReady, isInitializing, currentLocation.venueId, currentLocation.tableId, refreshVisitHistory]);
+  }, [isSdkReady, isInitializing, guestIdentity.currentUid, refreshVisitHistory]);
 
   const visitVenueIdsKey = useMemo(() => {
     const s = new Set<string>();
@@ -1172,23 +1151,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     router.push(`${origin}/check-in`);
   }, [router, switchLocation, checkGuestQrVenueAccess]);
 
-  const completeWelcomeSequence = useCallback(() => {
-    const v = currentLocation.venueId?.trim();
-    const t = currentLocation.tableId?.trim();
-    if (v && t) {
-      writeWelcomeDone(v, t);
-    }
-    setIsSessionActive(true);
-  }, [currentLocation.venueId, currentLocation.tableId]);
-
   const callWaiter = useCallback(
     async (reason: "menu" | "bill" | "help") => {
       if (isGuestBlocked) {
         toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
-        return;
-      }
-      if (!isSessionActive) {
-        toast.error("Сначала подтвердите приветствие на столе");
         return;
       }
 
@@ -1221,12 +1187,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [
-      guestBlockedReason,
-      isGuestBlocked,
-      isSessionActive,
-      guestIdentity.currentUid,
-    ]
+    [guestBlockedReason, isGuestBlocked, guestIdentity.currentUid]
   );
 
   const setTablePrivacyAllowJoin = useCallback(
@@ -1345,10 +1306,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
-      isSessionActive,
       assignedStaffId,
       assignedStaffDisplayName,
-      completeWelcomeSequence,
       switchLocation,
       openTableScanner,
       openVenueMenu,
@@ -1379,10 +1338,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       isInitializing,
       isGuestBlocked,
       guestBlockedReason,
-      isSessionActive,
       assignedStaffId,
       assignedStaffDisplayName,
-      completeWelcomeSequence,
       switchLocation,
       openTableScanner,
       openVenueMenu,
