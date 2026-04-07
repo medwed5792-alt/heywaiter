@@ -12,8 +12,7 @@ import { NextRequest, NextResponse } from "next/server";
  * Обратная совместимость: POST /api/webhook/telegram → Telegram Client Bot
  * (см. src/app/api/webhook/telegram/route.ts).
  *
- * Логика «официант ввёл число → гость получил thankYou»:
- * см. src/lib/bot-router.ts (closeTableAndNotifyGuest) и docs/GOLDEN_STANDARD_FLOW.md
+ * Завершение визита — в дашборде / единый use-case closeTableSession; Staff-бот не меняет сессию.
  */
 export async function POST(request: NextRequest) {
   return NextResponse.json(

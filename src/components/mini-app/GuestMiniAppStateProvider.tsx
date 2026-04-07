@@ -319,17 +319,17 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setTelegramIdentityReady(true);
       return;
     }
-    /** Ожидание user id из Telegram WebApp — не polling Firestore; сессия стола только через onSnapshot ниже. */
-    let n = 0;
-    const timer = window.setInterval(() => {
-      n += 1;
-      if (apply() || n >= 17) {
-        window.clearInterval(timer);
-        setTelegramIdentityReady(true);
+    /** Ожидание user id из Telegram WebApp — без setInterval; сессия стола только через onSnapshot ниже. */
+    let cancelled = false;
+    void (async () => {
+      for (let n = 0; n < 17 && !cancelled; n++) {
+        if (apply()) break;
+        await new Promise<void>((r) => setTimeout(r, 300));
       }
-    }, 300);
+      if (!cancelled) setTelegramIdentityReady(true);
+    })();
     return () => {
-      window.clearInterval(timer);
+      cancelled = true;
       setTelegramIdentityReady(true);
     };
   }, [isSdkReady]);

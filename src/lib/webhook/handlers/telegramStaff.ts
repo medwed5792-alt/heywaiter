@@ -1,14 +1,14 @@
 /**
  * Обработчик Telegram Staff Bot (персонал).
- * Число = закрытие стола → гостю thankYou + реклама/опрос по tier. SOS = ForceReply → веерная рассылка.
+ * Число = напоминание: завершение визита только в дашборде (бот не меняет сессию). SOS = ForceReply → веерная рассылка.
  * Callback offer_accept_<staffId> / offer_decline_<staffId> = цифровой контракт (принять/отклонить предложение).
  */
 import { NextRequest } from "next/server";
-import { collection, addDoc, query, where, getDocs, doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, getDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import { closeTableAndNotifyGuest, sosFanOut } from "@/lib/bot-router";
+import { sosFanOut } from "@/lib/bot-router";
 import { getAppUrl } from "@/lib/webhook/utils";
 import { answerCallbackQuery, sendMessage } from "@/adapters/telegram/telegramApi";
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -186,7 +186,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
     return;
   }
 
-  // Число = закрытие стола (механика: официант ввёл цифру → гостю thankYou в Client-бот)
+  // Число: подсказка — завершение визита только в дашборде (сессия не меняется из бота).
   const tableNum = /^\d+$/.test(text) ? text : null;
   if (tableNum) {
     const venueId = await getVenueIdByStaffTgId(String(fromId));
@@ -197,38 +197,26 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
       });
       return;
     }
-    const result = await closeTableAndNotifyGuest(venueId, tableNum, "telegram");
-    if (result.ok) {
-      const staffData = await getStaffByTgId(String(fromId));
-      if (result.sessionId && staffData?.staffId) {
-        await updateDoc(doc(db, "activeSessions", result.sessionId), {
-          waiterId: staffData.staffId,
-          updatedAt: serverTimestamp(),
-        });
-      }
-      await addDoc(collection(db, "staffActions"), {
-        type: "close_table",
-        tableId: tableNum,
-        venueId,
-        staffChatId: chatId,
-        createdAt: serverTimestamp(),
-      });
-      await sendMessage(token, {
-        chat_id: chatId,
-        text: `Стол №${tableNum} закрыт. Гостю отправлено благодарствие.`,
-      });
-    } else {
-      await sendMessage(token, {
-        chat_id: chatId,
-        text: result.error || "Не удалось закрыть стол.",
-      });
-    }
+    await addDoc(collection(db, "staffActions"), {
+      type: "table_number_hint",
+      tableId: tableNum,
+      venueId,
+      staffChatId: chatId,
+      createdAt: serverTimestamp(),
+    });
+    await sendMessage(token, {
+      chat_id: chatId,
+      text:
+        `Стол №${tableNum}: завершение визита и экран отзыва для гостя выполняются в дашборде HeyWaiter ` +
+        `(откройте стол в списке → «Завершить визит»). Бот не закрывает сессию.`,
+    });
     return;
   }
 
   // Подсказка + кнопка SOS + вход в Staff Workspace (role=staff и bot=staff → кабинет, без t → «Начать смену»)
   const staffData = await getStaffByTgId(String(fromId));
-  let replyText = "Отправьте номер стола для закрытия сессии. Либо нажмите кнопку SOS.";
+  let replyText =
+    "Завершение визита — в дашборде HeyWaiter. Здесь можно нажать SOS или открыть пульт.";
   const baseUrl = getAppUrl();
   const staffAppUrl = `${baseUrl}/mini-app?bot=staff&role=staff&v=1.1`;
   const inlineKeyboard: { text: string; callback_data?: string; web_app?: { url: string } }[][] = [
@@ -238,7 +226,7 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
   if (staffData?.venueIds?.length) {
     const todayShift = await getTodayShiftVenue(staffData.staffId);
     if (todayShift?.name) {
-      replyText = `${todayISO()} | — | ${todayShift.name}\n\nОтправьте номер стола для закрытия сессии или нажмите SOS.`;
+      replyText = `${todayISO()} | — | ${todayShift.name}\n\nЗавершение визита — в дашборде; здесь SOS или пульт.`;
     }
   }
 

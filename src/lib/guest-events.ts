@@ -90,7 +90,7 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
     );
   } else {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    await fetch(`${origin}/api/notifications/call-waiter`, {
+    await fetch(`${origin}/api/call-waiter`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(pushPayload),

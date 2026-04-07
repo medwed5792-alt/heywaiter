@@ -2,7 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid, extractMessengerExternalIdFromCustomerUid } from "@/lib/identity/customer-uid";
-import { releaseTableOccupancy } from "@/domain/usecases/session/closeTableSession";
+import { closeSessionAwaitingGuestFeedback } from "@/domain/usecases/session/closeTableSession";
 
 type SessionDocShape = {
   masterId?: string;
@@ -215,31 +215,26 @@ export async function closeTableByMaster(
   const ref = await getCurrentSessionRef(venueId, tableId);
   if (!ref) return { ok: false, error: "Session not found" };
 
-  const firestore = getAdminFirestore();
   const state = await getCurrentSessionState(venueId, tableId);
   if (!state) return { ok: false, error: "Session not found" };
   if (state.masterId !== actor) return { ok: false, error: "Only master can close table" };
 
   const { updatedCount } = await completeOrdersForTable(venueId, tableId);
 
-  await firestore.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) return;
-    const d = (snap.data() || {}) as SessionDocShape;
-    const participants = normalizeParticipants(d.participants).map((p) => ({
-      ...p,
-      status: p.status === "active" ? ("paid" as const) : p.status,
-      updatedAt: new Date(),
-    }));
-    tx.update(ref, {
-      participants,
-      status: "closed",
-      closedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-  });
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, error: "Session not found" };
+  const d = (snap.data() || {}) as SessionDocShape;
+  const participants = normalizeParticipants(d.participants).map((p) => ({
+    ...p,
+    status: p.status === "active" ? ("paid" as const) : p.status,
+    updatedAt: new Date(),
+  }));
 
-  await releaseTableOccupancy(venueId, tableId);
+  const sessionId = ref.id;
+  const r = await closeSessionAwaitingGuestFeedback({ venueId, tableId, sessionId, participants });
+  if (!r.ok) {
+    return { ok: false, error: r.error };
+  }
 
   return { ok: true, closed: true, updatedOrders: updatedCount };
 }

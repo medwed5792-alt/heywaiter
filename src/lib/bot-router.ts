@@ -1,6 +1,6 @@
 /**
- * Золотой стандарт HeyWaiter: роутер логики ботов.
- * Связка: Официант ввёл число → Гость получает messages.thankYou в Client-бот → по tier: реклама или опрос.
+ * Золотой стандарт HeyWaiter: роутер логики ботов (уведомления гостю/персоналу).
+ * Завершение визита и смена статуса сессии — только через дашборд / единый use-case, не через бота.
  */
 import {
   collection,
@@ -14,7 +14,6 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { closeSessionAsClosedAndFreeTable } from "@/domain/usecases/session/closeTableSession";
 import { getBotToken } from "@/lib/webhook/channels";
 import type { MessengerChannel } from "@/lib/types";
 import { sendMessage } from "@/adapters/telegram/telegramApi";
@@ -46,115 +45,6 @@ async function sendToGuestInChannel(
     return;
   }
   console.log("[bot-router] Channel not implemented:", channel);
-}
-
-/**
- * Закрытие стола по цифре от официанта.
- * 1) Найти activeSession по venueId + tableId.
- * 2) Взять venue.messages.thankYou (или дефолт).
- * 3) Отправить thankYou гостю в его канал (guestChannel, guestChatId).
- * 4) По guest.tier: free → рекламный блок, pro → опрос (Кухня, Сервис, Чистота, Атмосфера).
- * 5) Пометить сессию закрытой / удалить из активных; записать в лог.
- */
-export async function closeTableAndNotifyGuest(
-  venueId: string,
-  tableId: string,
-  staffChannel: MessengerChannel = "telegram"
-): Promise<{ ok: boolean; error?: string; sessionId?: string }> {
-  try {
-    const sessionsRef = collection(db, "activeSessions");
-    const q = query(
-      sessionsRef,
-      where("venueId", "==", venueId),
-      where("tableId", "==", tableId),
-      where("status", "==", "check_in_success")
-    );
-    const snap = await getDocs(q);
-    const sessionDoc = snap.docs[0];
-    if (!sessionDoc?.exists()) {
-      return { ok: false, error: "Сессия не найдена" };
-    }
-    const session = { id: sessionDoc.id, ...sessionDoc.data() } as {
-      id: string;
-      guestChannel?: string;
-      guestChatId?: string;
-      guestId?: string;
-    };
-    const guestChannel = (session.guestChannel || "telegram") as MessengerChannel;
-    const guestChatId = session.guestChatId;
-    const guestId = session.guestId;
-
-    if (!guestChatId) {
-      return { ok: false, error: "Нет guestChatId в сессии" };
-    }
-
-    const venueSnap = await getDoc(doc(db, "venues", venueId));
-    const venue = venueSnap.exists() ? venueSnap.data() : {};
-    const messages = (venue?.messages || {}) as { thankYou?: string };
-    const thankYouText =
-      messages.thankYou ||
-      "🙏 Спасибо за визит! Будем рады видеть вас снова.";
-
-    await sendToGuestInChannel(
-      guestChannel,
-      guestChatId,
-      thankYouText,
-      venueId
-    );
-
-    let guestTier: "free" | "pro" | undefined = "free";
-    if (guestId) {
-      const guestSnap = await getDoc(doc(db, "guests", guestId));
-      if (guestSnap.exists()) {
-        guestTier = (guestSnap.data()?.tier as "free" | "pro") || "free";
-      }
-    }
-
-    if (guestTier === "free") {
-      const adText =
-        "📢 Спецпредложения и новости заведения — подпишитесь на наш канал!";
-      await sendToGuestInChannel(
-        guestChannel,
-        guestChatId,
-        adText,
-        venueId
-      );
-    } else {
-      const surveyText =
-        "Оцените, пожалуйста (1–5):\n• Кухня\n• Сервис\n• Чистота\n• Атмосфера\nНапишите 4 цифры через пробел, например: 5 5 4 5";
-      await sendToGuestInChannel(
-        guestChannel,
-        guestChatId,
-        surveyText,
-        venueId
-      );
-    }
-
-    const closed = await closeSessionAsClosedAndFreeTable({
-      venueId,
-      tableId,
-      sessionId: sessionDoc.id,
-    });
-    if (!closed.ok) {
-      return { ok: false, error: closed.error };
-    }
-
-    await addDoc(collection(db, "logEntries"), {
-      venueId,
-      tableId,
-      type: "check_out",
-      payload: { sessionId: session.id, guestId, guestTier },
-      createdAt: serverTimestamp(),
-    });
-
-    return { ok: true, sessionId: sessionDoc.id };
-  } catch (e) {
-    console.error("[bot-router] closeTableAndNotifyGuest error:", e);
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : "Unknown error",
-    };
-  }
 }
 
 /**

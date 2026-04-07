@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
-import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import {
   ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK,
   activeSessionsIndexDocIdForTelegramUser,
 } from "@/lib/active-sessions-index";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
+import { FieldValue } from "firebase-admin/firestore";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+import { finalizeGuestSessionClosedAfterFeedback } from "@/domain/usecases/session/closeTableSession";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ const IDX = "active_sessions";
 
 /**
  * POST /api/guest/feedback-session-done
- * После экрана отзыва: закрывает доменную сессию стола и сбрасывает фазу в индексе active_sessions.
+ * После экрана отзыва: сессия → closed, индекс active_sessions → visit_ended (единый use-case, одна транзакция).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -59,23 +60,26 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .get();
 
-    const batch = fs.batch();
-    if (!q.empty) {
-      batch.update(q.docs[0]!.ref, {
-        status: "closed",
-        closedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
+    const sessionId = q.empty ? "" : q.docs[0]!.id;
+    if (sessionId) {
+      const done = await finalizeGuestSessionClosedAfterFeedback({
+        venueId: vrId,
+        tableId,
+        sessionId,
+        telegramUserId: v.userId,
       });
+      if (!done.ok) {
+        return NextResponse.json({ error: done.error }, { status: 500 });
+      }
+    } else {
+      await idxRef.set(
+        {
+          last_seen: FieldValue.serverTimestamp(),
+          order_status: "visit_ended",
+        },
+        { merge: true }
+      );
     }
-    batch.set(
-      idxRef,
-      {
-        last_seen: FieldValue.serverTimestamp(),
-        order_status: "visit_ended",
-      },
-      { merge: true }
-    );
-    await batch.commit();
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[api/guest/feedback-session-done]", e);
