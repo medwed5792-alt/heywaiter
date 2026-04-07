@@ -1,25 +1,95 @@
-# Связка «Официант ввёл число → Гость получил текст заведения»
+# Golden Standard Flow: закрытие стола (новая архитектура)
 
-## Как это работает
+## Целевая модель
 
-1. **Официант в Staff-боте** отправляет одно сообщение — **только цифру** (номер стола), например `5`.
+Закрытие стола теперь двухэтапное:
 
-2. **Webhook** `POST /api/webhook/telegram/staff` получает update от Telegram. Обработчик `handleTelegramStaff` видит, что `text === "5"` — это закрытие стола.
+1. **Операционный этап (админ/мастер):**
+   - сессия переводится из `check_in_success` в `awaiting_guest_feedback`;
+   - стол сразу освобождается (`venues/{venueId}/tables/{tableId}.status = "free"`).
 
-3. **Определение заведения:** по `from.id` (Telegram ID сотрудника) выполняется запрос в Firestore: коллекция `staff`, поле `tgId === from.id`, `active === true`. Берётся `venueId` этого сотрудника.
+2. **Гостевой финал:**
+   - после экрана отзыва (и при необходимости чаевых) сессия переводится в `closed`;
+   - индекс `active_sessions` переводится в `visit_ended`.
 
-4. **Роутер** `closeTableAndNotifyGuest(venueId, tableId)` в `src/lib/bot-router.ts`:
-   - Ищет в `activeSessions` запись с `venueId`, `tableId` и `status === "check_in_success"`.
-   - Из сессии читает **guestChannel** (канал, через который гость зашёл, например `telegram`) и **guestChatId** (ID чата гостя в этом канале). Эти поля заполняются при посадке в Client-боте.
-   - Читает из документа заведения `venues/{venueId}` поле **messages.thankYou** (конструктор сценариев ЛПР в админке «Зал & QR»). Если пусто — подставляется дефолт: «Спасибо за визит!».
-   - Отправляет **thankYou** гостю в его Client-бот: вызов API платформы (Telegram: `sendMessage(chat_id: guestChatId, text: thankYouText)`).
+Это убирает старый поток "цифра в Staff-боте -> thankYou-сообщение гостю" как источник истины для закрытия.
 
-5. **Guest Tiers (монетизация):**
-   - Если у гостя в профиле `tier === "free"` (или не задан) — после thankYou отправляется **рекламный блок** в тот же чат.
-   - Если `tier === "pro"` — отправляется **опрос** по 4 пунктам (Кухня, Сервис, Чистота, Атмосфера).
+## Шаг 1. Закрытие в фазу ожидания отзыва
 
-6. Сессия в Firestore помечается как закрытая (`status: "closed"`, `closedAt`), в `logEntries` пишется событие `check_out`.
+Точка входа:
+- `POST /api/admin/close-table-for-feedback`
 
-7. Официанту в Staff-бот приходит подтверждение: «Стол №5 закрыт. Гостю отправлено благодарствие.»
+Payload:
+- `venueId`
+- `tableId`
+- `sessionId`
 
-Итого: **одна цифра от официанта** → поиск сессии и заведения → **текст заведения (thankYou)** и реклама/опрос уходят **гостю в тот же мессенджер**, в котором он сидел за столом.
+Use-case:
+- `closeSessionAwaitingGuestFeedback(...)` из `src/domain/usecases/session/closeTableSession.ts`
+
+Что делает use-case одним `batch.commit()`:
+- валидирует, что сессия принадлежит `venueId/tableId` и в допустимом статусе (`check_in_success`, `awaiting_guest_feedback`, `completed`);
+- обновляет сессию:
+  - `status = "awaiting_guest_feedback"`
+  - `feedbackRequestedAt = serverTimestamp`
+  - `updatedAt = serverTimestamp`
+  - при наличии официанта на столе проставляет `assignedStaffId`
+  - опционально сохраняет `participants` (для мастер-сценария split bill);
+- освобождает стол:
+  - `status = "free"`
+  - `currentGuest = null`
+  - сохраняет `assignments` (merge);
+- обновляет индекс `active_sessions` для Telegram-участников сессии:
+  - `order_status = "AWAITING_FEEDBACK"`
+  - `vr_id`, `table_id`, `last_seen`.
+
+Итог шага:
+- стол свободен для новых гостей сразу после операционного закрытия;
+- текущий гость (или участники) остаётся в фазе пост-визита для отзыва.
+
+## Шаг 2. Финал после отзыва гостя
+
+Точка входа:
+- `POST /api/guest/feedback-session-done`
+
+Как работает:
+- роут верифицирует `initData` Telegram Mini App;
+- читает `active_sessions/tg_{telegramUserId}`;
+- если `order_status !== "AWAITING_FEEDBACK"` -> идемпотентно возвращает `already: true`;
+- иначе ищет сессию `activeSessions` по `venueId + tableId` в статусах `awaiting_guest_feedback|completed`.
+
+Use-case:
+- `finalizeGuestSessionClosedAfterFeedback(...)` из `src/domain/usecases/session/closeTableSession.ts`
+
+Что делает use-case одним `batch.commit()`:
+- если найдена целевая сессия в нужной фазе:
+  - `status = "closed"`
+  - `closedAt = serverTimestamp`
+  - `updatedAt = serverTimestamp`;
+- всегда обновляет индекс `active_sessions`:
+  - `order_status = "visit_ended"`
+  - `last_seen = serverTimestamp`.
+
+## Роль мастер-закрытия (split bill)
+
+Точка входа:
+- `POST /api/session/close-table`
+
+Use-case:
+- `closeTableByMaster(...)` из `src/domain/usecases/session/masterSplitBill.ts`
+
+Поведение:
+- проверяет, что закрывает именно `masterId`;
+- завершает открытые заказы (`pending|ready -> completed`);
+- нормализует `participants` (активные -> `paid`);
+- затем вызывает общий `closeSessionAwaitingGuestFeedback(...)`.
+
+Итог: и админ-сценарий, и мастер-сценарий сходятся в одном стандарте перехода сессии и освобождения стола.
+
+## Важные инварианты
+
+- Нормальный путь закрытия:  
+  `check_in_success -> awaiting_guest_feedback -> closed`.
+- `closed + free` в один шаг допустим только для force-операций (зависшие кейсы).
+- Состояние стола и сессии обновляется атомарно в batch, чтобы не было окна рассинхрона.
+- `active_sessions` — источник для recover/follow-up в Mini App, а не признак "стол занят/свободен".
