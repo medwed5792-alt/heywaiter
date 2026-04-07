@@ -14,6 +14,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { closeSessionAsClosedAndFreeTable } from "@/domain/usecases/session/closeTableSession";
 import { getBotToken } from "@/lib/webhook/channels";
 import type { MessengerChannel } from "@/lib/types";
 import { sendMessage } from "@/adapters/telegram/telegramApi";
@@ -129,11 +130,14 @@ export async function closeTableAndNotifyGuest(
       );
     }
 
-    await updateDoc(doc(db, "activeSessions", sessionDoc.id), {
-      status: "closed",
-      closedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    const closed = await closeSessionAsClosedAndFreeTable({
+      venueId,
+      tableId,
+      sessionId: sessionDoc.id,
     });
+    if (!closed.ok) {
+      return { ok: false, error: closed.error };
+    }
 
     await addDoc(collection(db, "logEntries"), {
       venueId,

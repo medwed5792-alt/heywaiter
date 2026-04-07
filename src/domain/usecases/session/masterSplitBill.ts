@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid, extractMessengerExternalIdFromCustomerUid } from "@/lib/identity/customer-uid";
+import { releaseTableOccupancy } from "@/domain/usecases/session/closeTableSession";
 
 type SessionDocShape = {
   masterId?: string;
@@ -237,6 +238,8 @@ export async function closeTableByMaster(
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
+
+  await releaseTableOccupancy(venueId, tableId);
 
   return { ok: true, closed: true, updatedOrders: updatedCount };
 }
