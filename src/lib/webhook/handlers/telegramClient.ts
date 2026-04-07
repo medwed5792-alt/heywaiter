@@ -10,9 +10,11 @@
  * ссылку вида t.me/BotUsername/app_name?startapp=v:venueId:t:tableId для быстрого запуска.
  */
 import { NextRequest } from "next/server";
-import { collection, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
+import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
+import type { MessengerIdentity } from "@/lib/types";
 import { getAppUrl } from "@/lib/webhook/utils";
 import { createGuestEvent } from "@/lib/guest-events";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -167,48 +169,37 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const role = kind === "OWN" ? "vip" : "guest";
   const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}&tab=service`;
 
-  if (kind === "OWN" && guest) {
-    await addDoc(collection(db, "activeSessions"), {
-      venueId,
-      tableId,
-      tableNumber: tableNum,
-      guestId: guest.id,
-      guestTgId: tgId,
-      guestChannel: "telegram",
-      guestChatId: chatId,
-      status: "check_in_success",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-    await addDoc(collection(db, "staffNotifications"), {
-      venueId,
-      tableId,
-      type: "new_guest",
-      message: `Новый гость за столом №${tableNum}${guest.name ? ` — ${guest.name}` : ""}`,
-      read: false,
-      guestId: guest.id,
-      preferences: guest.preferences ?? {},
-      favDish: guest.preferences?.favDish,
-      favDrink: guest.preferences?.favDrink,
-      notes: guest.preferences?.notes,
-      createdAt: serverTimestamp(),
-    });
-  } else {
-    await addDoc(collection(db, "activeSessions"), {
-      venueId,
-      tableId,
-      tableNumber: tableNum,
-      guestTgId: tgId,
-      guestChannel: "telegram",
-      guestChatId: chatId,
-      status: "check_in_success",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+  const participantUid = buildTelegramCustomerUid(tgId);
+  const tableNumberParsed = parseInt(String(tableNum), 10);
+  const guestIdentity: MessengerIdentity = {
+    channel: "telegram",
+    externalId: tgId,
+    locale: "ru",
+  };
+
+  const checkInResult = await checkInGuest({
+    venueId,
+    tableId,
+    tableNumber: Number.isFinite(tableNumberParsed) ? tableNumberParsed : undefined,
+    guestId: kind === "OWN" && guest ? guest.id : undefined,
+    participantUid,
+    guestIdentity,
+  });
+
+  if (checkInResult.status === "table_private") {
+    await sendMessage(token, { chat_id: chatId, text: checkInResult.messageGuest });
+    return;
+  }
+  if (checkInResult.status === "table_conflict") {
+    await sendMessage(token, { chat_id: chatId, text: checkInResult.messageGuest });
+    return;
   }
 
-  const welcomeText =
+  const welcomeBase =
     "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.";
+  const welcomeText =
+    welcomeBase +
+    (checkInResult.onboardingHint?.trim() ? `\n\n${checkInResult.onboardingHint.trim()}` : "");
 
   await sendMessage(token, {
     chat_id: chatId,

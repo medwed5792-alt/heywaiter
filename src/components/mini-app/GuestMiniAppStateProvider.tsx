@@ -319,6 +319,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setTelegramIdentityReady(true);
       return;
     }
+    /** Ожидание user id из Telegram WebApp — не polling Firestore; сессия стола только через onSnapshot ниже. */
     let n = 0;
     const timer = window.setInterval(() => {
       n += 1;
