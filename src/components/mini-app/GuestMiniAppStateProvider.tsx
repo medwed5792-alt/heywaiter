@@ -778,6 +778,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const tableId = currentLocation.tableId;
 
     let sawSessionDoc = false;
+    let cancelled = false;
 
     const q = query(
       collection(db, "activeSessions"),
@@ -787,18 +788,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       limit(1)
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      if (snap.empty) {
-        setActiveSession(null);
-        setParticipants([]);
-        if (sawSessionDoc) {
-          sawSessionDoc = false;
-          void switchLocation(venueId, null);
-        }
-        return;
-      }
-
-      const d = (snap.docs[0]!.data() ?? {}) as Record<string, unknown>;
+    const applySessionDoc = (docId: string, d: Record<string, unknown>) => {
       const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
       const sessionStatus = normalizeActiveSessionStatus(rawStatus);
 
@@ -837,7 +827,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
 
       const session: ActiveSession = {
-        id: snap.docs[0]!.id,
+        id: docId,
         venueId,
         tableId,
         tableNumber,
@@ -855,9 +845,39 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       sawSessionDoc = true;
       setActiveSession(session);
       setParticipants(parsedParticipants);
+    };
+
+    // Холодный старт: мгновенный одноразовый снимок до подключения live-listener.
+    void (async () => {
+      try {
+        const firstSnap = await getDocs(q);
+        if (cancelled || firstSnap.empty) return;
+        const first = firstSnap.docs[0]!;
+        applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
+      } catch {
+        // best-effort; дальше состояние приедет через onSnapshot
+      }
+    })();
+
+    const unsub = onSnapshot(q, (snap) => {
+      if (snap.empty) {
+        setActiveSession(null);
+        setParticipants([]);
+        if (sawSessionDoc) {
+          sawSessionDoc = false;
+          void switchLocation(venueId, null);
+        }
+        return;
+      }
+
+      const first = snap.docs[0]!;
+      applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
     });
 
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation]);
 
   // Live orders data for the table.
