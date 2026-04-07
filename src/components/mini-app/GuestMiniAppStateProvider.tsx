@@ -886,6 +886,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     const venueId = currentLocation.venueId;
     const tableId = currentLocation.tableId;
+    const sessionId = activeSession?.id?.trim() ?? "";
+    let cancelled = false;
 
     let rootOrders: GuestTableOrder[] = [];
 
@@ -894,6 +896,30 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const parseOrdersSnap = (snap: any): GuestTableOrder[] => {
       return snap.docs.map((d: any) => parseGuestTableOrder(d.id, d.data() as Record<string, unknown>));
     };
+    const applyOrdersSnap = (snap: any) => {
+      rootOrders = parseOrdersSnap(snap);
+      rootOrdersLoadedRef.current = true;
+      setCurrentTableOrders(rootOrders);
+    };
+
+    // Холодный старт заказов: один снимок по sessionId до live-listener.
+    if (sessionId) {
+      void (async () => {
+        try {
+          const qBoot = query(
+            collection(db, "orders"),
+            where("sessionId", "==", sessionId),
+            where("status", "in", ["pending", "ready"]),
+            limit(200)
+          );
+          const bootSnap = await getDocs(qBoot);
+          if (cancelled || rootOrdersLoadedRef.current) return;
+          applyOrdersSnap(bootSnap);
+        } catch {
+          // best-effort: fallback остаётся за onSnapshot по столу
+        }
+      })();
+    }
 
     // Root orders (current schema in this repo)
     const qRoot = query(
@@ -903,15 +929,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       where("status", "in", ["pending", "ready"])
     );
     const unsubRoot = onSnapshot(qRoot, (snap) => {
-      rootOrders = parseOrdersSnap(snap);
-      rootOrdersLoadedRef.current = true;
-      setCurrentTableOrders(rootOrders);
+      applyOrdersSnap(snap);
     });
 
     return () => {
+      cancelled = true;
       unsubRoot();
     };
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, activeSession?.id]);
 
   useEffect(() => {
     if (!isSdkReady || isInitializing || !guestIdentity.currentUid) return;
