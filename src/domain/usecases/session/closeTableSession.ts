@@ -2,7 +2,7 @@
  * Единая точка: завершение сессии за столом + освобождение стола в venues/{venueId}/tables/{tableId}.
  * Статус «свободен» в схеме Table — "free" (см. Table.status).
  *
- * Протокол выхода: check_in_success → (дашборд/мастер) awaiting_guest_feedback + стол free →
+ * Протокол выхода: check_in_success/payment_confirmed → (только дашборд) awaiting_guest_feedback + стол free →
  * гость: отзыв → чаевые → closed (finalizeGuestSessionClosedAfterFeedback).
  * Статус closed + стол free принудительно: только админ-операции (force) или сброс зависших сессий.
  */
@@ -25,9 +25,9 @@ export type CloseAwaitingFeedbackResult =
   | { ok: false; error: string; httpStatus: number };
 
 /**
- * Админ / мастер: визит завершён — сессия в фазу отзыва, стол свободен, индекс active_sessions обновлён.
+ * Только админ-дашборд: визит завершён — сессия в фазу отзыва, стол свободен, индекс active_sessions обновлён.
  * Один `batch.commit()` — сессия и стол уходят в хранилище атомарно (без окна рассинхрона).
- * `participants` — опционально (мастер): список участников с тем же коммитом, что и переход в awaiting_guest_feedback.
+ * `participants` — опционально: список участников с тем же коммитом, что и переход в awaiting_guest_feedback.
  */
 export async function closeSessionAwaitingGuestFeedback(params: {
   venueId: string;
@@ -55,7 +55,12 @@ export async function closeSessionAwaitingGuestFeedback(params: {
     return { ok: false, error: "session_mismatch", httpStatus: 400 };
   }
   const st = String(sData.status ?? "").trim();
-  if (st !== "check_in_success" && st !== "awaiting_guest_feedback" && st !== "completed") {
+  if (
+    st !== "check_in_success" &&
+    st !== "payment_confirmed" &&
+    st !== "awaiting_guest_feedback" &&
+    st !== "completed"
+  ) {
     return { ok: false, error: "session_not_active", httpStatus: 409 };
   }
 

@@ -20,6 +20,7 @@ export function normalizeActiveSessionStatus(raw: string): ActiveSession["status
   const s = raw.trim();
   const u = s.toUpperCase();
   if (s === "awaiting_guest_feedback" || u === "AWAITING_FEEDBACK") return "awaiting_guest_feedback";
+  if (s === "payment_confirmed" || u === "PAYMENT_CONFIRMED") return "payment_confirmed";
   if (s === "completed" || u === "COMPLETED") return "completed";
   if (s === "closed") return "closed";
   if (s === "table_conflict") return "table_conflict";

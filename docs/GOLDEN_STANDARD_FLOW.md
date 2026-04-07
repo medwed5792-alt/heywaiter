@@ -4,8 +4,8 @@
 
 Закрытие стола теперь двухэтапное:
 
-1. **Операционный этап (админ/мастер):**
-   - сессия переводится из `check_in_success` в `awaiting_guest_feedback`;
+1. **Операционный этап (только сотрудник в Дашборде):**
+   - сессия переводится из `check_in_success` или `payment_confirmed` в `awaiting_guest_feedback`;
    - стол сразу освобождается (`venues/{venueId}/tables/{tableId}.status = "free"`).
 
 2. **Гостевой финал:**
@@ -28,13 +28,13 @@ Use-case:
 - `closeSessionAwaitingGuestFeedback(...)` из `src/domain/usecases/session/closeTableSession.ts`
 
 Что делает use-case одним `batch.commit()`:
-- валидирует, что сессия принадлежит `venueId/tableId` и в допустимом статусе (`check_in_success`, `awaiting_guest_feedback`, `completed`);
+- валидирует, что сессия принадлежит `venueId/tableId` и в допустимом статусе (`check_in_success`, `payment_confirmed`, `awaiting_guest_feedback`, `completed`);
 - обновляет сессию:
   - `status = "awaiting_guest_feedback"`
   - `feedbackRequestedAt = serverTimestamp`
   - `updatedAt = serverTimestamp`
   - при наличии официанта на столе проставляет `assignedStaffId`
-  - опционально сохраняет `participants` (для мастер-сценария split bill);
+  - опционально сохраняет `participants`;
 - освобождает стол:
   - `status = "free"`
   - `currentGuest = null`
@@ -70,7 +70,7 @@ Use-case:
   - `order_status = "visit_ended"`
   - `last_seen = serverTimestamp`.
 
-## Роль мастер-закрытия (split bill)
+## Роль мастера стола (split bill)
 
 Точка входа:
 - `POST /api/session/close-table`
@@ -82,14 +82,19 @@ Use-case:
 - проверяет, что закрывает именно `masterId`;
 - завершает открытые заказы (`pending|ready -> completed`);
 - нормализует `participants` (активные -> `paid`);
-- затем вызывает общий `closeSessionAwaitingGuestFeedback(...)`.
+- переводит сессию в `payment_confirmed` (`paymentConfirmedAt`, `updatedAt`).
 
-Итог: и админ-сценарий, и мастер-сценарий сходятся в одном стандарте перехода сессии и освобождения стола.
+Итог:
+- мастер не освобождает стол;
+- мастер не переводит сессию в `closed`;
+- стол остаётся занятым до явного действия сотрудника в Дашборде;
+- в `free` и `awaiting_guest_feedback` переводит только `POST /api/admin/close-table-for-feedback`.
 
 ## Важные инварианты
 
 - Нормальный путь закрытия:  
-  `check_in_success -> awaiting_guest_feedback -> closed`.
+  `check_in_success -> payment_confirmed (опционально) -> awaiting_guest_feedback -> closed`.
+- Мастер стола (гость) не имеет права переводить стол в `free`.
 - `closed + free` в один шаг допустим только для force-операций (зависшие кейсы).
 - Состояние стола и сессии обновляется атомарно в batch, чтобы не было окна рассинхрона.
 - `active_sessions` — источник для recover/follow-up в Mini App, а не признак "стол занят/свободен".

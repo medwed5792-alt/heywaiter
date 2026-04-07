@@ -2,7 +2,6 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid, extractMessengerExternalIdFromCustomerUid } from "@/lib/identity/customer-uid";
-import { closeSessionAwaitingGuestFeedback } from "@/domain/usecases/session/closeTableSession";
 
 type SessionDocShape = {
   masterId?: string;
@@ -209,7 +208,7 @@ export async function closeTableByMaster(
   venueId: string,
   tableId: string,
   masterUid: string
-): Promise<{ ok: boolean; closed?: boolean; updatedOrders?: number; error?: string }> {
+): Promise<{ ok: boolean; paymentConfirmed?: boolean; updatedOrders?: number; error?: string }> {
   const actor = masterUid.trim();
   if (!actor) return { ok: false, error: "masterUid is required" };
   const ref = await getCurrentSessionRef(venueId, tableId);
@@ -229,13 +228,12 @@ export async function closeTableByMaster(
     status: p.status === "active" ? ("paid" as const) : p.status,
     updatedAt: new Date(),
   }));
-
-  const sessionId = ref.id;
-  const r = await closeSessionAwaitingGuestFeedback({ venueId, tableId, sessionId, participants });
-  if (!r.ok) {
-    return { ok: false, error: r.error };
-  }
-
-  return { ok: true, closed: true, updatedOrders: updatedCount };
+  await ref.update({
+    status: "payment_confirmed",
+    participants,
+    paymentConfirmedAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return { ok: true, paymentConfirmed: true, updatedOrders: updatedCount };
 }
 

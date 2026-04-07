@@ -607,7 +607,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             collection(db, "activeSessions"),
             where("venueId", "==", venueId),
             where("tableId", "==", tableId),
-            where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed", "closed"]),
+            where("status", "in", ["check_in_success", "payment_confirmed", "awaiting_guest_feedback", "completed", "closed"]),
             limit(1)
           );
           await getDocs(q);
@@ -807,7 +807,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
-      where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed", "closed"]),
+      where("status", "in", ["check_in_success", "payment_confirmed", "awaiting_guest_feedback", "completed", "closed"]),
       limit(1)
     );
 

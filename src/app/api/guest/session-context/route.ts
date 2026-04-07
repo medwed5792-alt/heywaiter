@@ -23,7 +23,12 @@ function idxDocId(telegramUserId: string): string {
 }
 
 /** Сессии стола, при которых recover по индексу ещё валиден. */
-const SESSION_RECOVER_STATUSES = ["check_in_success", "awaiting_guest_feedback", "completed"] as const;
+const SESSION_RECOVER_STATUSES = [
+  "check_in_success",
+  "payment_confirmed",
+  "awaiting_guest_feedback",
+  "completed",
+] as const;
 
 function lastSeenMs(v: unknown): number {
   if (v != null && typeof v === "object" && "toMillis" in v) {

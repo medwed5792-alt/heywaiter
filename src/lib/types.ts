@@ -584,7 +584,13 @@ export interface ActiveSession {
   isPrivate?: boolean;
   /** Закреплённые сотрудники по ролям за этим столом (для Stealth Routing) */
   assignments?: TableAssignments;
-  status: "check_in_success" | "awaiting_guest_feedback" | "completed" | "table_conflict" | "closed";
+  status:
+    | "check_in_success"
+    | "payment_confirmed"
+    | "awaiting_guest_feedback"
+    | "completed"
+    | "table_conflict"
+    | "closed";
   closedAt?: unknown;
   /** После оценки визита ЛПР в Дашборде — чтобы не показывать повторно */
   ratedAt?: unknown;
