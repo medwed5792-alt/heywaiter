@@ -586,11 +586,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       return;
     }
 
-    if (currentLocationRef.current.venueId?.trim() && currentLocationRef.current.tableId?.trim()) {
-      setIsInitializing(false);
-      return;
-    }
-
     let cancelled = false;
     const finish = () => {
       if (!cancelled) setIsInitializing(false);
@@ -605,6 +600,20 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const v = venueId.trim();
         const t = tableId.trim();
         if (signedInit && v && t) void guestSessionClaim(signedInit, v, t);
+      };
+      const awaitSessionDecision = async (venueId: string, tableId: string) => {
+        try {
+          const q = query(
+            collection(db, "activeSessions"),
+            where("venueId", "==", venueId),
+            where("tableId", "==", tableId),
+            where("status", "in", ["check_in_success", "awaiting_guest_feedback", "completed", "closed"]),
+            limit(1)
+          );
+          await getDocs(q);
+        } catch {
+          // best-effort: live onSnapshot продолжит синхронизацию
+        }
       };
 
       const tryRestoreSeat = async (uid: string): Promise<boolean> => {
@@ -635,8 +644,30 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const t = rec.tableId?.trim() ?? "";
         if (!v || !t) return false;
         await switchLocation(v, t);
+        await awaitSessionDecision(v, t);
         return true;
       };
+
+      // Абсолютный приоритет URL-параметров (контракт webhook: /mini-app?v=...&t=...).
+      const vParam = (searchParams.get("v") ?? "").trim();
+      const tParam = (searchParams.get("t") ?? "").trim();
+      if (vParam && tParam) {
+        if (cancelled) return;
+        await switchLocation(vParam, tParam);
+        claimGuestTable(vParam, tParam);
+        await awaitSessionDecision(vParam, tParam);
+        finish();
+        return;
+      }
+
+      // Если стол уже выбран ранее в текущем цикле, дожидаемся первичной проверки сессии.
+      const existingVenue = currentLocationRef.current.venueId?.trim() ?? "";
+      const existingTable = currentLocationRef.current.tableId?.trim() ?? "";
+      if (existingVenue && existingTable) {
+        await awaitSessionDecision(existingVenue, existingTable);
+        finish();
+        return;
+      }
 
       if (inTg) {
         const sp = getStartParamFromTelegramWebApp();
@@ -657,6 +688,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               if (resolved?.venueId && resolved.tableId) {
                 await switchLocation(resolved.venueId, resolved.tableId);
                 claimGuestTable(resolved.venueId, resolved.tableId);
+                await awaitSessionDecision(resolved.venueId, resolved.tableId);
                 finish();
                 return;
               }
@@ -670,6 +702,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             if (cancelled) return;
             await switchLocation(payload.venueId, payload.tableId);
             claimGuestTable(payload.venueId, payload.tableId);
+            await awaitSessionDecision(payload.venueId, payload.tableId);
             finish();
             return;
           }
@@ -696,16 +729,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       if (await tryRecoverGuestFromServerIndex()) {
         if (cancelled) return;
-        finish();
-        return;
-      }
-
-      const vParam = (searchParams.get("v") ?? "").trim();
-      const tParam = (searchParams.get("t") ?? "").trim();
-      if (vParam && tParam) {
-        if (cancelled) return;
-        await switchLocation(vParam, tParam);
-        claimGuestTable(vParam, tParam);
         finish();
         return;
       }
