@@ -101,7 +101,6 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     const { venueId, tableId } = parsed;
     const tableIdNum = parseInt(tableId, 10);
     await createGuestEvent({
-      type: "call_waiter",
       venueId,
       tableId,
       tableNumber: !Number.isNaN(tableIdNum) ? tableIdNum : undefined,

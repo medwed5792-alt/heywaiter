@@ -9,8 +9,6 @@ import { LPR_ROLES } from "@/lib/types";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import { sendMessage } from "@/adapters/telegram/telegramApi";
 
-export type PushCallWaiterType = "call_waiter" | "request_bill" | "sos";
-
 async function getTelegramIdsForStaff(
   firestore: Firestore,
   staffIds: string[]
@@ -66,7 +64,10 @@ export interface PushCallWaiterInput {
   venueId: string;
   tableId: string;
   customerUid?: string;
-  type?: PushCallWaiterType;
+}
+
+function callWaiterMessage(tableId: string): string {
+  return `🔔 Стол №${tableId}: Вызов официанта`;
 }
 
 /**
@@ -84,15 +85,7 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
     return { ok: false, targetUids: [], isOrphan: true };
   }
 
-  const requestType = input.type ?? "call_waiter";
-  const isRequestBill = requestType === "request_bill";
-  const isSos = requestType === "sos";
-
-  const baseMessage = isRequestBill
-    ? `🔔 Стол №${tableId}: Счёт.`
-    : isSos
-      ? `🆘 SOS: стол №${tableId}.`
-      : `🔔 Стол №${tableId}: Вызов.`;
+  const baseMessage = callWaiterMessage(tableId);
 
   const firestore = getAdminFirestore();
   const waiterId = await getOperationalWaiterForTable(firestore, venueId, tableId);
@@ -101,16 +94,15 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
   let message: string;
   let notificationType: string;
   let isOrphan: boolean;
-  const isRegularCall = !isRequestBill && !isSos;
 
   if (waiterId) {
     targetUids = [waiterId];
     message = baseMessage;
-    notificationType = isRequestBill ? "request_bill" : isSos ? "sos" : "role_call";
+    notificationType = "call_waiter";
     isOrphan = false;
   } else {
     targetUids = await getLprStaffIds(firestore, venueId);
-    message = `⚠️ Без закрепления: ${baseMessage}`;
+    message = baseMessage;
     notificationType = "orphan_call";
     isOrphan = true;
   }
@@ -125,13 +117,9 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
         await sendMessage(token, {
           chat_id: chatId,
           text: message,
-          ...(isRegularCall
-            ? {
-                reply_markup: {
-                  inline_keyboard: [[{ text: "✅ ОК", callback_data: "read_notify" }]],
-                },
-              }
-            : {}),
+          reply_markup: {
+            inline_keyboard: [[{ text: "✅ ОК", callback_data: "read_notify" }]],
+          },
         });
       } catch (err) {
         console.error("[push-call-waiter] Telegram send to", chatId, err);

@@ -213,7 +213,7 @@ type GuestMiniAppContextValue = {
   openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
   refreshVisitHistory: () => Promise<void>;
-  callWaiter: (reason: "menu" | "bill" | "help") => Promise<void>;
+  callWaiter: () => Promise<void>;
   requestBill: (type: "full" | "split") => Promise<void>;
   isVenuePreOrderEnabled: (venueFirestoreId: string) => boolean;
   getVenueRegistrySotaId: (venueFirestoreId: string) => string | null;
@@ -1200,8 +1200,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     router.push(`${origin}/check-in`);
   }, [router, switchLocation, checkGuestQrVenueAccess]);
 
-  const callWaiter = useCallback(
-    async (reason: "menu" | "bill" | "help") => {
+  const callWaiter = useCallback(async () => {
       if (isGuestBlocked) {
         toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
         return;
@@ -1215,8 +1214,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return;
       }
 
-      const type = reason === "bill" ? "request_bill" : "call_waiter";
-
       try {
         const res = await fetch("/api/call-waiter", {
           method: "POST",
@@ -1224,7 +1221,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           body: JSON.stringify({
             venueId,
             tableId,
-            type,
             customerUid: guestIdentity.currentUid ?? undefined,
             assignedStaffId: snap.assignedStaffId ?? undefined,
           }),

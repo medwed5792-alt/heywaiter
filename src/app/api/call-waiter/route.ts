@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { pushCallWaiterNotification, type PushCallWaiterInput } from "@/lib/notifications/push-call-waiter";
+import { pushCallWaiterNotification } from "@/lib/notifications/push-call-waiter";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,10 +13,6 @@ export async function POST(request: NextRequest) {
       (body.uid as string)?.trim() ||
       (body.visitorId as string)?.trim() ||
       undefined;
-    const raw = (body.type as string) || "call_waiter";
-    const type: PushCallWaiterInput["type"] =
-      raw === "request_bill" ? "request_bill" : raw === "sos" ? "sos" : "call_waiter";
-
     if (!venueId || !tableId) {
       return NextResponse.json({ ok: false, error: "venueId и tableId обязательны" }, { status: 400 });
     }
@@ -25,7 +21,6 @@ export async function POST(request: NextRequest) {
       venueId,
       tableId,
       customerUid,
-      type,
     });
 
     return NextResponse.json({ ok: true, message: "Вызов отправлен" });

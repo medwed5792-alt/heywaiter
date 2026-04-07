@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useMemo, useState, useCallback } from "react";
 import { AdSpace } from "@/components/common/AdSpace";
 import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
@@ -152,7 +152,6 @@ function GuestSession() {
     setTablePrivacyAllowJoin,
     guestAwaitingTableFeedback,
   } = useGuestContext();
-  const reasonRef = useRef<"menu" | "bill" | "help">("help");
   const [ordersOpen, setOrdersOpen] = useState(false);
   const [privacyBusy, setPrivacyBusy] = useState(false);
 
@@ -338,29 +337,13 @@ function GuestSession() {
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Причина вызова</label>
-            <select
-              defaultValue="help"
-              onChange={(e) => {
-                reasonRef.current = e.target.value as "menu" | "bill" | "help";
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-800"
-              disabled={!sessionActionsEnabled}
-            >
-              <option value="help">Помощь</option>
-              <option value="menu">Меню</option>
-              <option value="bill">Счёт</option>
-            </select>
-          </div>
-
           <button
             type="button"
             disabled={!sessionActionsEnabled}
-            onClick={() => void callWaiter(reasonRef.current)}
+            onClick={() => void callWaiter()}
             className="w-full bg-yellow-500 py-4 rounded-xl font-bold text-lg text-black hover:bg-yellow-600 disabled:opacity-50 disabled:pointer-events-none"
           >
-            Вызвать персонал
+            Позвать официанта
           </button>
 
           <button

@@ -3,10 +3,7 @@ import { db } from "@/lib/firebase";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 
-export type GuestEventType = "call_waiter" | "request_bill" | "sos";
-
 interface GuestEventPayload {
-  type: GuestEventType;
   tableId: string;
   tableNumber?: number;
   /** Unified UID for guest actions: telegram_user_id:* or anonymous_id:* */
@@ -42,16 +39,11 @@ export async function resolveAssignedStaffForCall(
 }
 
 export async function createGuestEvent(payload: GuestEventPayload): Promise<void> {
-  const { type, tableId, tableNumber } = payload;
+  const { tableId, tableNumber } = payload;
   const customerUid = payload.customerUid?.trim() || payload.visitorId?.trim() || undefined;
   const effectiveVenueId = resolveVenueId(payload.venueId);
 
-  const baseMessage =
-    type === "request_bill"
-      ? `Стол №${tableNumber ?? tableId}: запрос счёта`
-      : type === "sos"
-        ? `Стол №${tableNumber ?? tableId}: SOS`
-        : `Стол №${tableNumber ?? tableId}: вызов официанта`;
+  const baseMessage = `Стол №${tableNumber ?? tableId}: Вызов официанта`;
 
   const resolution = await resolveAssignedStaffForCall(effectiveVenueId, tableId);
 
@@ -59,7 +51,7 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
     venueId: effectiveVenueId,
     tableId,
     tableNumber: tableNumber ?? null,
-    type,
+    type: "call_waiter",
     message: baseMessage,
     text: baseMessage,
     customerUid: customerUid ?? null,
@@ -81,7 +73,6 @@ export async function createGuestEvent(payload: GuestEventPayload): Promise<void
     venueId: effectiveVenueId,
     tableId,
     customerUid,
-    type: type as "call_waiter" | "request_bill" | "sos",
   };
   if (typeof window === "undefined") {
     const { pushCallWaiterNotification } = await import("@/lib/notifications/push-call-waiter");
