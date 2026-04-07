@@ -1,6 +1,16 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import {
@@ -123,6 +133,49 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
   preOrderByVenueDocId: {},
 };
 
+/** Статусы сессии для гостевого сервиса (включая check_in_success). */
+const ACTIVE_SESSION_STATUS_FILTER = [
+  "check_in_success",
+  "payment_confirmed",
+  "awaiting_guest_feedback",
+  "completed",
+  "closed",
+] as const;
+
+/**
+ * Шлюз / QR: v|venueId, t|tableId — единая схема для провайдера.
+ */
+function readVenueTableFromSearchParams(searchParams: {
+  get: (key: string) => string | null;
+}): { venueId: string; tableId: string } | null {
+  const venueId = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
+  const tableId = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
+  if (!venueId || !tableId) return null;
+  return { venueId, tableId };
+}
+
+/** Варианты tableId для Firestore (например "05" vs "5"). */
+function tableIdVariantsForQuery(raw: string): string[] {
+  const t = String(raw ?? "").trim();
+  if (!t) return [];
+  const out: string[] = [t];
+  if (/^\d+$/.test(t)) {
+    const n = String(parseInt(t, 10));
+    if (!out.includes(n)) out.push(n);
+    const stripped = t.replace(/^0+/, "");
+    if (stripped && stripped !== t && !out.includes(stripped)) out.push(stripped);
+  }
+  return out;
+}
+
+function tableIdsLooselyEqual(a: string, b: string): boolean {
+  const x = String(a ?? "").trim();
+  const y = String(b ?? "").trim();
+  if (x === y) return true;
+  if (/^\d+$/.test(x) && /^\d+$/.test(y)) return parseInt(x, 10) === parseInt(y, 10);
+  return false;
+}
+
 function parseNumber(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
   if (typeof raw === "string") {
@@ -237,6 +290,8 @@ type GuestMiniAppContextValue = {
    * иначе fallback — currentWaiterId с документа стола.
    */
   feedbackTargetStaffId: string | null;
+  /** В URL есть v&t (или venueId&tableId) — не показывать лендинг со сканером до привязки. */
+  hasUrlTableParams: boolean;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -246,6 +301,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const searchParams = useSearchParams();
   const { visitorId } = useVisitor();
   const { checkGuestQrVenueAccess } = useSotaLocation();
+
+  const searchParamsKey = searchParams.toString();
+  const urlTableFromParams = useMemo(
+    () => readVenueTableFromSearchParams(searchParams),
+    [searchParamsKey, searchParams]
+  );
+  const hasUrlTableParams = Boolean(urlTableFromParams);
 
   const [currentLocation, setCurrentLocation] = useState<{ venueId: string | null; tableId: string | null }>({
     venueId: null,
@@ -392,7 +454,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (
         nextFullTable &&
         prev.venueId?.trim() === nextVenueId &&
-        prev.tableId?.trim() === nextTableId
+        prev.tableId &&
+        nextTableId &&
+        tableIdsLooselyEqual(prev.tableId, nextTableId)
       ) {
         return;
       }
@@ -419,6 +483,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     },
     [refreshVisitHistory]
   );
+
+  /**
+   * Мгновенно выставляем стол из URL (v/t или venueId/tableId) до async bootstrap и localStorage.
+   * switchLocation синхронно обновляет currentLocation до первого await — затем снимаем Loading.
+   */
+  useLayoutEffect(() => {
+    if (!isSdkReady || !urlTableFromParams) return;
+    void switchLocation(urlTableFromParams.venueId, urlTableFromParams.tableId);
+    setIsInitializing(false);
+  }, [isSdkReady, urlTableFromParams, switchLocation]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -603,14 +677,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       };
       const awaitSessionDecision = async (venueId: string, tableId: string) => {
         try {
-          const q = query(
-            collection(db, "activeSessions"),
-            where("venueId", "==", venueId),
-            where("tableId", "==", tableId),
-            where("status", "in", ["check_in_success", "payment_confirmed", "awaiting_guest_feedback", "completed", "closed"]),
-            limit(1)
-          );
-          await getDocs(q);
+          for (const tid of tableIdVariantsForQuery(tableId)) {
+            const q = query(
+              collection(db, "activeSessions"),
+              where("venueId", "==", venueId),
+              where("tableId", "==", tid),
+              where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+              limit(1)
+            );
+            await getDocs(q);
+          }
         } catch {
           // best-effort: live onSnapshot продолжит синхронизацию
         }
@@ -648,14 +724,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return true;
       };
 
-      // Абсолютный приоритет URL-параметров (контракт webhook: /mini-app?v=...&t=...).
-      const vParam = (searchParams.get("v") ?? "").trim();
-      const tParam = (searchParams.get("t") ?? "").trim();
-      if (vParam && tParam) {
+      // Абсолютный приоритет URL: v|venueId + t|tableId (шлюз может отдавать любой вариант имён).
+      const fromUrl = readVenueTableFromSearchParams(searchParams);
+      if (fromUrl) {
         if (cancelled) return;
-        await switchLocation(vParam, tParam);
-        claimGuestTable(vParam, tParam);
-        await awaitSessionDecision(vParam, tParam);
+        await switchLocation(fromUrl.venueId, fromUrl.tableId);
+        claimGuestTable(fromUrl.venueId, fromUrl.tableId);
+        await awaitSessionDecision(fromUrl.venueId, fromUrl.tableId);
         finish();
         return;
       }
@@ -797,19 +872,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
-    const venueId = currentLocation.venueId;
-    const tableId = currentLocation.tableId;
+    const venueId = currentLocation.venueId.trim();
+    const tableIdRaw = currentLocation.tableId.trim();
 
     let sawSessionDoc = false;
     let cancelled = false;
-
-    const q = query(
-      collection(db, "activeSessions"),
-      where("venueId", "==", venueId),
-      where("tableId", "==", tableId),
-      where("status", "in", ["check_in_success", "payment_confirmed", "awaiting_guest_feedback", "completed", "closed"]),
-      limit(1)
-    );
+    let unsub: (() => void) | undefined;
 
     const applySessionDoc = (docId: string, d: Record<string, unknown>) => {
       const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
@@ -848,11 +916,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const sessionAssigned =
         typeof d.assignedStaffId === "string" && d.assignedStaffId.trim() ? d.assignedStaffId.trim() : undefined;
       const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
+      const sessionTableId = typeof d.tableId === "string" ? d.tableId.trim() : tableIdRaw;
 
       const session: ActiveSession = {
         id: docId,
         venueId,
-        tableId,
+        tableId: sessionTableId,
         tableNumber,
         masterId: masterId || undefined,
         isPrivate,
@@ -870,36 +939,64 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setParticipants(parsedParticipants);
     };
 
-    // Холодный старт: мгновенный одноразовый снимок до подключения live-listener.
     void (async () => {
-      try {
-        const firstSnap = await getDocs(q);
-        if (cancelled || firstSnap.empty) return;
-        const first = firstSnap.docs[0]!;
-        applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
-      } catch {
-        // best-effort; дальше состояние приедет через onSnapshot
-      }
-    })();
-
-    const unsub = onSnapshot(q, (snap) => {
-      if (snap.empty) {
-        setActiveSession(null);
-        setParticipants([]);
-        if (sawSessionDoc) {
-          sawSessionDoc = false;
-          void switchLocation(venueId, null);
+      let listenTableId = tableIdRaw;
+      const variants = tableIdVariantsForQuery(tableIdRaw);
+      for (const tid of variants) {
+        if (cancelled) return;
+        try {
+          const qProbe = query(
+            collection(db, "activeSessions"),
+            where("venueId", "==", venueId),
+            where("tableId", "==", tid),
+            where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+            limit(1)
+          );
+          const probeSnap = await getDocs(qProbe);
+          if (!probeSnap.empty) {
+            const first = probeSnap.docs[0]!;
+            const data = (first.data() ?? {}) as Record<string, unknown>;
+            const canonical = typeof data.tableId === "string" ? data.tableId.trim() : tid;
+            listenTableId = canonical;
+            if (!cancelled) applySessionDoc(first.id, data);
+            if (!cancelled && !tableIdsLooselyEqual(canonical, tableIdRaw)) {
+              void switchLocation(venueId, canonical);
+            }
+            break;
+          }
+        } catch {
+          // пробуем следующий вариант tableId
         }
-        return;
       }
 
-      const first = snap.docs[0]!;
-      applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
-    });
+      const q = query(
+        collection(db, "activeSessions"),
+        where("venueId", "==", venueId),
+        where("tableId", "==", listenTableId),
+        where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+        limit(1)
+      );
+
+      if (cancelled) return;
+      unsub = onSnapshot(q, (snap) => {
+        if (snap.empty) {
+          setActiveSession(null);
+          setParticipants([]);
+          if (sawSessionDoc) {
+            sawSessionDoc = false;
+            void switchLocation(venueId, null);
+          }
+          return;
+        }
+
+        const first = snap.docs[0]!;
+        applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
+      });
+    })();
 
     return () => {
       cancelled = true;
-      unsub();
+      unsub?.();
     };
   }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation]);
 
@@ -1371,6 +1468,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
       feedbackTargetStaffId,
+      hasUrlTableParams,
     }),
     [
       guestIdentity,
@@ -1403,6 +1501,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
       feedbackTargetStaffId,
+      hasUrlTableParams,
     ]
   );
 

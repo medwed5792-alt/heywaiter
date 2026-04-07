@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { QrCode } from "lucide-react";
 
 function isTelegramMiniAppContext(): boolean {
@@ -13,12 +13,14 @@ function isTelegramMiniAppContext(): boolean {
 
 function RootGuardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     if (isTelegramMiniAppContext()) {
-      router.replace("/mini-app");
+      const qs = searchParams.toString();
+      router.replace(qs ? `/mini-app?${qs}` : "/mini-app");
     }
-  }, [router]);
+  }, [router, searchParams]);
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
