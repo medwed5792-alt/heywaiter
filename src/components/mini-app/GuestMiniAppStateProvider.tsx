@@ -277,6 +277,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [searchParams]
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const href = window.location.href;
+    const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
+    const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
+    console.info("[guest-entry] incoming-url", { href, v, t, hasTableParams: Boolean(v && t) });
+  }, [searchParams]);
+
   const [currentLocation, setCurrentLocation] = useState<{ venueId: string | null; tableId: string | null }>({
     venueId: null,
     tableId: null,

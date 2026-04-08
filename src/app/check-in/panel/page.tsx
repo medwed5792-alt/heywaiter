@@ -8,8 +8,13 @@ function LegacyGuestPanelRedirect() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const qs = searchParams.toString();
-    router.replace(qs ? `/mini-app?${qs}` : "/mini-app");
+    const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
+    const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
+    if (v && t) {
+      router.replace(`/mini-app?v=${encodeURIComponent(v)}&t=${encodeURIComponent(t)}`);
+      return;
+    }
+    router.replace("/check-in");
   }, [router, searchParams]);
 
   return (
