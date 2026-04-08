@@ -33,7 +33,7 @@ function LegacyGuestPanelRedirect() {
       router.replace(`/mini-app?v=${encodeURIComponent(v)}&t=${encodeURIComponent(t)}`);
       return;
     }
-    router.replace("/check-in");
+    router.replace("/mini-app");
   }, [router, searchParams]);
 
   return (

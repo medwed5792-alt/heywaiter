@@ -1055,7 +1055,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const openTableScanner = useCallback(() => {
     const inTg = isTelegramContext();
     const tg = getTelegramWebApp();
-    const origin = typeof window !== "undefined" ? window.location.origin : "";
     if (inTg && tg?.showScanQrPopup) {
       tg.showScanQrPopup({ text: "Наведите на QR стола" }, (qrText) => {
         void (async () => {
@@ -1160,7 +1159,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       return;
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
-    router.push(`${origin}/check-in`);
+    router.push("/");
   }, [router, checkGuestQrVenueAccess, bootstrapTableByServer]);
 
   const callWaiter = useCallback(async () => {

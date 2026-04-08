@@ -19,6 +19,7 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
+import { hasTelegramWebAppInitData } from "@/lib/telegram-webapp-user";
 
 /** Фирменные цвета брендов мессенджеров для кнопок (строгий стиль) */
 const MESSENGER_BRAND_COLORS: Record<MessengerChannel, string> = {
@@ -96,6 +97,13 @@ function CheckInContent() {
     }
   }, [venueId, tableId, visitorId, recordVisitorSession]);
 
+  /** В Telegram стол часто только в start_param — не оставляем на «голом» шлюзе. */
+  useEffect(() => {
+    if (venueId && tableId) return;
+    if (!hasTelegramWebAppInitData()) return;
+    router.replace("/mini-app");
+  }, [venueId, tableId, router]);
+
   useEffect(() => {
     if (cooldownLeft <= 0) return;
     const t = setInterval(() => {
@@ -146,7 +154,8 @@ function CheckInContent() {
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg border border-gray-200 text-center">
           <h1 className="text-xl font-bold text-gray-800">{copy.title}</h1>
           <p className="mt-4 text-gray-600">
-            Неверная ссылка. Отсканируйте QR-код стола.
+            В ссылке нет заведения и стола. Отсканируйте QR стола или откройте пульт из бота с параметрами
+            стола.
           </p>
           <button
             type="button"

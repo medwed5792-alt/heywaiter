@@ -3,13 +3,7 @@
 import { Suspense, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { QrCode } from "lucide-react";
-
-function isTelegramMiniAppContext(): boolean {
-  if (typeof window === "undefined") return false;
-  const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
-  const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-  return initData.length > 0;
-}
+import { hasTelegramWebAppInitData } from "@/lib/telegram-webapp-user";
 
 function RootGuardContent() {
   const router = useRouter();
@@ -35,15 +29,15 @@ function RootGuardContent() {
   }, [guestBotUsername, miniAppName]);
 
   useEffect(() => {
-    if (isTelegramMiniAppContext()) {
-      const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
-      const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
-      if (v && t) {
-        router.replace(`/mini-app?v=${encodeURIComponent(v)}&t=${encodeURIComponent(t)}`);
-        return;
-      }
-      router.replace("/check-in");
+    if (!hasTelegramWebAppInitData()) return;
+    const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
+    const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
+    if (v && t) {
+      router.replace(`/mini-app?v=${encodeURIComponent(v)}&t=${encodeURIComponent(t)}`);
+      return;
     }
+    // Стол в URL отсутствует — только /mini-app подхватит start_param из deep link бота.
+    router.replace("/mini-app");
   }, [router, searchParams]);
 
   return (
