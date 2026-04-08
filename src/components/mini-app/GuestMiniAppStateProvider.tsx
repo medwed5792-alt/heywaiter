@@ -670,7 +670,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     let cancelled = false;
     void (async () => {
       const fromUrl = readVenueTableFromSearchParams(searchParams);
-      if (!fromUrl) {
+      const startParamRaw = getTelegramWebApp()?.initDataUnsafe?.start_param?.trim() ?? "";
+      const fromStartParam = startParamRaw ? parseStartParamPayload(startParamRaw) : null;
+      const entryTable = fromUrl ?? (fromStartParam ? { venueId: fromStartParam.venueId, tableId: fromStartParam.tableId } : null);
+
+      if (!entryTable) {
         if (cancelled) return;
         setShowLandingScanner(true);
         setIsInitializing(false);
@@ -680,7 +684,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
 
       try {
-        await bootstrapTableByServer(fromUrl.venueId, fromUrl.tableId);
+        await bootstrapTableByServer(entryTable.venueId, entryTable.tableId);
         if (cancelled) return;
       } finally {
         if (!cancelled) setIsInitializing(false);
