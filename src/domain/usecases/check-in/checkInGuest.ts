@@ -12,9 +12,9 @@ import { FieldValue } from "firebase-admin/firestore";
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 export type CheckInGuestResult =
-  | { status: "check_in_success"; sessionId: string; messageGuest: string; onboardingHint?: string }
-  | { status: "table_private"; sessionId: string; messageGuest: string }
-  | { status: "table_conflict"; sessionId: string; messageGuest: string };
+  | { status: "check_in_success"; sessionId: string; tableId: string; messageGuest: string; onboardingHint?: string }
+  | { status: "table_private"; sessionId: string; tableId: string; messageGuest: string }
+  | { status: "table_conflict"; sessionId: string; tableId: string; messageGuest: string };
 
 export interface CheckInGuestInput {
   venueId: string;
@@ -113,6 +113,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         return {
           status: "table_private",
           sessionId: existing.id,
+          tableId,
           messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
         };
       }
@@ -120,6 +121,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       return {
         status: "check_in_success",
         sessionId: existing.id,
+        tableId,
         messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
         ...(shouldShowPinHint
           ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
@@ -135,6 +137,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       return {
         status: "table_private",
         sessionId: existing.id,
+        tableId,
         messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
       };
     }
@@ -169,6 +172,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     return {
       status: "check_in_success",
       sessionId: existing.id,
+      tableId,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
     };
   }
@@ -285,6 +289,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     return {
       status: "check_in_success",
       sessionId: sessionRef.id,
+      tableId,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
       ...(shouldShowPinHint
         ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
@@ -331,6 +336,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     return {
       status: "table_conflict",
       sessionId: conflictDoc.id,
+      tableId,
       messageGuest: "Извините, стол забронирован. К вам уже идут.",
     };
   }
@@ -373,6 +379,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   return {
     status: "check_in_success",
     sessionId: sessionRef.id,
+    tableId,
     messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
     ...(shouldShowPinHint
       ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }

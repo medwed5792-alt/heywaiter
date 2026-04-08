@@ -507,7 +507,7 @@ function MiniAppScreenRouter() {
     completeTableFeedbackSession,
     feedbackTargetStaffId,
     guestIdentity,
-    hasUrlTableParams,
+    showLandingScanner,
   } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
 
@@ -543,8 +543,8 @@ function MiniAppScreenRouter() {
   const guestAtTable = Boolean(currentLocation.venueId?.trim() && currentLocation.tableId?.trim());
   const tableSessionLoading =
     guestAtTable && !activeSession && !guestAwaitingTableFeedback;
-  /** Пока в URL есть стол, не показываем лендинг со встроенным сканером (Loader / сессия). */
-  const showLandingQrScanner = !guestAtTable && !hasUrlTableParams;
+  /** Решение о fallback-сканере приходит только от server-bootstrap. */
+  const showLandingQrScanner = !guestAtTable && showLandingScanner;
   const venueLabel = currentLocation.venueId ? resolveVenueDisplayName(currentLocation.venueId) : "";
   const tableLabel =
     activeSession && activeSession.tableNumber > 0

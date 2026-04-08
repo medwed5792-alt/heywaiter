@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -39,16 +38,14 @@ import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
-import { guestCustomerUidsMatch, resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
+import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import {
   clearPersistedGuestSeat,
-  readPersistedGuestSeat,
-  verifyGuestSeatStillActive,
   writePersistedGuestSeat,
 } from "@/lib/guest-table-persistence";
-import { guestSessionClaim, guestSessionClear, guestSessionRecover } from "@/lib/guest-session-bridge";
+import { guestSessionClear } from "@/lib/guest-session-bridge";
 import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
@@ -86,11 +83,6 @@ function isTelegramContext(): boolean {
   if (!tg) return false;
   const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
   return initData.length > 0;
-}
-
-function getStartParamFromTelegramWebApp(): string {
-  const webApp = getTelegramWebApp();
-  return webApp?.initDataUnsafe?.start_param?.trim() ?? "";
 }
 
 type GuestVisitEntry = {
@@ -290,8 +282,8 @@ type GuestMiniAppContextValue = {
    * иначе fallback — currentWaiterId с документа стола.
    */
   feedbackTargetStaffId: string | null;
-  /** В URL есть v&t (или venueId&tableId) — не показывать лендинг со сканером до привязки. */
-  hasUrlTableParams: boolean;
+  /** Разрешён ли fallback-экран со сканером после server-bootstrap. */
+  showLandingScanner: boolean;
 };
 
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
@@ -302,12 +294,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const { visitorId } = useVisitor();
   const { checkGuestQrVenueAccess } = useSotaLocation();
 
-  const searchParamsKey = searchParams.toString();
   const urlTableFromParams = useMemo(
     () => readVenueTableFromSearchParams(searchParams),
-    [searchParamsKey, searchParams]
+    [searchParams]
   );
-  const hasUrlTableParams = Boolean(urlTableFromParams);
 
   const [currentLocation, setCurrentLocation] = useState<{ venueId: string | null; tableId: string | null }>({
     venueId: null,
@@ -338,7 +328,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [guestVenueMenuShowcaseByVenueId, setGuestVenueMenuShowcaseByVenueId] = useState<
     Record<string, VenueMenuVenueBlock | null>
   >({});
-  const checkInSyncRef = useRef<string | null>(null);
+  const [showLandingScanner, setShowLandingScanner] = useState(false);
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
     venueId: string | null;
@@ -483,16 +473,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     },
     [refreshVisitHistory]
   );
-
-  /**
-   * Мгновенно выставляем стол из URL (v/t или venueId/tableId) до async bootstrap и localStorage.
-   * switchLocation синхронно обновляет currentLocation до первого await — затем снимаем Loading.
-   */
-  useLayoutEffect(() => {
-    if (!isSdkReady || !urlTableFromParams) return;
-    void switchLocation(urlTableFromParams.venueId, urlTableFromParams.tableId);
-    setIsInitializing(false);
-  }, [isSdkReady, urlTableFromParams, switchLocation]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -647,7 +627,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [currentLocation.venueId, currentLocation.tableId, assignedStaffId]);
 
-  // Один конвейер: deep link / v&t / восстановление из storage (после стабильной идентичности в TG).
+  // Единый server-side bootstrap: один запрос за итоговым состоянием.
   useEffect(() => {
     if (!isSdkReady || !telegramIdentityReady) return;
     const tgGate = getTelegramWebApp();
@@ -661,172 +641,56 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
 
     let cancelled = false;
-    const finish = () => {
-      if (!cancelled) setIsInitializing(false);
-    };
-
     void (async () => {
-      const inTg = isTelegramContext();
-      const tgApp = getTelegramWebApp();
-      const signedInit = typeof tgApp?.initData === "string" ? tgApp.initData.trim() : "";
-
-      const claimGuestTable = (venueId: string, tableId: string) => {
-        const v = venueId.trim();
-        const t = tableId.trim();
-        if (signedInit && v && t) void guestSessionClaim(signedInit, v, t);
-      };
-      const awaitSessionDecision = async (venueId: string, tableId: string) => {
-        try {
-          for (const tid of tableIdVariantsForQuery(tableId)) {
-            const q = query(
-              collection(db, "activeSessions"),
-              where("venueId", "==", venueId),
-              where("tableId", "==", tid),
-              where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-              limit(1)
-            );
-            await getDocs(q);
-          }
-        } catch {
-          // best-effort: live onSnapshot продолжит синхронизацию
-        }
-      };
-
-      const tryRestoreSeat = async (uid: string): Promise<boolean> => {
-        const persisted = readPersistedGuestSeat();
-        if (!persisted || !guestCustomerUidsMatch(persisted.participantUid, uid)) return false;
-        try {
-          const ok = await verifyGuestSeatStillActive(db, persisted.venueId, persisted.tableId, uid);
-          if (!ok) {
-            clearPersistedGuestSeat();
-            return false;
-          }
-          if (cancelled) return false;
-          await switchLocation(persisted.venueId, persisted.tableId);
-          if (signedInit) claimGuestTable(persisted.venueId, persisted.tableId);
-          return true;
-        } catch (e) {
-          console.error("[guest bootstrap] restore failed", e);
-          clearPersistedGuestSeat();
-          return false;
-        }
-      };
-
-      const tryRecoverGuestFromServerIndex = async (): Promise<boolean> => {
-        if (!signedInit) return false;
-        const rec = await guestSessionRecover(signedInit);
-        if (cancelled || !rec.active) return false;
-        const v = rec.vrId?.trim() ?? "";
-        const t = rec.tableId?.trim() ?? "";
-        if (!v || !t) return false;
-        await switchLocation(v, t);
-        await awaitSessionDecision(v, t);
-        return true;
-      };
-
-      // Абсолютный приоритет URL: v|venueId + t|tableId (шлюз может отдавать любой вариант имён).
       const fromUrl = readVenueTableFromSearchParams(searchParams);
-      if (fromUrl) {
+      if (!fromUrl) {
         if (cancelled) return;
-        await switchLocation(fromUrl.venueId, fromUrl.tableId);
-        claimGuestTable(fromUrl.venueId, fromUrl.tableId);
-        await awaitSessionDecision(fromUrl.venueId, fromUrl.tableId);
-        finish();
-        return;
-      }
-
-      // Если стол уже выбран ранее в текущем цикле, дожидаемся первичной проверки сессии.
-      const existingVenue = currentLocationRef.current.venueId?.trim() ?? "";
-      const existingTable = currentLocationRef.current.tableId?.trim() ?? "";
-      if (existingVenue && existingTable) {
-        await awaitSessionDecision(existingVenue, existingTable);
-        finish();
-        return;
-      }
-
-      if (inTg) {
-        const sp = getStartParamFromTelegramWebApp();
-        if (sp) {
-          const decoded = (() => {
-            try {
-              return decodeURIComponent(sp.trim());
-            } catch {
-              return sp.trim();
-            }
-          })();
-
-          const sota = parseSotaStartappPayload(decoded);
-          if (sota) {
-            try {
-              const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
-              if (cancelled) return;
-              if (resolved?.venueId && resolved.tableId) {
-                await switchLocation(resolved.venueId, resolved.tableId);
-                claimGuestTable(resolved.venueId, resolved.tableId);
-                await awaitSessionDecision(resolved.venueId, resolved.tableId);
-                finish();
-                return;
-              }
-            } catch {
-              // fallback to legacy parser below
-            }
-          }
-
-          const payload = parseStartParamPayload(decoded);
-          if (payload?.venueId && payload.tableId) {
-            if (cancelled) return;
-            await switchLocation(payload.venueId, payload.tableId);
-            claimGuestTable(payload.venueId, payload.tableId);
-            await awaitSessionDecision(payload.venueId, payload.tableId);
-            finish();
-            return;
-          }
-        }
-
-        if (await tryRecoverGuestFromServerIndex()) {
-          if (cancelled) return;
-          finish();
-          return;
-        }
-
-        const uid = guestIdentity.currentUid?.trim() ?? "";
-        if (uid) {
-          const restored = await tryRestoreSeat(uid);
-          if (cancelled) return;
-          if (restored) {
-            finish();
-            return;
-          }
-        }
-        finish();
-        return;
-      }
-
-      if (await tryRecoverGuestFromServerIndex()) {
-        if (cancelled) return;
-        finish();
-        return;
-      }
-
-      const uid = guestIdentity.currentUid?.trim() ?? "";
-      if (uid) {
-        const restored = await tryRestoreSeat(uid);
-        if (cancelled) return;
-        if (restored) {
-          finish();
-          return;
-        }
-      }
-
-      if (cancelled) return;
-      const atLanding =
-        !currentLocationRef.current.venueId?.trim() && !currentLocationRef.current.tableId?.trim();
-      if (atLanding) {
-        await refreshVisitHistory();
-      } else {
+        setShowLandingScanner(true);
+        setIsInitializing(false);
         await switchLocation(null, null);
+        await refreshVisitHistory();
+        return;
       }
-      finish();
+
+      try {
+        const res = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            venueId: fromUrl.venueId,
+            tableId: fromUrl.tableId,
+            participantUid: guestIdentity.currentUid ?? undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          mode?: "table" | "scanner";
+          venueId?: string;
+          tableId?: string;
+          onboardingHint?: string | null;
+          messageGuest?: string;
+        };
+        if (cancelled) return;
+        if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
+          setShowLandingScanner(false);
+          await switchLocation(data.venueId.trim(), data.tableId.trim());
+          if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
+            toast(data.onboardingHint.trim(), { icon: "📌" });
+          }
+        } else {
+          setShowLandingScanner(true);
+          await switchLocation(null, null);
+          if (typeof data.messageGuest === "string" && data.messageGuest.trim()) {
+            toast.error(data.messageGuest.trim());
+          }
+        }
+      } catch {
+        if (cancelled) return;
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+      } finally {
+        if (!cancelled) setIsInitializing(false);
+      }
     })();
 
     return () => {
@@ -842,32 +706,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     if (!uid || !v || !t || !activeSession) return;
     writePersistedGuestSeat(v, t, uid);
   }, [activeSession, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
-
-  useEffect(() => {
-    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId || !guestIdentity.currentUid) return;
-    const key = `${currentLocation.venueId}:${currentLocation.tableId}:${guestIdentity.currentUid}`;
-    if (checkInSyncRef.current === key) return;
-    checkInSyncRef.current = key;
-    (async () => {
-      try {
-        const res = await fetch("/api/check-in", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            venueId: currentLocation.venueId,
-            tableId: currentLocation.tableId,
-            participantUid: guestIdentity.currentUid,
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as { onboardingHint?: string };
-        if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
-          toast(data.onboardingHint.trim(), { icon: "📌" });
-        }
-      } catch {
-        // session data will be updated by activeSessions snapshot
-      }
-    })();
-  }, [currentLocation.venueId, currentLocation.tableId, guestIdentity.currentUid, isSdkReady]);
 
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
@@ -1468,7 +1306,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
       feedbackTargetStaffId,
-      hasUrlTableParams,
+      showLandingScanner,
     }),
     [
       guestIdentity,
@@ -1501,7 +1339,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       guestAwaitingTableFeedback,
       completeTableFeedbackSession,
       feedbackTargetStaffId,
-      hasUrlTableParams,
+      showLandingScanner,
     ]
   );
 

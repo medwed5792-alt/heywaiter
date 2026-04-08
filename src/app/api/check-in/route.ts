@@ -1,6 +1,68 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { MessengerIdentity } from "@/lib/types";
 import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
+import { getAdminFirestore } from "@/lib/firebase-admin";
+
+const ACTIVE_SESSION_STATUS_FILTER = [
+  "check_in_success",
+  "payment_confirmed",
+  "awaiting_guest_feedback",
+  "completed",
+] as const;
+
+function tableIdVariants(raw: string): string[] {
+  const t = String(raw ?? "").trim();
+  if (!t) return [];
+  const out = new Set<string>([t]);
+  if (/^\d+$/.test(t)) {
+    out.add(String(parseInt(t, 10)));
+    const stripped = t.replace(/^0+/, "");
+    if (stripped) out.add(stripped);
+  }
+  return [...out];
+}
+
+function normalizeTableId(raw: string): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  if (/^\d+$/.test(t)) return String(parseInt(t, 10));
+  return t;
+}
+
+async function resolveCanonicalTableId(venueId: string, tableId: string): Promise<string> {
+  const fs = getAdminFirestore();
+  const v = venueId.trim();
+  const variants = tableIdVariants(tableId);
+  if (!v || variants.length === 0) return normalizeTableId(tableId);
+
+  try {
+    const activeSnap = await fs
+      .collection("activeSessions")
+      .where("venueId", "==", v)
+      .where("tableId", "in", variants.slice(0, 10))
+      .where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER])
+      .limit(1)
+      .get();
+    if (!activeSnap.empty) {
+      const d = activeSnap.docs[0]!.data() as Record<string, unknown>;
+      const canonical = typeof d.tableId === "string" ? d.tableId.trim() : "";
+      if (canonical) return canonical;
+    }
+  } catch {
+    // best-effort canonicalization
+  }
+
+  for (const candidate of variants) {
+    try {
+      const tableSnap = await fs.doc(`venues/${v}/tables/${candidate}`).get();
+      if (tableSnap.exists) return candidate;
+    } catch {
+      // ignore and continue
+    }
+  }
+
+  return normalizeTableId(tableId);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,16 +87,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const canonicalTableId = await resolveCanonicalTableId(venueId, tableId);
+
     const result = await checkInGuest({
       venueId,
-      tableId,
+      tableId: canonicalTableId,
       tableNumber,
       guestId,
       participantUid,
       guestIdentity,
     });
 
-    return NextResponse.json(result);
+    if (result.status === "check_in_success") {
+      return NextResponse.json({
+        ok: true,
+        mode: "table",
+        venueId: venueId.trim(),
+        tableId: result.tableId,
+        sessionId: result.sessionId,
+        sessionStatus: result.status,
+        messageGuest: result.messageGuest,
+        onboardingHint: result.onboardingHint ?? null,
+      });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      mode: "scanner",
+      venueId: venueId.trim(),
+      tableId: result.tableId,
+      sessionId: result.sessionId,
+      sessionStatus: result.status,
+      messageGuest: result.messageGuest,
+    });
   } catch (err) {
     console.error("check-in API error:", err);
     return NextResponse.json(
