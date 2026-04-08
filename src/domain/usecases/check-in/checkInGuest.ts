@@ -91,6 +91,15 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     };
   }
 
+  function participantUidList(parts: ActiveSessionParticipant[]): string[] {
+    const set = new Set<string>();
+    for (const p of parts) {
+      const uid = String(p.uid ?? "").trim();
+      if (uid) set.add(uid);
+    }
+    return [...set];
+  }
+
   function normalizeParticipants(raw: unknown): ActiveSessionParticipant[] {
     if (!Array.isArray(raw)) return [];
     const out: ActiveSessionParticipant[] = [];
@@ -170,6 +179,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       await firestore.collection("activeSessions").doc(existing.id).update({
         masterId: currentUid,
         participants: nextP,
+        participantUids: participantUidList(nextP),
         updatedAt: now,
       });
       await recordGuestVisit();
@@ -205,6 +215,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         };
         await firestore.collection("activeSessions").doc(existing.id).update({
           participants,
+          participantUids: participantUidList(participants),
           updatedAt: now,
         });
       }
@@ -213,6 +224,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       participants.push(nowParticipant("active"));
       await firestore.collection("activeSessions").doc(existing.id).update({
         participants,
+        participantUids: participantUidList(participants),
         // Backward compatible write if master was missing in older sessions.
         ...(existingMasterId ? {} : { masterId: currentUid }),
         updatedAt: now,
@@ -312,6 +324,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       waiterDisplayName: undefined,
       masterId: currentUid || matchedBooking.data()?.guestId || guestExternalId || "",
       participants: currentUid ? [nowParticipant("active")] : [],
+      participantUids: currentUid ? [currentUid] : [],
       isPrivate: true,
       status: "check_in_success",
       createdAt: now,
@@ -370,6 +383,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       guestIdentity: guestIdentity ?? undefined,
       masterId: currentUid || undefined,
       participants: currentUid ? [nowParticipant("active")] : [],
+      participantUids: currentUid ? [currentUid] : [],
       isPrivate: true,
       status: "table_conflict",
       createdAt: now,
@@ -405,6 +419,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     waiterDisplayName: undefined,
     masterId: currentUid || undefined,
     participants: currentUid ? [nowParticipant("active")] : [],
+    participantUids: currentUid ? [currentUid] : [],
     isPrivate: true,
     status: "check_in_success",
     createdAt: now,

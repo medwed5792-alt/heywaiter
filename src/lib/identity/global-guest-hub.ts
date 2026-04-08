@@ -15,10 +15,6 @@ function normalizeIdentityValue(key: GuestIdentityKey, raw: string): string {
   return v;
 }
 
-function identityDocId(key: GuestIdentityKey, value: string): string {
-  return `${key}:${value}`;
-}
-
 export function guestIdentityFromCustomerUid(uidRaw: string): GuestIdentityInput | null {
   const uid = String(uidRaw ?? "").trim();
   if (!uid) return null;
@@ -41,14 +37,7 @@ export async function findGuestByExternalIdentity(
   const value = normalizeIdentityValue(key, valueRaw);
   if (!value) return null;
   const fs = getAdminFirestore();
-
-  const idxSnap = await fs.collection("global_guest_identities").doc(identityDocId(key, value)).get();
-  if (idxSnap.exists) {
-    const guestUid = typeof idxSnap.data()?.guestUid === "string" ? idxSnap.data()!.guestUid.trim() : "";
-    if (guestUid) return guestUid;
-  }
-
-  const q = await fs.collection("global_guest_users").where(`identities.${key}`, "==", value).limit(1).get();
+  const q = await fs.collection("global_users").where(`identities.${key}`, "==", value).limit(1).get();
   if (q.empty) return null;
   return q.docs[0]!.id;
 }
@@ -57,63 +46,43 @@ export async function resolveOrCreateGlobalGuestUid(identities: GuestIdentityInp
   const normalized = identities
     .map((x) => ({ key: x.key, value: normalizeIdentityValue(x.key, x.value) }))
     .filter((x) => x.value);
-  if (normalized.length === 0) {
-    const fs = getAdminFirestore();
-    const ref = fs.collection("global_guest_users").doc();
-    const guestUid = `gg:${ref.id}`;
-    await ref.set({
-      guestUid,
-      identities: {},
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    return guestUid;
+  const fs = getAdminFirestore();
+  for (const idt of normalized) {
+    const existing = await findGuestByExternalIdentity(idt.key, idt.value);
+    if (existing) {
+      const ref = fs.collection("global_users").doc(existing);
+      await fs.runTransaction(async (trx) => {
+        const snap = await trx.get(ref);
+        const prevIdentities = snap.exists ? ((snap.data()?.identities ?? {}) as Record<string, unknown>) : {};
+        const systemRoleRaw = typeof snap.data()?.systemRole === "string" ? String(snap.data()!.systemRole).trim().toUpperCase() : "";
+        const systemRole = systemRoleRaw === "STAFF" || systemRoleRaw === "ADMIN" ? systemRoleRaw : "GUEST";
+        const nextIdentities: Record<string, string> = {};
+        for (const x of normalized) nextIdentities[x.key] = x.value;
+        trx.set(
+          ref,
+          {
+            identities: { ...prevIdentities, ...nextIdentities },
+            systemRole,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+      return existing;
+    }
   }
 
-  const fs = getAdminFirestore();
-  const idxRefs = normalized.map((x) =>
-    fs.collection("global_guest_identities").doc(identityDocId(x.key, x.value))
-  );
-
-  const resolved = await fs.runTransaction(async (trx) => {
-    const idxSnaps = await Promise.all(idxRefs.map((r) => trx.get(r)));
-    const existing = idxSnaps
-      .map((s) => (s.exists ? (typeof s.data()?.guestUid === "string" ? s.data()!.guestUid.trim() : "") : ""))
-      .filter(Boolean);
-    const guestUid = existing[0] || `gg:${fs.collection("global_guest_users").doc().id}`;
-    const guestRef = fs.collection("global_guest_users").doc(guestUid.slice(3));
-    const guestSnap = await trx.get(guestRef);
-    const prevIdentities = guestSnap.exists ? ((guestSnap.data()?.identities ?? {}) as Record<string, unknown>) : {};
-    const nextIdentities: Record<string, string> = {};
-    for (const idt of normalized) nextIdentities[idt.key] = idt.value;
-
-    trx.set(
-      guestRef,
-      {
-        guestUid,
-        identities: { ...prevIdentities, ...nextIdentities },
-        createdAt: guestSnap.exists ? guestSnap.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    for (let i = 0; i < normalized.length; i++) {
-      trx.set(
-        idxRefs[i]!,
-        {
-          key: normalized[i]!.key,
-          value: normalized[i]!.value,
-          guestUid,
-          updatedAt: FieldValue.serverTimestamp(),
-          createdAt: idxSnaps[i]!.exists ? idxSnaps[i]!.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    }
-    return guestUid;
+  const ref = fs.collection("global_users").doc();
+  const nextIdentities: Record<string, string> = {};
+  for (const idt of normalized) nextIdentities[idt.key] = idt.value;
+  await ref.set({
+    identities: nextIdentities,
+    systemRole: "GUEST",
+    affiliations: [],
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   });
-
-  return resolved;
+  return ref.id;
 }
 
 export async function linkIdentityToGlobalGuestUid(
@@ -122,32 +91,22 @@ export async function linkIdentityToGlobalGuestUid(
 ): Promise<boolean> {
   const uid = String(globalGuestUid ?? "").trim();
   const value = normalizeIdentityValue(identity.key, identity.value);
-  if (!uid.startsWith("gg:") || !value) return false;
-  const docId = uid.slice(3);
-  if (!docId) return false;
+  if (!uid || !value) return false;
   const fs = getAdminFirestore();
-  const guestRef = fs.collection("global_guest_users").doc(docId);
-  const idxRef = fs.collection("global_guest_identities").doc(identityDocId(identity.key, value));
+  const guestRef = fs.collection("global_users").doc(uid);
 
   await fs.runTransaction(async (trx) => {
     const guestSnap = await trx.get(guestRef);
+    if (!guestSnap.exists) return;
     const prevIdentities = guestSnap.exists ? ((guestSnap.data()?.identities ?? {}) as Record<string, unknown>) : {};
+    const systemRoleRaw = typeof guestSnap.data()?.systemRole === "string" ? String(guestSnap.data()!.systemRole).trim().toUpperCase() : "";
+    const systemRole = systemRoleRaw === "STAFF" || systemRoleRaw === "ADMIN" ? systemRoleRaw : "GUEST";
     trx.set(
       guestRef,
       {
-        guestUid: uid,
         identities: { ...prevIdentities, [identity.key]: value },
-        createdAt: guestSnap.exists ? guestSnap.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    trx.set(
-      idxRef,
-      {
-        key: identity.key,
-        value,
-        guestUid: uid,
+        systemRole,
+        createdAt: guestSnap.data()?.createdAt ?? FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true }

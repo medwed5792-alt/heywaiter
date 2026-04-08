@@ -67,6 +67,7 @@ export async function POST(request: NextRequest) {
     const identities: UnifiedIdentities = { ...(globalData.identities as UnifiedIdentities), [key]: platformId };
     await globalRef.update({
       identities,
+      systemRole: "STAFF",
       updatedAt: FieldValue.serverTimestamp(),
     });
 

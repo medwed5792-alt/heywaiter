@@ -381,6 +381,8 @@ export interface MedicalCard {
 /** Глобальный профиль сотрудника (коллекция global_users). Один документ на человека. */
 export interface GlobalUser {
   id: string;
+  /** Роль профиля в системе: единый реестр для staff/guest/admin. */
+  systemRole?: "STAFF" | "GUEST" | "ADMIN";
   firstName?: string;
   lastName?: string;
   gender?: string;

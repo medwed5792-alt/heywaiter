@@ -16,6 +16,13 @@ function normalizeIncomingSotaId(raw: string | null): string | null {
   return null;
 }
 
+const ACTIVE_GUEST_SESSION_STATUSES = [
+  "check_in_success",
+  "payment_confirmed",
+  "awaiting_guest_feedback",
+  "completed",
+] as const;
+
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
  * Возвращает запись сотрудника для Mini App: userId, staffId, onShift.
@@ -168,8 +175,38 @@ export async function GET(request: NextRequest) {
     const globalUserRef = firestore.collection("global_users").doc(foundGlobalUserId);
     const globalUserSnap = await globalUserRef.get();
     const globalData = globalUserSnap.data() ?? {};
+    const systemRoleRaw =
+      typeof globalData.systemRole === "string" ? String(globalData.systemRole).trim().toUpperCase() : "";
     const globalSotaId =
       typeof globalData.sotaId === "string" && globalData.sotaId.trim() ? globalData.sotaId.trim() : null;
+
+    const [masterGuestSnap, participantGuestSnap] = await Promise.all([
+      firestore
+        .collection("activeSessions")
+        .where("masterId", "==", foundGlobalUserId)
+        .where("status", "in", [...ACTIVE_GUEST_SESSION_STATUSES])
+        .limit(1)
+        .get(),
+      firestore
+        .collection("activeSessions")
+        .where("participantUids", "array-contains", foundGlobalUserId)
+        .where("status", "in", [...ACTIVE_GUEST_SESSION_STATUSES])
+        .limit(1)
+        .get(),
+    ]);
+    if (!masterGuestSnap.empty || !participantGuestSnap.empty) {
+      return NextResponse.json(
+        { error: "ACTIVE_GUEST_SESSION_LOCK" },
+        { status: 423 }
+      );
+    }
+
+    if (systemRoleRaw !== "STAFF" && systemRoleRaw !== "ADMIN") {
+      await globalUserRef.set(
+        { systemRole: "STAFF", updatedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    }
 
     // 2) Venue Access: проверяем наличие привязки к venue_andrey_alt в профиле (affiliations)
     const affiliations = Array.isArray(globalData.affiliations) ? globalData.affiliations : [];
