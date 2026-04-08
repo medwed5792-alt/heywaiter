@@ -144,6 +144,7 @@ function GuestSession() {
   const {
     currentLocation,
     guestIdentity,
+    guestProfileUid,
     activeSession,
     participants,
     currentTableOrders,
@@ -402,6 +403,8 @@ function GuestTableConnectingLoader() {
 function GuestCabinet() {
   const {
     guestIdentity,
+    guestProfileUid,
+    globalGuestUid,
     visitHistory,
     openVenueMenu,
     isVenuePreOrderEnabled,
@@ -437,7 +440,7 @@ function GuestCabinet() {
                 venueTitle={resolveVenueDisplayName(v.venueId)}
                 registrySotaId={getVenueRegistrySotaId(v.venueId)}
                 venueTimeZone={getVenueTimeZone(v.venueId)}
-                customerUid={guestIdentity.currentUid}
+                customerUid={guestProfileUid ?? guestIdentity.currentUid}
                 enabled
                 maxCartItems={getPreorderMaxCartItems(v.venueId)}
                 submissionAllowed={gate.ok}
@@ -457,7 +460,9 @@ function GuestCabinet() {
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-600">UID</span>
-            <span className="text-sm font-mono text-slate-900">{guestIdentity.currentUid ?? "—"}</span>
+            <span className="text-sm font-mono text-slate-900">
+              {globalGuestUid ?? guestIdentity.currentUid ?? "—"}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-600">Telegram</span>
@@ -507,6 +512,7 @@ function MiniAppScreenRouter() {
     completeTableFeedbackSession,
     feedbackTargetStaffId,
     guestIdentity,
+    guestProfileUid,
     showLandingScanner,
   } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
@@ -599,11 +605,11 @@ function MiniAppScreenRouter() {
       guestAwaitingTableFeedback &&
       activeSession?.id &&
       currentLocation.venueId?.trim() &&
-      guestIdentity.currentUid?.trim() ? (
+      guestProfileUid?.trim() ? (
         <GuestFeedbackStars
           walletStaffId={feedbackTargetStaffId}
           venueId={currentLocation.venueId.trim()}
-          customerUid={guestIdentity.currentUid.trim()}
+          customerUid={guestProfileUid.trim()}
           activeSessionId={activeSession.id}
           title="Отзыв и чаевые"
           subtitle="Заведение завершило визит. Звёзды и кнопка «Спасибо» привязаны к официанту из сессии (обновляется в реальном времени)."

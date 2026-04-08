@@ -46,6 +46,7 @@ import {
   writePersistedGuestSeat,
 } from "@/lib/guest-table-persistence";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
+import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
@@ -217,8 +218,14 @@ function parseGuestTableOrder(docId: string, data: Record<string, unknown>): Gue
   };
 }
 
+const SESSION_GLOBAL_GUEST_UID_KEY = "heywaiter_global_guest_uid";
+
 type GuestMiniAppContextValue = {
   guestIdentity: { sotaId: string | null; telegramUid: string | null; currentUid: string | null };
+  /** Документ global_users после успешного check-in. */
+  globalGuestUid: string | null;
+  /** Приоритетный UID для API и сессии: global, иначе канальный. */
+  guestProfileUid: string | null;
   currentLocation: { venueId: string | null; tableId: string | null };
   visitHistory: GuestVisitEntry[];
   activeSession: ActiveSession | null;
@@ -315,6 +322,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     Record<string, VenueMenuVenueBlock | null>
   >({});
   const [showLandingScanner, setShowLandingScanner] = useState(false);
+  const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return sessionStorage.getItem(SESSION_GLOBAL_GUEST_UID_KEY)?.trim() || null;
+    } catch {
+      return null;
+    }
+  });
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
     venueId: string | null;
@@ -325,9 +340,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const rootOrdersLoadedRef = useRef(false);
 
   const guestIdentity = useMemo(() => {
+    const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
     const currentUid = resolveUnifiedCustomerUid({
       telegramUserId: telegramUid,
-      anonymousId: visitorId?.trim() || null,
+      anonymousId: anonId,
     });
     const webApp = getTelegramWebApp();
     const startParam = webApp?.initDataUnsafe?.start_param?.trim() ?? "";
@@ -338,6 +354,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       currentUid,
     };
   }, [telegramUid, visitorId]);
+
+  const guestProfileUid = useMemo(
+    () => globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || null,
+    [globalGuestUid, guestIdentity.currentUid]
+  );
 
   // До isSdkReady initData может быть пустым; после ready() — опрос user id; затем один конвейер bootstrap.
   useEffect(() => {
@@ -373,15 +394,26 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [isSdkReady]);
 
   const refreshVisitHistory = useCallback(async () => {
-    const currentUid = guestIdentity.currentUid;
-    if (!currentUid || currentLocation.venueId || currentLocation.tableId) {
+    if (currentLocation.venueId || currentLocation.tableId) {
       setVisitHistory([]);
       return;
     }
-    const candidates = visitHistoryUidCandidates(currentUid);
+    const gg = globalGuestUid?.trim() || "";
+    const channelUid = guestIdentity.currentUid?.trim() || "";
+    const uidSet = new Set<string>();
+    if (gg) uidSet.add(gg);
+    if (channelUid) {
+      for (const c of visitHistoryUidCandidates(channelUid)) {
+        if (c.trim()) uidSet.add(c.trim());
+      }
+    }
+    if (uidSet.size === 0) {
+      setVisitHistory([]);
+      return;
+    }
     try {
       const byVenue = new Map<string, GuestVisitEntry>();
-      for (const uid of candidates) {
+      for (const uid of uidSet) {
         const q = query(
           collection(db, "users", uid, "visits"),
           orderBy("lastVisitAt", "desc"),
@@ -417,7 +449,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     } catch {
       setVisitHistory([]);
     }
-  }, [guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
+  }, [globalGuestUid, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
 
   const switchLocation = useCallback(
     async (venueId: string | null, tableId: string | null) => {
@@ -614,6 +646,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const bootstrapTableByServer = useCallback(
     async (venueId: string, tableId: string): Promise<boolean> => {
       try {
+        const deviceAnchor = getOrCreateGuestDeviceId();
         const res = await fetch("/api/check-in", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -621,6 +654,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             venueId,
             tableId,
             participantUid: guestIdentity.currentUid ?? undefined,
+            deviceAnchor: deviceAnchor || undefined,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -635,17 +669,25 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
           setShowLandingScanner(false);
           await switchLocation(data.venueId.trim(), data.tableId.trim());
-          const globalGuestUid = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
+          const resolvedGlobal = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
+          if (resolvedGlobal) {
+            setGlobalGuestUid(resolvedGlobal);
+            try {
+              sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, resolvedGlobal);
+            } catch {
+              // ignore
+            }
+          }
           const tg = getTelegramWebApp();
           const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-          if (globalGuestUid && initData) {
+          if (resolvedGlobal && initData) {
             void fetch("/api/guest/session-context", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 action: "link_identity",
                 initData,
-                globalGuestUid,
+                globalGuestUid: resolvedGlobal,
               }),
             }).catch(() => undefined);
           }
@@ -713,12 +755,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   // Запоминаем открытый стол для повторных заходов в приложение.
   useEffect(() => {
-    const uid = guestIdentity.currentUid?.trim();
+    const uid = guestProfileUid?.trim();
     const v = currentLocation.venueId?.trim();
     const t = currentLocation.tableId?.trim();
     if (!uid || !v || !t || !activeSession) return;
     writePersistedGuestSeat(v, t, uid);
-  }, [activeSession, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
+  }, [activeSession, guestProfileUid, currentLocation.venueId, currentLocation.tableId]);
 
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
@@ -1142,7 +1184,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           body: JSON.stringify({
             venueId,
             tableId,
-            customerUid: guestIdentity.currentUid ?? undefined,
+            customerUid: guestProfileUid ?? undefined,
             assignedStaffId: snap.assignedStaffId ?? undefined,
           }),
         });
@@ -1153,14 +1195,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [guestBlockedReason, isGuestBlocked, guestIdentity.currentUid]
+    [guestBlockedReason, isGuestBlocked, guestProfileUid]
   );
 
   const setTablePrivacyAllowJoin = useCallback(
     async (allowJoin: boolean) => {
       const v = currentLocation.venueId?.trim();
       const t = currentLocation.tableId?.trim();
-      const uid = guestIdentity.currentUid?.trim();
+      const uid = guestProfileUid?.trim();
       if (!v || !t || !uid) {
         return { ok: false, error: "Не удалось определить стол или гостя" };
       }
@@ -1183,7 +1225,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return { ok: false, error: msg };
       }
     },
-    [currentLocation.venueId, currentLocation.tableId, guestIdentity.currentUid]
+    [currentLocation.venueId, currentLocation.tableId, guestProfileUid]
   );
 
   const requestBill = useCallback(
@@ -1196,7 +1238,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const snap = serviceHandshakeRef.current;
       const venueId = snap.venueId?.trim();
       const tableId = snap.tableId?.trim();
-      const uid = guestIdentity.currentUid?.trim();
+      const uid = guestProfileUid?.trim();
       if (!venueId || !tableId || !uid) {
         toast.error("Не удалось определить гостя или стол");
         return;
@@ -1221,11 +1263,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
       }
     },
-    [
-      guestIdentity.currentUid,
-      guestBlockedReason,
-      isGuestBlocked,
-    ]
+    [guestProfileUid, guestBlockedReason, isGuestBlocked]
   );
 
   const guestAwaitingTableFeedback = useMemo(
@@ -1263,6 +1301,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const value = useMemo<GuestMiniAppContextValue>(
     () => ({
       guestIdentity,
+      globalGuestUid,
+      guestProfileUid,
       currentLocation,
       visitHistory,
       activeSession,
@@ -1296,6 +1336,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }),
     [
       guestIdentity,
+      globalGuestUid,
+      guestProfileUid,
       currentLocation,
       visitHistory,
       activeSession,

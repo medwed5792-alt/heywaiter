@@ -49,13 +49,14 @@ async function resolveCanonicalTableId(venueId: string, tableId: string): Promis
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { venueId, tableId, tableNumber, guestId, participantUid, guestIdentity: rawGuest } = body as {
+    const { venueId, tableId, tableNumber, guestId, participantUid, guestIdentity: rawGuest, deviceAnchor } = body as {
       venueId?: string;
       tableId?: string;
       tableNumber?: number;
       guestId?: string;
       participantUid?: string;
       guestIdentity?: unknown;
+      deviceAnchor?: string;
     };
     const guestIdentity: MessengerIdentity | undefined =
       rawGuest && typeof rawGuest === "object" && "channel" in rawGuest && "externalId" in rawGuest
@@ -78,6 +79,7 @@ export async function POST(request: NextRequest) {
       guestId,
       participantUid,
       guestIdentity,
+      deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
     });
 
     if (result.status === "check_in_success") {

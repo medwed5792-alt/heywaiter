@@ -16,6 +16,14 @@ import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
+/** Активные фазы визита: повторный вход должен подхватывать ту же сессию, без дублей. */
+const ACTIVE_VISIT_SESSION_STATUSES = [
+  "check_in_success",
+  "payment_confirmed",
+  "awaiting_guest_feedback",
+  "completed",
+] as const;
+
 export type CheckInGuestResult =
   | { status: "check_in_success"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string; onboardingHint?: string }
   | { status: "table_private"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string }
@@ -28,6 +36,8 @@ export interface CheckInGuestInput {
   guestId?: string;
   participantUid?: string;
   guestIdentity?: MessengerIdentity | undefined;
+  /** Браузерный якорь (visitor id / device id), чтобы не плодить global_users без anon-ключа */
+  deviceAnchor?: string;
 }
 
 /**
@@ -41,7 +51,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
   const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
 
-  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid } = input;
+  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid, deviceAnchor } = input;
   const guestExternalId = guestIdentity?.externalId ?? undefined;
   const uidFromIdentity =
     guestIdentity?.channel === "telegram"
@@ -53,6 +63,10 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   if (fromUid) identityInputs.push(fromUid);
   if (guestIdentity?.channel === "telegram" && guestExternalId) {
     identityInputs.push({ key: "tg", value: String(guestExternalId).trim() });
+  }
+  const anchor = String(deviceAnchor ?? "").trim();
+  if (identityInputs.length === 0 && anchor) {
+    identityInputs.push({ key: "anon", value: anchor });
   }
   const currentUid = await resolveOrCreateGlobalGuestUid(identityInputs);
 
@@ -118,18 +132,18 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     return out;
   }
 
-  // Idempotency & collective session: if a successful check-in already exists for this table,
-  // apply master/private/participants rules instead of creating a new session.
-  const existingSuccessSnap = await firestore
+  // Idempotency & collective session: если за этим столом уже есть активная фаза визита —
+  // подхватываем её (включая оплату/отзыв), не создаём вторую сессию.
+  const existingActiveSnap = await firestore
     .collection("activeSessions")
     .where("venueId", "==", venueId)
     .where("tableId", "==", tableId)
-    .where("status", "==", "check_in_success")
+    .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
     .limit(1)
     .get();
 
-  if (!existingSuccessSnap.empty) {
-    const existing = existingSuccessSnap.docs[0];
+  if (!existingActiveSnap.empty) {
+    const existing = existingActiveSnap.docs[0];
     const existingData = existing.data() as Record<string, unknown>;
     const existingMasterId = (existingData.masterId as string | undefined)?.trim();
     const isPrivate = typeof existingData.isPrivate === "boolean" ? (existingData.isPrivate as boolean) : true;

@@ -13,7 +13,9 @@
     "migrate:uids:dry": "npx tsx src/scripts/migrate-uids.ts --dry-run",
     "migrate:uids": "npx tsx src/scripts/migrate-uids.ts --write",
     "init:notifications:dry": "npx tsx src/scripts/init-system-config-notifications.ts --dry-run",
-    "init:notifications": "npx tsx src/scripts/init-system-config-notifications.ts --write"
+    "init:notifications": "npx tsx src/scripts/init-system-config-notifications.ts --write",
+    "migrate:participant-uids:dry": "npx tsx src/scripts/backfill-active-sessions-participant-uids.ts",
+    "migrate:participant-uids": "npx tsx src/scripts/backfill-active-sessions-participant-uids.ts --write"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",

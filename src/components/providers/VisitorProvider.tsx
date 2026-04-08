@@ -17,33 +17,10 @@ import {
 } from "react";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { db, auth, signInAnonymously } from "@/lib/firebase";
-
-const STORAGE_KEY = "heywaiter_visitor_id";
-
-function generateVisitorId(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-function getOrCreateVisitorId(): string {
-  if (typeof window === "undefined") return "";
-  try {
-    let id = localStorage.getItem(STORAGE_KEY);
-    if (!id) {
-      id = generateVisitorId();
-      localStorage.setItem(STORAGE_KEY, id);
-    }
-    return id;
-  } catch {
-    return generateVisitorId();
-  }
-}
+import {
+  GUEST_DEVICE_STORAGE_KEY,
+  getOrCreateGuestDeviceId,
+} from "@/lib/guest-device-anchor";
 
 export interface VisitorContextValue {
   visitorId: string | null;
@@ -70,12 +47,14 @@ interface VisitorProviderProps {
 }
 
 export function VisitorProvider({ children }: VisitorProviderProps) {
-  const [visitorId, setVisitorId] = useState<string | null>(null);
+  const [visitorId, setVisitorId] = useState<string | null>(() =>
+    typeof window !== "undefined" ? getOrCreateGuestDeviceId() || null : null
+  );
   const recordedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const id = getOrCreateVisitorId();
-    setVisitorId(id);
+    const id = getOrCreateGuestDeviceId();
+    setVisitorId(id || null);
     if (id && process.env.NODE_ENV === "development") {
       console.log("Visitor ID detected:", id);
     }
@@ -84,7 +63,7 @@ export function VisitorProvider({ children }: VisitorProviderProps) {
   const setVisitorIdFromExternal = useCallback((id: string) => {
     if (typeof window === "undefined" || !id) return;
     try {
-      localStorage.setItem(STORAGE_KEY, id);
+      localStorage.setItem(GUEST_DEVICE_STORAGE_KEY, id);
       setVisitorId(id);
       if (process.env.NODE_ENV === "development") {
         console.log("Visitor ID detected:", id);
@@ -102,7 +81,7 @@ export function VisitorProvider({ children }: VisitorProviderProps) {
 
   const recordVisitorSession = useCallback(
     async (venueId: string, tableId: string) => {
-      const id = visitorId ?? getOrCreateVisitorId();
+      const id = visitorId ?? getOrCreateGuestDeviceId();
       if (!id || !venueId || !tableId) return;
       const key = `${id}:${venueId}:${tableId}`;
       if (recordedRef.current.has(key)) return;
