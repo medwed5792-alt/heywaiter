@@ -15,9 +15,13 @@ export const GUEST_TELEGRAM_BOT_USERNAME = (
   .replace(/^@/, "");
 
 const TELEGRAM_MINIAPP_NAME = (process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter").trim();
-const BOT_WHATSAPP = process.env.NEXT_PUBLIC_WHATSAPP_PHONE ?? "";
-const BOT_VIBER_URI = process.env.NEXT_PUBLIC_VIBER_BOT_URI ?? "heywaiter";
-const BOT_LINE_ID = process.env.NEXT_PUBLIC_LINE_BOT_ID ?? "";
+
+function miniAppUrl(venueId: string, tableId: string): string {
+  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "https://heywaiter.vercel.app").trim().replace(/\/$/, "");
+  const v = encodeURIComponent(venueId.trim());
+  const t = encodeURIComponent(tableId.trim());
+  return `${base}/mini-app?v=${v}&t=${t}`;
+}
 
 function buildStartPayload(venueId: string, tableId: string, visitorId?: string | null): string {
   const base = `v:${venueId}:t:${tableId}`;
@@ -45,6 +49,12 @@ export function buildDeepLink(
   visitorId?: string | null,
   _options?: BuildDeepLinkOptions
 ): string {
+  void channel;
+  void visitorId;
+  void _options;
+  return miniAppUrl(venueId, tableId);
+
+  /*
   const payloadWithOptionalVisitor = buildStartPayload(venueId, tableId, visitorId);
 
   switch (channel) {
@@ -72,6 +82,7 @@ export function buildDeepLink(
     default:
       return `/#${payloadWithOptionalVisitor}`;
   }
+  */
 }
 
 export const messengerLabels: Record<string, string> = {

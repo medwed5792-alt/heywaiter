@@ -121,7 +121,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
 
   const parsed = parseStartPayload(message.text);
   if (!parsed) {
-    const webAppUrl = `${baseUrl}/mini-app?chatId=${chatId}&platform=telegram&tab=service`;
+    const webAppUrl = `${baseUrl}/mini-app`;
     await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
@@ -138,7 +138,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   const venueType = venueData.venueType as string | undefined;
 
   if (venueType === "fast_food") {
-    const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&chatId=${chatId}&platform=telegram&tab=service`;
+    const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}`;
     await sendMessage(token, {
       chat_id: chatId,
       text: "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.",
@@ -148,7 +148,7 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     return;
   }
 
-  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&tab=service`;
+  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}`;
 
   const welcomeBase =
     "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.";

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { MessengerIdentity } from "@/lib/types";
 import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization";
 
 const ACTIVE_SESSION_STATUS_FILTER = [
   "check_in_success",
@@ -9,25 +10,6 @@ const ACTIVE_SESSION_STATUS_FILTER = [
   "awaiting_guest_feedback",
   "completed",
 ] as const;
-
-function tableIdVariants(raw: string): string[] {
-  const t = String(raw ?? "").trim();
-  if (!t) return [];
-  const out = new Set<string>([t]);
-  if (/^\d+$/.test(t)) {
-    out.add(String(parseInt(t, 10)));
-    const stripped = t.replace(/^0+/, "");
-    if (stripped) out.add(stripped);
-  }
-  return [...out];
-}
-
-function normalizeTableId(raw: string): string {
-  const t = String(raw ?? "").trim();
-  if (!t) return "";
-  if (/^\d+$/.test(t)) return String(parseInt(t, 10));
-  return t;
-}
 
 async function resolveCanonicalTableId(venueId: string, tableId: string): Promise<string> {
   const fs = getAdminFirestore();

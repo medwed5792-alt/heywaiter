@@ -132,6 +132,35 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     const existingParticipantIdx = participants.findIndex((p) => guestCustomerUidsMatch(p.uid, currentUid));
     const existingParticipant = existingParticipantIdx >= 0 ? participants[existingParticipantIdx] : null;
 
+    if (
+      isPrivate &&
+      existingMasterId?.startsWith("anon:") &&
+      currentUid.startsWith("tg:") &&
+      !guestCustomerUidsMatch(existingMasterId, currentUid)
+    ) {
+      const merged = participants.map((p) =>
+        guestCustomerUidsMatch(p.uid, existingMasterId)
+          ? { ...p, uid: currentUid, status: "active" as ActiveSessionParticipantStatus, updatedAt: now }
+          : p
+      );
+      let nextP = merged;
+      if (!nextP.some((p) => guestCustomerUidsMatch(p.uid, currentUid))) {
+        nextP = [...merged, nowParticipant("active")];
+      }
+      await firestore.collection("activeSessions").doc(existing.id).update({
+        masterId: currentUid,
+        participants: nextP,
+        updatedAt: now,
+      });
+      await recordGuestVisit();
+      return {
+        status: "check_in_success",
+        sessionId: existing.id,
+        tableId,
+        messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
+      };
+    }
+
     // Private table: только хозяин (с учётом tg ↔ legacy uid в списке участников).
     if (isPrivate && existingMasterId && !guestCustomerUidsMatch(existingMasterId, currentUid)) {
       return {

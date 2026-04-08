@@ -146,28 +146,6 @@ function readVenueTableFromSearchParams(searchParams: {
   return { venueId, tableId };
 }
 
-/** Варианты tableId для Firestore (например "05" vs "5"). */
-function tableIdVariantsForQuery(raw: string): string[] {
-  const t = String(raw ?? "").trim();
-  if (!t) return [];
-  const out: string[] = [t];
-  if (/^\d+$/.test(t)) {
-    const n = String(parseInt(t, 10));
-    if (!out.includes(n)) out.push(n);
-    const stripped = t.replace(/^0+/, "");
-    if (stripped && stripped !== t && !out.includes(stripped)) out.push(stripped);
-  }
-  return out;
-}
-
-function tableIdsLooselyEqual(a: string, b: string): boolean {
-  const x = String(a ?? "").trim();
-  const y = String(b ?? "").trim();
-  if (x === y) return true;
-  if (/^\d+$/.test(x) && /^\d+$/.test(y)) return parseInt(x, 10) === parseInt(y, 10);
-  return false;
-}
-
 function parseNumber(raw: unknown): number {
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
   if (typeof raw === "string") {
@@ -440,13 +418,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const nextVenueId = venueId?.trim() || null;
       const nextTableId = tableId?.trim() || null;
       const nextFullTable = Boolean(nextVenueId && nextTableId);
-      /** Повторный вызов с тем же столом (restore/bootstrap) не должен сбрасывать activeSessions-снимок — иначе мерцание UI. */
+      /** Повторный вызов с тем же столом не должен сбрасывать activeSessions-снимок — иначе мерцание UI. */
       if (
         nextFullTable &&
         prev.venueId?.trim() === nextVenueId &&
-        prev.tableId &&
-        nextTableId &&
-        tableIdsLooselyEqual(prev.tableId, nextTableId)
+        prev.tableId?.trim() === nextTableId
       ) {
         return;
       }
@@ -627,6 +603,49 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [currentLocation.venueId, currentLocation.tableId, assignedStaffId]);
 
+  const bootstrapTableByServer = useCallback(
+    async (venueId: string, tableId: string): Promise<boolean> => {
+      try {
+        const res = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            venueId,
+            tableId,
+            participantUid: guestIdentity.currentUid ?? undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          mode?: "table" | "scanner";
+          venueId?: string;
+          tableId?: string;
+          onboardingHint?: string | null;
+          messageGuest?: string;
+        };
+        if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
+          setShowLandingScanner(false);
+          await switchLocation(data.venueId.trim(), data.tableId.trim());
+          if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
+            toast(data.onboardingHint.trim(), { icon: "📌" });
+          }
+          return true;
+        }
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+        if (typeof data.messageGuest === "string" && data.messageGuest.trim()) {
+          toast.error(data.messageGuest.trim());
+        }
+        return false;
+      } catch {
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+        return false;
+      }
+    },
+    [guestIdentity.currentUid, switchLocation]
+  );
+
   // Единый server-side bootstrap: один запрос за итоговым состоянием.
   useEffect(() => {
     if (!isSdkReady || !telegramIdentityReady) return;
@@ -653,41 +672,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
 
       try {
-        const res = await fetch("/api/check-in", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            venueId: fromUrl.venueId,
-            tableId: fromUrl.tableId,
-            participantUid: guestIdentity.currentUid ?? undefined,
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          mode?: "table" | "scanner";
-          venueId?: string;
-          tableId?: string;
-          onboardingHint?: string | null;
-          messageGuest?: string;
-        };
+        await bootstrapTableByServer(fromUrl.venueId, fromUrl.tableId);
         if (cancelled) return;
-        if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          setShowLandingScanner(false);
-          await switchLocation(data.venueId.trim(), data.tableId.trim());
-          if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
-            toast(data.onboardingHint.trim(), { icon: "📌" });
-          }
-        } else {
-          setShowLandingScanner(true);
-          await switchLocation(null, null);
-          if (typeof data.messageGuest === "string" && data.messageGuest.trim()) {
-            toast.error(data.messageGuest.trim());
-          }
-        }
-      } catch {
-        if (cancelled) return;
-        setShowLandingScanner(true);
-        await switchLocation(null, null);
       } finally {
         if (!cancelled) setIsInitializing(false);
       }
@@ -696,7 +682,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     return () => {
       cancelled = true;
     };
-  }, [isSdkReady, telegramIdentityReady, guestIdentity.currentUid, searchParams, switchLocation, refreshVisitHistory]);
+  }, [isSdkReady, telegramIdentityReady, searchParams, switchLocation, refreshVisitHistory, bootstrapTableByServer]);
 
   // Запоминаем открытый стол для повторных заходов в приложение.
   useEffect(() => {
@@ -711,7 +697,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
     const venueId = currentLocation.venueId.trim();
-    const tableIdRaw = currentLocation.tableId.trim();
+    const tableId = currentLocation.tableId.trim();
 
     let sawSessionDoc = false;
     let cancelled = false;
@@ -754,7 +740,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const sessionAssigned =
         typeof d.assignedStaffId === "string" && d.assignedStaffId.trim() ? d.assignedStaffId.trim() : undefined;
       const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
-      const sessionTableId = typeof d.tableId === "string" ? d.tableId.trim() : tableIdRaw;
+      const sessionTableId = typeof d.tableId === "string" ? d.tableId.trim() : tableId;
 
       const session: ActiveSession = {
         id: docId,
@@ -777,60 +763,28 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setParticipants(parsedParticipants);
     };
 
-    void (async () => {
-      let listenTableId = tableIdRaw;
-      const variants = tableIdVariantsForQuery(tableIdRaw);
-      for (const tid of variants) {
-        if (cancelled) return;
-        try {
-          const qProbe = query(
-            collection(db, "activeSessions"),
-            where("venueId", "==", venueId),
-            where("tableId", "==", tid),
-            where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-            limit(1)
-          );
-          const probeSnap = await getDocs(qProbe);
-          if (!probeSnap.empty) {
-            const first = probeSnap.docs[0]!;
-            const data = (first.data() ?? {}) as Record<string, unknown>;
-            const canonical = typeof data.tableId === "string" ? data.tableId.trim() : tid;
-            listenTableId = canonical;
-            if (!cancelled) applySessionDoc(first.id, data);
-            if (!cancelled && !tableIdsLooselyEqual(canonical, tableIdRaw)) {
-              void switchLocation(venueId, canonical);
-            }
-            break;
-          }
-        } catch {
-          // пробуем следующий вариант tableId
+    const q = query(
+      collection(db, "activeSessions"),
+      where("venueId", "==", venueId),
+      where("tableId", "==", tableId),
+      where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+      limit(1)
+    );
+
+    unsub = onSnapshot(q, (snap) => {
+      if (snap.empty) {
+        setActiveSession(null);
+        setParticipants([]);
+        if (sawSessionDoc) {
+          sawSessionDoc = false;
+          void switchLocation(venueId, null);
         }
+        return;
       }
 
-      const q = query(
-        collection(db, "activeSessions"),
-        where("venueId", "==", venueId),
-        where("tableId", "==", listenTableId),
-        where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-        limit(1)
-      );
-
-      if (cancelled) return;
-      unsub = onSnapshot(q, (snap) => {
-        if (snap.empty) {
-          setActiveSession(null);
-          setParticipants([]);
-          if (sawSessionDoc) {
-            sawSessionDoc = false;
-            void switchLocation(venueId, null);
-          }
-          return;
-        }
-
-        const first = snap.docs[0]!;
-        applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
-      });
-    })();
+      const first = snap.docs[0]!;
+      applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
+    });
 
     return () => {
       cancelled = true;
@@ -1121,7 +1075,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             toast.error(access.message);
             return;
           }
-          await switchLocation(resolved.venueId, resolved.tableId || null);
+          const resolvedTableId = (resolved.tableId || "").trim();
+          if (!resolvedTableId) {
+            toast.error("В QR не указан стол");
+            return;
+          }
+          await bootstrapTableByServer(resolved.venueId, resolvedTableId);
           tg.closeScanQrPopup?.();
         })();
       });
@@ -1133,7 +1092,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push(`${origin}/check-in`);
-  }, [router, switchLocation, checkGuestQrVenueAccess]);
+  }, [router, checkGuestQrVenueAccess, bootstrapTableByServer]);
 
   const callWaiter = useCallback(async () => {
       if (isGuestBlocked) {
