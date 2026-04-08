@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
+import { linkIdentityToGlobalGuestUid } from "@/lib/identity/global-guest-hub";
 
 export const runtime = "nodejs";
 
@@ -26,8 +27,11 @@ async function resolveVerifiedUser(initData: string) {
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as {
+      action?: string;
       initData?: string;
+      globalGuestUid?: string;
     };
+    const action = String(body.action ?? "clear").trim().toLowerCase();
     const initData = typeof body.initData === "string" ? body.initData.trim() : "";
     if (!initData) {
       return NextResponse.json({ error: "initData required" }, { status: 400 });
@@ -40,6 +44,14 @@ export async function POST(request: NextRequest) {
     const fs = getAdminFirestore();
     const docId = idxDocId(userId);
     const ref = fs.collection(IDX).doc(docId);
+    if (action === "link_identity") {
+      const globalGuestUid = String(body.globalGuestUid ?? "").trim();
+      if (!globalGuestUid) {
+        return NextResponse.json({ error: "globalGuestUid required" }, { status: 400 });
+      }
+      const ok = await linkIdentityToGlobalGuestUid(globalGuestUid, { key: "tg", value: userId });
+      return NextResponse.json({ ok });
+    }
     await ref.delete().catch(() => undefined);
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -628,12 +628,27 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           mode?: "table" | "scanner";
           venueId?: string;
           tableId?: string;
+          globalGuestUid?: string;
           onboardingHint?: string | null;
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
           setShowLandingScanner(false);
           await switchLocation(data.venueId.trim(), data.tableId.trim());
+          const globalGuestUid = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
+          const tg = getTelegramWebApp();
+          const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+          if (globalGuestUid && initData) {
+            void fetch("/api/guest/session-context", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "link_identity",
+                initData,
+                globalGuestUid,
+              }),
+            }).catch(() => undefined);
+          }
           if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
             toast(data.onboardingHint.trim(), { icon: "📌" });
           }

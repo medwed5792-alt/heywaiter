@@ -4,7 +4,7 @@
  * Legacy: telegram_user_id: и anonymous_id: — поддерживаются в Firestore rules и при миграции визитов.
  */
 
-export type CustomerChannelPrefix = "tg" | "wa" | "vk" | "anon";
+export type CustomerChannelPrefix = "tg" | "wa" | "vk" | "anon" | "gg";
 
 /** Telegram user id → tg:<id> */
 export function buildTgCustomerUid(telegramUserId: string | number | null | undefined): string {
@@ -103,6 +103,10 @@ export function visitHistoryUidCandidates(primaryUid: string): string[] {
   if (u.startsWith("anonymous_id:")) {
     const id = u.slice("anonymous_id:".length).trim();
     if (id) set.add(`anon:${id}`);
+  }
+  if (u.startsWith("gg:")) {
+    const id = u.slice(3).trim();
+    if (id) set.add(`gg:${id}`);
   }
   return [...set];
 }

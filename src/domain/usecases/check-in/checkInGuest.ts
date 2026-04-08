@@ -6,15 +6,20 @@ import type {
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid, guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
+import {
+  guestIdentityFromCustomerUid,
+  resolveOrCreateGlobalGuestUid,
+  type GuestIdentityInput,
+} from "@/lib/identity/global-guest-hub";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 export type CheckInGuestResult =
-  | { status: "check_in_success"; sessionId: string; tableId: string; messageGuest: string; onboardingHint?: string }
-  | { status: "table_private"; sessionId: string; tableId: string; messageGuest: string }
-  | { status: "table_conflict"; sessionId: string; tableId: string; messageGuest: string };
+  | { status: "check_in_success"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string; onboardingHint?: string }
+  | { status: "table_private"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string }
+  | { status: "table_conflict"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string };
 
 export interface CheckInGuestInput {
   venueId: string;
@@ -42,7 +47,20 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     guestIdentity?.channel === "telegram"
       ? buildTelegramCustomerUid(guestExternalId)
       : (guestExternalId || "").trim();
-  const currentUid = (participantUid || uidFromIdentity || guestId || "").trim();
+  const rawUidCandidate = (participantUid || uidFromIdentity || guestId || "").trim();
+  const identityInputs: GuestIdentityInput[] = [];
+  const fromUid = guestIdentityFromCustomerUid(rawUidCandidate);
+  if (fromUid) identityInputs.push(fromUid);
+  if (guestIdentity?.channel === "telegram" && guestExternalId) {
+    identityInputs.push({ key: "tg", value: String(guestExternalId).trim() });
+  }
+  const currentUid = await resolveOrCreateGlobalGuestUid(identityInputs);
+
+  const isSameGuestUid = (existingUid: string): boolean => {
+    if (guestCustomerUidsMatch(existingUid, currentUid)) return true;
+    if (rawUidCandidate && guestCustomerUidsMatch(existingUid, rawUidCandidate)) return true;
+    return false;
+  };
 
   // API route historically routes "events" through a resolved default venue id.
   const VENUE_EVENTS_ID = resolveVenueId(venueId);
@@ -114,6 +132,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
           status: "table_private",
           sessionId: existing.id,
           tableId,
+          globalGuestUid: currentUid,
           messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
         };
       }
@@ -122,6 +141,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         status: "check_in_success",
         sessionId: existing.id,
         tableId,
+        globalGuestUid: currentUid,
         messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
         ...(shouldShowPinHint
           ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
@@ -129,14 +149,14 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       };
     }
 
-    const existingParticipantIdx = participants.findIndex((p) => guestCustomerUidsMatch(p.uid, currentUid));
+    const existingParticipantIdx = participants.findIndex((p) => isSameGuestUid(p.uid));
     const existingParticipant = existingParticipantIdx >= 0 ? participants[existingParticipantIdx] : null;
 
     if (
       isPrivate &&
       existingMasterId?.startsWith("anon:") &&
-      currentUid.startsWith("tg:") &&
-      !guestCustomerUidsMatch(existingMasterId, currentUid)
+      rawUidCandidate.startsWith("tg:") &&
+      !isSameGuestUid(existingMasterId)
     ) {
       const merged = participants.map((p) =>
         guestCustomerUidsMatch(p.uid, existingMasterId)
@@ -144,7 +164,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
           : p
       );
       let nextP = merged;
-      if (!nextP.some((p) => guestCustomerUidsMatch(p.uid, currentUid))) {
+      if (!nextP.some((p) => isSameGuestUid(p.uid))) {
         nextP = [...merged, nowParticipant("active")];
       }
       await firestore.collection("activeSessions").doc(existing.id).update({
@@ -157,16 +177,18 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
         status: "check_in_success",
         sessionId: existing.id,
         tableId,
+        globalGuestUid: currentUid,
         messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
       };
     }
 
     // Private table: только хозяин (с учётом tg ↔ legacy uid в списке участников).
-    if (isPrivate && existingMasterId && !guestCustomerUidsMatch(existingMasterId, currentUid)) {
+    if (isPrivate && existingMasterId && !isSameGuestUid(existingMasterId)) {
       return {
         status: "table_private",
         sessionId: existing.id,
         tableId,
+        globalGuestUid: currentUid,
         messageGuest: "Стол приватный. Подселение запрещено без разрешения хозяина.",
       };
     }
@@ -186,7 +208,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
           updatedAt: now,
         });
       }
-    } else if (!existingMasterId || !isPrivate || guestCustomerUidsMatch(existingMasterId, currentUid)) {
+    } else if (!existingMasterId || !isPrivate || isSameGuestUid(existingMasterId)) {
       // Public table, master check-in, or legacy session without masterId: add participant.
       participants.push(nowParticipant("active"));
       await firestore.collection("activeSessions").doc(existing.id).update({
@@ -202,6 +224,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       status: "check_in_success",
       sessionId: existing.id,
       tableId,
+      globalGuestUid: currentUid,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
     };
   }
@@ -319,6 +342,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       status: "check_in_success",
       sessionId: sessionRef.id,
       tableId,
+      globalGuestUid: currentUid,
       messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
       ...(shouldShowPinHint
         ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
@@ -366,6 +390,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       status: "table_conflict",
       sessionId: conflictDoc.id,
       tableId,
+      globalGuestUid: currentUid,
       messageGuest: "Извините, стол забронирован. К вам уже идут.",
     };
   }
@@ -409,6 +434,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     status: "check_in_success",
     sessionId: sessionRef.id,
     tableId,
+    globalGuestUid: currentUid,
     messageGuest: "Посадка подтверждена. Официант закреплён за вами.",
     ...(shouldShowPinHint
       ? { onboardingHint: "Закрепите этот чат для быстрого вызова персонала." }
