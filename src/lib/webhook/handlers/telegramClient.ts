@@ -12,9 +12,6 @@
 import { NextRequest } from "next/server";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { identifyGuest, getReservationForTable } from "@/lib/guest-recognition";
-import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
-import type { MessengerIdentity } from "@/lib/types";
 import { getAppUrl } from "@/lib/webhook/utils";
 import { createGuestEvent } from "@/lib/guest-events";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -118,7 +115,6 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   if (!message?.text) return;
 
   const chatId = message.chat?.id;
-  const tgId = String(message.from?.id ?? "");
   if (!chatId) return;
 
   await sendMessage(token, { chat_id: chatId, text: "\u200b", reply_markup: { remove_keyboard: true } });
@@ -136,13 +132,6 @@ export async function handleTelegramClient(request: NextRequest, token: string):
   }
 
   const { venueId, tableId } = parsed;
-  const tableNum = tableId;
-  const { guest, kind } = await identifyGuest(tgId, "tg");
-
-  if (guest?.type === "blacklisted") {
-    await sendMessage(token, { chat_id: chatId, text: "Доступ ограничен. Обратитесь к администрации." });
-    return;
-  }
 
   const venueSnap = await getDoc(doc(db, "venues", venueId));
   const venueData = venueSnap.exists() ? venueSnap.data() : {};
@@ -159,50 +148,13 @@ export async function handleTelegramClient(request: NextRequest, token: string):
     return;
   }
 
-  const { reserved, isOwner } = await getReservationForTable(venueId, tableId, guest?.tgId ?? tgId);
-  if (reserved && !isOwner) {
-    await sendMessage(token, { chat_id: chatId, text: "Стол забронирован. Обратитесь к хостес." });
-    return;
-  }
-
-  const role = kind === "OWN" ? "vip" : "guest";
-  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&role=${role}&tab=service`;
-
-  const participantUid = buildTelegramCustomerUid(tgId);
-  const tableNumberParsed = parseInt(String(tableNum), 10);
-  const guestIdentity: MessengerIdentity = {
-    channel: "telegram",
-    externalId: tgId,
-    locale: "ru",
-  };
-
-  const checkInResult = await checkInGuest({
-    venueId,
-    tableId,
-    tableNumber: Number.isFinite(tableNumberParsed) ? tableNumberParsed : undefined,
-    guestId: kind === "OWN" && guest ? guest.id : undefined,
-    participantUid,
-    guestIdentity,
-  });
-
-  if (checkInResult.status === "table_private") {
-    await sendMessage(token, { chat_id: chatId, text: checkInResult.messageGuest });
-    return;
-  }
-  if (checkInResult.status === "table_conflict") {
-    await sendMessage(token, { chat_id: chatId, text: checkInResult.messageGuest });
-    return;
-  }
+  const webAppUrl = `${baseUrl}/mini-app?v=${venueId}&t=${tableId}&chatId=${chatId}&platform=telegram&tab=service`;
 
   const welcomeBase =
     "Добро пожаловать в HeyWaiter! Нажмите кнопку ниже, чтобы открыть меню и вызвать официанта.";
-  const welcomeText =
-    welcomeBase +
-    (checkInResult.onboardingHint?.trim() ? `\n\n${checkInResult.onboardingHint.trim()}` : "");
-
   await sendMessage(token, {
     chat_id: chatId,
-    text: welcomeText,
+    text: welcomeBase,
     reply_markup: {
       inline_keyboard: [
         [{ text: "🚀 Открыть пульт", web_app: { url: webAppUrl } }],

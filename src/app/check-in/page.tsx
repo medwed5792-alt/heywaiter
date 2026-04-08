@@ -19,7 +19,6 @@ import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
-import { resolveUnifiedCustomerUid } from "@/lib/identity/customer-uid";
 
 /** Фирменные цвета брендов мессенджеров для кнопок (строгий стиль) */
 const MESSENGER_BRAND_COLORS: Record<MessengerChannel, string> = {
@@ -48,23 +47,11 @@ function CheckInContent() {
   const { visitorId, recordVisitorSession } = useVisitor();
 
   const [locale, setLocale] = useState(getBrowserLocale());
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "conflict" | "private">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "success">("idle");
   const [cooldownLeft, setCooldownLeft] = useState(0);
   const [venueDisplayName, setVenueDisplayName] = useState<string>("");
   const [tableNumberResolved, setTableNumberResolved] = useState<number | null>(null);
   const [venueMetaLoaded, setVenueMetaLoaded] = useState(false);
-  const telegramWebAppUserId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    const id = (
-      window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { id?: number } } } } }
-    ).Telegram?.WebApp?.initDataUnsafe?.user?.id;
-    return id != null ? String(id) : null;
-  }, []);
-  const currentUid = resolveUnifiedCustomerUid({
-    telegramUserId: telegramWebAppUserId,
-    anonymousId: visitorId,
-  });
-
   useEffect(() => {
     setLocale(getBrowserLocale());
   }, []);
@@ -127,52 +114,17 @@ function CheckInContent() {
     async (channel: MessengerChannel) => {
       if (!venueId || !tableId) return;
       setStatus("loading");
-
-      // TODO: при необходимости фиксировать выбор мессенджера в Firestore:
-      // например коллекция checkInChoices { venueId, tableId, channel, createdAt }
-      // или поле guestChannel в документе activeSessions после создания сессии.
-
       try {
-        const tableNum = Number.isNaN(Number(tableId)) ? 0 : Number(tableId);
-
-        const res = await fetch("/api/check-in", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        setStatus("success");
+        if (channel === "telegram") {
+          window.location.href = await buildTelegramStartAppLinkResolved(db, venueId, tableId);
+        } else {
+          window.location.href = buildDeepLink(
+            channel,
             venueId,
             tableId,
-            tableNumber: tableNum,
-            participantUid: currentUid || undefined,
-            // На этом экране мы не знаем конкретный guestId/messenger identity,
-            // поэтому оставляем guestIdentity undefined (API сможет только проверить reservation conflict).
-            guestIdentity: undefined,
-          }),
-        });
-
-        const data = (await res.json().catch(() => ({}))) as
-          | { status?: string; error?: string }
-          | Record<string, unknown>;
-
-        if (!res.ok || (data as { error?: string }).error) {
-          throw new Error((data as { error?: string }).error || "check-in failed");
-        }
-
-        const apiStatus = (data as { status?: "check_in_success" | "table_conflict" | "table_private" }).status;
-        if (apiStatus === "table_conflict") setStatus("conflict");
-        else if (apiStatus === "table_private") setStatus("private");
-        else setStatus("success");
-
-        if (apiStatus === "check_in_success") {
-          if (channel === "telegram") {
-            window.location.href = await buildTelegramStartAppLinkResolved(db, venueId, tableId);
-          } else {
-            window.location.href = buildDeepLink(
-              channel,
-              venueId,
-              tableId,
-              visitorId?.trim() || undefined
-            );
-          }
+            visitorId?.trim() || undefined
+          );
         }
 
         setCooldownLeft(Math.ceil(CALL_WAITER_COOLDOWN_MS / 1000));
@@ -181,7 +133,7 @@ function CheckInContent() {
         setStatus("idle");
       }
     },
-    [venueId, tableId, currentUid, visitorId]
+    [venueId, tableId, visitorId]
   );
 
   const copy = useMemo(() => getCheckInCopy(locale), [locale]);
@@ -225,19 +177,9 @@ function CheckInContent() {
           )}
         </DebugPanelTrigger>
         <p className="mt-3 text-gray-600 text-sm">{copy.subtitle}</p>
-        {status === "conflict" && (
-          <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-            Извините, стол забронирован. К вам уже идут.
-          </p>
-        )}
-        {status === "private" && (
-          <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
-            Стол приватный. Подселение запрещено без разрешения хозяина.
-          </p>
-        )}
         {status === "success" && (
           <p className="mt-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">
-            Посадка подтверждена. Открываем мессенджер…
+            Открываем мессенджер…
           </p>
         )}
         {cooldownLeft > 0 && (

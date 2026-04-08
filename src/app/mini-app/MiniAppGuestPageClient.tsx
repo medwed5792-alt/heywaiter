@@ -189,7 +189,8 @@ function GuestSession() {
   );
 
   const canAct = Boolean(currentLocation.venueId && currentLocation.tableId);
-  const sessionActionsEnabled = canAct && !guestAwaitingTableFeedback;
+  const sessionConfirmed = Boolean(activeSession?.id);
+  const sessionActionsEnabled = canAct && sessionConfirmed && !guestAwaitingTableFeedback;
   const currentUid = guestIdentity.currentUid ?? "";
   const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
   const isPrivate = activeSession?.isPrivate === true;
