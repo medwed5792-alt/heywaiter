@@ -1,17 +1,19 @@
 /**
- * Единая ссылка входа в Mini App: /mini-app?v=...&t=...
+ * Сборка Telegram deep link: https://t.me/...?...startapp=v_ID_t_ID
  */
 
 import type { Firestore } from "firebase/firestore";
 
 /**
- * Полная HTTPS-ссылка на гостевой Mini App.
+ * Полная deep link ссылка для открытия Mini App внутри Telegram.
  */
 export async function buildTelegramStartAppLinkResolved(
   _db: Firestore,
   venueId: string,
   tableId: string
 ): Promise<string> {
-  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "https://heywaiter.vercel.app").trim().replace(/\/$/, "");
-  return `${base}/mini-app?v=${encodeURIComponent(venueId.trim())}&t=${encodeURIComponent(tableId.trim())}`;
+  const bot = (process.env.NEXT_PUBLIC_GUEST_BOT_USERNAME ?? "HeyWaiter_bot").trim().replace(/^@/, "");
+  const miniAppName = (process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter").trim();
+  const payload = `v_${venueId.trim()}_t_${tableId.trim()}`;
+  return `https://t.me/${bot}/${miniAppName}?startapp=${encodeURIComponent(payload)}`;
 }

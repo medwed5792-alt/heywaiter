@@ -6,15 +6,25 @@ import { useRouter, useSearchParams } from "next/navigation";
 function LegacyGuestPanelRedirect() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const guestBotUsername = (process.env.NEXT_PUBLIC_GUEST_BOT_USERNAME ?? "").trim();
+  const miniAppName = (process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "").trim();
   const telegramDeepLink = useMemo(() => {
     const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
     const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
     if (!v || !t) return null;
-    const bot = (process.env.NEXT_PUBLIC_GUEST_BOT_USERNAME ?? "HeyWaiter_bot").trim().replace(/^@/, "");
-    const miniAppName = (process.env.NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME ?? "waiter").trim();
+    const bot = (guestBotUsername || "HeyWaiter_bot").replace(/^@/, "");
+    const miniName = miniAppName || "waiter";
     const startapp = `v_${v}_t_${t}`;
-    return `https://t.me/${bot}/${miniAppName}?startapp=${encodeURIComponent(startapp)}`;
-  }, [searchParams]);
+    return `https://t.me/${bot}/${miniName}?startapp=${encodeURIComponent(startapp)}`;
+  }, [searchParams, guestBotUsername, miniAppName]);
+
+  useEffect(() => {
+    if (guestBotUsername && miniAppName) return;
+    console.warn("[guest-entry] Telegram deep link env missing", {
+      NEXT_PUBLIC_GUEST_BOT_USERNAME: Boolean(guestBotUsername),
+      NEXT_PUBLIC_TELEGRAM_MINIAPP_NAME: Boolean(miniAppName),
+    });
+  }, [guestBotUsername, miniAppName]);
 
   useEffect(() => {
     const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();

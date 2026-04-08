@@ -107,6 +107,12 @@ function roleFromReceiver(receiverUsername: string, staffBot: string, guestBot: 
   return null;
 }
 
+function hasGuestTableParams(searchParams: Pick<URLSearchParams, "get">): boolean {
+  const v = (searchParams.get("v") ?? searchParams.get("venueId") ?? "").trim();
+  const t = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
+  return Boolean(v && t);
+}
+
 function hasStaffSotaInStorage(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -133,6 +139,8 @@ function decideRoleAfterTimeout(
   if (fromRecv) return { kind: "role", role: fromRecv };
 
   if (pathStaff) return { kind: "role", role: "staff" };
+
+  if (hasGuestTableParams(searchParams)) return { kind: "role", role: "guest" };
 
   if (hasStaffSotaInStorage()) return { kind: "role", role: "staff" };
 
@@ -274,6 +282,11 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
     const fromRecvNow = roleFromReceiver(recvNow, staffBot, guestBot);
     if (fromRecvNow) {
       applyRole(fromRecvNow);
+      return;
+    }
+
+    if (!pathStaff && hasGuestTableParams(searchParams)) {
+      applyRole("guest");
       return;
     }
 
