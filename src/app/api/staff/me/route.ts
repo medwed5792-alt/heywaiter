@@ -6,6 +6,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { toIdentityKey } from "@/lib/auth/unifiedSearch";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { generateSotaId } from "@/lib/sota-id";
+import { isActiveSessionWithinMaxAge } from "@/lib/session-freshness";
 
 function normalizeIncomingSotaId(raw: string | null): string | null {
   const normalized = (raw ?? "").trim().toUpperCase();
@@ -16,12 +17,11 @@ function normalizeIncomingSotaId(raw: string | null): string | null {
   return null;
 }
 
-const ACTIVE_GUEST_SESSION_STATUSES = [
-  "check_in_success",
-  "payment_confirmed",
-  "awaiting_guest_feedback",
-  "completed",
-] as const;
+/**
+ * Staff-lock только пока гость реально «за столом» (check_in_success) и сессия не старше SESSION_MAX_AGE_MS.
+ * payment_confirmed / awaiting_guest_feedback / completed не блокируют персонал.
+ */
+const STAFF_LOCK_GUEST_SESSION_STATUS = "check_in_success" as const;
 
 /**
  * GET /api/staff/me?venueId=...&telegramId=...
@@ -180,21 +180,28 @@ export async function GET(request: NextRequest) {
     const globalSotaId =
       typeof globalData.sotaId === "string" && globalData.sotaId.trim() ? globalData.sotaId.trim() : null;
 
+    const nowMs = Date.now();
     const [masterGuestSnap, participantGuestSnap] = await Promise.all([
       firestore
         .collection("activeSessions")
         .where("masterId", "==", foundGlobalUserId)
-        .where("status", "in", [...ACTIVE_GUEST_SESSION_STATUSES])
-        .limit(1)
+        .where("status", "==", STAFF_LOCK_GUEST_SESSION_STATUS)
+        .limit(25)
         .get(),
       firestore
         .collection("activeSessions")
         .where("participantUids", "array-contains", foundGlobalUserId)
-        .where("status", "in", [...ACTIVE_GUEST_SESSION_STATUSES])
-        .limit(1)
+        .where("status", "==", STAFF_LOCK_GUEST_SESSION_STATUS)
+        .limit(25)
         .get(),
     ]);
-    if (!masterGuestSnap.empty || !participantGuestSnap.empty) {
+    const locksMaster = masterGuestSnap.docs.some((d) =>
+      isActiveSessionWithinMaxAge(d.data() as Record<string, unknown>, nowMs)
+    );
+    const locksParticipant = participantGuestSnap.docs.some((d) =>
+      isActiveSessionWithinMaxAge(d.data() as Record<string, unknown>, nowMs)
+    );
+    if (locksMaster || locksParticipant) {
       return NextResponse.json(
         { error: "ACTIVE_GUEST_SESSION_LOCK" },
         { status: 423 }

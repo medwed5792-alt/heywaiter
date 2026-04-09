@@ -51,6 +51,7 @@ import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
 } from "@/lib/active-session-waiter";
+import { isActiveSessionWithinMaxAge } from "@/lib/session-freshness";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -777,6 +778,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const sessionStatus = normalizeActiveSessionStatus(rawStatus);
 
       if (sessionStatus === "closed") {
+        setActiveSession(null);
+        setParticipants([]);
+        sawSessionDoc = false;
+        void switchLocation(venueId, null);
+        return;
+      }
+
+      if (!isActiveSessionWithinMaxAge(d, Date.now())) {
         setActiveSession(null);
         setParticipants([]);
         sawSessionDoc = false;

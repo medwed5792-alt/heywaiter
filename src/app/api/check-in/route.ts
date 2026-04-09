@@ -3,6 +3,7 @@ import type { MessengerIdentity } from "@/lib/types";
 import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization";
+import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 
 const ACTIVE_SESSION_STATUS_FILTER = [
   "check_in_success",
@@ -23,10 +24,11 @@ async function resolveCanonicalTableId(venueId: string, tableId: string): Promis
       .where("venueId", "==", v)
       .where("tableId", "in", variants.slice(0, 10))
       .where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER])
-      .limit(1)
+      .limit(25)
       .get();
-    if (!activeSnap.empty) {
-      const d = activeSnap.docs[0]!.data() as Record<string, unknown>;
+    const picked = pickNewestFreshActiveSessionDoc(activeSnap.docs);
+    if (picked) {
+      const d = picked.data() as Record<string, unknown>;
       const canonical = typeof d.tableId === "string" ? d.tableId.trim() : "";
       if (canonical) return canonical;
     }

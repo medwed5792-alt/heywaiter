@@ -12,6 +12,7 @@ import {
   type GuestIdentityInput,
 } from "@/lib/identity/global-guest-hub";
 import { resolveVenueId } from "@/lib/standards/venue-default";
+import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
@@ -139,11 +140,12 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     .where("venueId", "==", venueId)
     .where("tableId", "==", tableId)
     .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
-    .limit(1)
+    .limit(30)
     .get();
 
-  if (!existingActiveSnap.empty) {
-    const existing = existingActiveSnap.docs[0];
+  const existing = pickNewestFreshActiveSessionDoc(existingActiveSnap.docs, now.getTime());
+
+  if (existing) {
     const existingData = existing.data() as Record<string, unknown>;
     const existingMasterId = (existingData.masterId as string | undefined)?.trim();
     const isPrivate = typeof existingData.isPrivate === "boolean" ? (existingData.isPrivate as boolean) : true;
