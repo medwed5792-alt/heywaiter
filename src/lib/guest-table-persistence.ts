@@ -1,5 +1,5 @@
 /**
- * Сохранение «гость сидит за столом» между перезапусками Mini App (Telegram без start_param).
+ * Сохранение «гость сидит за столом» между перезапусками Mini App (канал-агностично: ключ = globalGuestUid).
  */
 import { collection, getDocs, limit, query, where, type Firestore } from "firebase/firestore";
 import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
@@ -9,7 +9,8 @@ const SEAT_KEY = "heywaiter_guest_seat_v1";
 export type PersistedGuestSeat = {
   venueId: string;
   tableId: string;
-  participantUid: string;
+  /** Id документа global_users — единый ключ для восстановления сессии в любой соцсети */
+  globalGuestUid: string;
   savedAt: number;
 };
 
@@ -19,9 +20,18 @@ function safeParse(raw: string | null): PersistedGuestSeat | null {
     const o = JSON.parse(raw) as Record<string, unknown>;
     const venueId = typeof o.venueId === "string" ? o.venueId.trim() : "";
     const tableId = typeof o.tableId === "string" ? o.tableId.trim() : "";
-    const participantUid = typeof o.participantUid === "string" ? o.participantUid.trim() : "";
-    if (!venueId || !tableId || !participantUid) return null;
-    return { venueId, tableId, participantUid, savedAt: typeof o.savedAt === "number" ? o.savedAt : Date.now() };
+    const globalGuestUid =
+      typeof o.globalGuestUid === "string" ? o.globalGuestUid.trim() : "";
+    const legacyParticipant =
+      typeof o.participantUid === "string" ? o.participantUid.trim() : "";
+    const uid = globalGuestUid || legacyParticipant;
+    if (!venueId || !tableId || !uid) return null;
+    return {
+      venueId,
+      tableId,
+      globalGuestUid: uid,
+      savedAt: typeof o.savedAt === "number" ? o.savedAt : Date.now(),
+    };
   } catch {
     return null;
   }
@@ -36,13 +46,13 @@ export function readPersistedGuestSeat(): PersistedGuestSeat | null {
   }
 }
 
-export function writePersistedGuestSeat(venueId: string, tableId: string, participantUid: string): void {
+export function writePersistedGuestSeat(venueId: string, tableId: string, globalGuestUid: string): void {
   if (typeof window === "undefined") return;
   try {
     const payload: PersistedGuestSeat = {
       venueId: venueId.trim(),
       tableId: tableId.trim(),
-      participantUid: participantUid.trim(),
+      globalGuestUid: globalGuestUid.trim(),
       savedAt: Date.now(),
     };
     window.localStorage.setItem(SEAT_KEY, JSON.stringify(payload));
@@ -65,9 +75,9 @@ export async function verifyGuestSeatStillActive(
   db: Firestore,
   venueId: string,
   tableId: string,
-  participantUid: string
+  globalGuestUid: string
 ): Promise<boolean> {
-  const uid = participantUid.trim();
+  const uid = globalGuestUid.trim();
   if (!uid) return false;
   const q = query(
     collection(db, "activeSessions"),

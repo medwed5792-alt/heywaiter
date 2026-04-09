@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { MessengerIdentity } from "@/lib/types";
 import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
+import { restoreGuestSessionByGlobalUid } from "@/domain/usecases/check-in/restoreGuestSessionByGlobalUid";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
@@ -51,7 +52,16 @@ async function resolveCanonicalTableId(venueId: string, tableId: string): Promis
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { venueId, tableId, tableNumber, guestId, participantUid, guestIdentity: rawGuest, deviceAnchor } = body as {
+    const {
+      venueId: rawVenue,
+      tableId: rawTable,
+      tableNumber,
+      guestId,
+      participantUid,
+      guestIdentity: rawGuest,
+      deviceAnchor,
+      globalGuestUid: rawGlobalGuestUid,
+    } = body as {
       venueId?: string;
       tableId?: string;
       tableNumber?: number;
@@ -59,17 +69,52 @@ export async function POST(request: NextRequest) {
       participantUid?: string;
       guestIdentity?: unknown;
       deviceAnchor?: string;
+      /** Восстановление без QR: global UID (id global_users), только status check_in_success и возраст сессии по createdAt */
+      globalGuestUid?: string;
     };
     const guestIdentity: MessengerIdentity | undefined =
       rawGuest && typeof rawGuest === "object" && "channel" in rawGuest && "externalId" in rawGuest
         ? (rawGuest as MessengerIdentity)
         : undefined;
 
+    const venueId = String(rawVenue ?? "").trim();
+    const tableId = String(rawTable ?? "").trim();
+    const globalGuestUidForRestore = String(rawGlobalGuestUid ?? "").trim();
+
     if (!venueId || !tableId) {
-      return NextResponse.json(
-        { error: "venueId and tableId required" },
-        { status: 400 }
-      );
+      if (!globalGuestUidForRestore) {
+        return NextResponse.json(
+          { error: "venueId and tableId required, or globalGuestUid for session restore" },
+          { status: 400 }
+        );
+      }
+      const restored = await restoreGuestSessionByGlobalUid(globalGuestUidForRestore);
+      if (!restored.ok) {
+        return NextResponse.json({
+          ok: true,
+          mode: "scanner",
+          venueId: null,
+          tableId: null,
+          globalGuestUid: globalGuestUidForRestore,
+          sessionId: null,
+          sessionStatus: null,
+          messageGuest: "Активная сессия не найдена. Отсканируйте QR стола.",
+          onboardingHint: null,
+          restoreFailed: true,
+        });
+      }
+      return NextResponse.json({
+        ok: true,
+        mode: "table",
+        venueId: restored.venueId,
+        tableId: restored.tableId,
+        globalGuestUid: globalGuestUidForRestore,
+        sessionId: restored.sessionId,
+        sessionStatus: "check_in_success",
+        messageGuest: restored.messageGuest,
+        onboardingHint: null,
+        restored: true,
+      });
     }
 
     const canonicalTableId = await resolveCanonicalTableId(venueId, tableId);

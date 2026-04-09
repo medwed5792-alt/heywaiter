@@ -1,5 +1,6 @@
 /**
  * Индекс Firestore `active_sessions` (tg_*): склейка Telegram ↔ стол для recover и фаза «ожидаем отзыв».
+ * Восстановление сессии гостя между устройствами/каналами — через `globalGuestUid` в activeSessions + `/api/check-in` (см. restoreGuestSessionByGlobalUid).
  */
 export const ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK = "AWAITING_FEEDBACK" as const;
 

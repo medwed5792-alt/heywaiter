@@ -43,6 +43,7 @@ import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import {
   clearPersistedGuestSeat,
+  readPersistedGuestSeat,
   writePersistedGuestSeat,
 } from "@/lib/guest-table-persistence";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
@@ -644,17 +645,57 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [currentLocation.venueId, currentLocation.tableId, assignedStaffId]);
 
+  const applySuccessfulTableBootstrap = useCallback(
+    async (data: {
+      venueId: string;
+      tableId: string;
+      globalGuestUid?: string;
+      onboardingHint?: string | null;
+    }) => {
+      setShowLandingScanner(false);
+      await switchLocation(data.venueId.trim(), data.tableId.trim());
+      const resolvedGlobal = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
+      if (resolvedGlobal) {
+        setGlobalGuestUid(resolvedGlobal);
+        try {
+          sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, resolvedGlobal);
+        } catch {
+          // ignore
+        }
+      }
+      const tg = getTelegramWebApp();
+      const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+      if (resolvedGlobal && initData) {
+        void fetch("/api/guest/session-context", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "link_identity",
+            initData,
+            globalGuestUid: resolvedGlobal,
+          }),
+        }).catch(() => undefined);
+      }
+      if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
+        toast(data.onboardingHint.trim(), { icon: "📌" });
+      }
+    },
+    [switchLocation]
+  );
+
   const bootstrapTableByServer = useCallback(
-    async (venueId: string, tableId: string): Promise<boolean> => {
+    async (venueId: string, tableId: string, participantUidHint?: string): Promise<boolean> => {
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
+        const participantUid =
+          (participantUidHint ?? guestIdentity.currentUid ?? "").trim() || undefined;
         const res = await fetch("/api/check-in", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             venueId,
             tableId,
-            participantUid: guestIdentity.currentUid ?? undefined,
+            participantUid,
             deviceAnchor: deviceAnchor || undefined,
           }),
         });
@@ -668,33 +709,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          setShowLandingScanner(false);
-          await switchLocation(data.venueId.trim(), data.tableId.trim());
-          const resolvedGlobal = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
-          if (resolvedGlobal) {
-            setGlobalGuestUid(resolvedGlobal);
-            try {
-              sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, resolvedGlobal);
-            } catch {
-              // ignore
-            }
-          }
-          const tg = getTelegramWebApp();
-          const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-          if (resolvedGlobal && initData) {
-            void fetch("/api/guest/session-context", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "link_identity",
-                initData,
-                globalGuestUid: resolvedGlobal,
-              }),
-            }).catch(() => undefined);
-          }
-          if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
-            toast(data.onboardingHint.trim(), { icon: "📌" });
-          }
+          await applySuccessfulTableBootstrap({
+            venueId: data.venueId,
+            tableId: data.tableId,
+            globalGuestUid: data.globalGuestUid,
+            onboardingHint: data.onboardingHint ?? null,
+          });
           return true;
         }
         setShowLandingScanner(true);
@@ -709,7 +729,50 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return false;
       }
     },
-    [guestIdentity.currentUid, switchLocation]
+    [applySuccessfulTableBootstrap, guestIdentity.currentUid, switchLocation]
+  );
+
+  const bootstrapSessionByGlobalGuestUid = useCallback(
+    async (globalGuestUid: string): Promise<boolean> => {
+      try {
+        const uid = globalGuestUid.trim();
+        if (!uid) return false;
+        const res = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ globalGuestUid: uid }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          mode?: "table" | "scanner";
+          venueId?: string | null;
+          tableId?: string | null;
+          globalGuestUid?: string;
+          onboardingHint?: string | null;
+          messageGuest?: string;
+        };
+        if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
+          await applySuccessfulTableBootstrap({
+            venueId: data.venueId,
+            tableId: data.tableId,
+            globalGuestUid: data.globalGuestUid ?? uid,
+            onboardingHint: data.onboardingHint ?? null,
+          });
+          return true;
+        }
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+        if (typeof data.messageGuest === "string" && data.messageGuest.trim()) {
+          toast.error(data.messageGuest.trim());
+        }
+        return false;
+      } catch {
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+        return false;
+      }
+    },
+    [applySuccessfulTableBootstrap, switchLocation]
   );
 
   // Единый server-side bootstrap: один запрос за итоговым состоянием.
@@ -733,11 +796,27 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const entryTable = fromUrl ?? (fromStartParam ? { venueId: fromStartParam.venueId, tableId: fromStartParam.tableId } : null);
 
       if (!entryTable) {
-        if (cancelled) return;
-        setShowLandingScanner(true);
-        setIsInitializing(false);
-        await switchLocation(null, null);
-        await refreshVisitHistory();
+        const seat = readPersistedGuestSeat();
+        let booted = false;
+        const gg = seat?.globalGuestUid?.trim();
+        if (gg) {
+          booted = await bootstrapSessionByGlobalGuestUid(gg);
+        }
+        if (!booted && seat?.venueId?.trim() && seat?.tableId?.trim()) {
+          booted = await bootstrapTableByServer(
+            seat.venueId.trim(),
+            seat.tableId.trim(),
+            seat.globalGuestUid.trim()
+          );
+        }
+        if (!booted) {
+          if (!cancelled) {
+            setShowLandingScanner(true);
+            await switchLocation(null, null);
+            await refreshVisitHistory();
+          }
+        }
+        if (!cancelled) setIsInitializing(false);
         return;
       }
 
@@ -752,16 +831,24 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     return () => {
       cancelled = true;
     };
-  }, [isSdkReady, telegramIdentityReady, searchParams, switchLocation, refreshVisitHistory, bootstrapTableByServer]);
+  }, [
+    isSdkReady,
+    telegramIdentityReady,
+    searchParams,
+    switchLocation,
+    refreshVisitHistory,
+    bootstrapTableByServer,
+    bootstrapSessionByGlobalGuestUid,
+  ]);
 
-  // Запоминаем открытый стол для повторных заходов в приложение.
+  // Запоминаем стол + global UID для бесшовного входа из любой соцсети / после перезапуска Mini App.
   useEffect(() => {
-    const uid = guestProfileUid?.trim();
+    const gg = globalGuestUid?.trim();
     const v = currentLocation.venueId?.trim();
     const t = currentLocation.tableId?.trim();
-    if (!uid || !v || !t || !activeSession) return;
-    writePersistedGuestSeat(v, t, uid);
-  }, [activeSession, guestProfileUid, currentLocation.venueId, currentLocation.tableId]);
+    if (!gg || !v || !t || !activeSession) return;
+    writePersistedGuestSeat(v, t, gg);
+  }, [activeSession, globalGuestUid, currentLocation.venueId, currentLocation.tableId]);
 
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
