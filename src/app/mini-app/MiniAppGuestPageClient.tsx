@@ -11,8 +11,10 @@ import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import { GuestCabinetPreOrderPanel } from "@/components/mini-app/GuestCabinetPreOrderPanel";
 import { GuestTableMenuGateway } from "@/components/mini-app/GuestTableMenuGateway";
 import { GuestFeedbackStars } from "@/components/mini-app/GuestFeedbackStars";
+import { GuestProfileSettings } from "@/components/mini-app/GuestProfileSettings";
+import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 
-type GuestTab = "service" | "cabinet";
+type GuestTab = "service" | "cabinet" | "profile";
 
 function GuestLandingTabs({
   tab,
@@ -23,7 +25,7 @@ function GuestLandingTabs({
 }) {
   return (
     <nav className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-      <div className="grid grid-cols-2 gap-1">
+      <div className="grid grid-cols-3 gap-1">
         <button
           type="button"
           onClick={() => onTab("service")}
@@ -43,6 +45,16 @@ function GuestLandingTabs({
         >
           <span className={`inline-flex h-2 w-2 rounded-full ${tab === "cabinet" ? "bg-slate-200" : "bg-slate-300"}`} />
           Кабинет
+        </button>
+        <button
+          type="button"
+          onClick={() => onTab("profile")}
+          className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-colors ${
+            tab === "profile" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <span className={`inline-flex h-2 w-2 rounded-full ${tab === "profile" ? "bg-blue-400" : "bg-slate-300"}`} />
+          Профиль
         </button>
       </div>
     </nav>
@@ -145,6 +157,7 @@ function GuestSession() {
     currentLocation,
     guestIdentity,
     guestProfileUid,
+    globalGuestUid,
     activeSession,
     participants,
     currentTableOrders,
@@ -193,7 +206,12 @@ function GuestSession() {
   const sessionConfirmed = Boolean(activeSession?.id);
   const sessionActionsEnabled = canAct && sessionConfirmed && !guestAwaitingTableFeedback;
   const currentUid = guestIdentity.currentUid ?? "";
-  const isMaster = Boolean(activeSession?.masterId && currentUid && activeSession.masterId === currentUid);
+  const profileUid = (globalGuestUid?.trim() || guestProfileUid?.trim() || "") || "";
+  const isMaster = Boolean(
+    activeSession?.masterId &&
+      profileUid &&
+      guestCustomerUidsMatch(activeSession.masterId, profileUid)
+  );
   const isPrivate = activeSession?.isPrivate === true;
   const ordersHidden = isPrivate && !isMaster;
   const venueIdForMenu = currentLocation.venueId?.trim() ?? "";
@@ -230,10 +248,14 @@ function GuestSession() {
             const initial = p.uid.replace(/[^a-zA-Z0-9]/g, "").slice(0, 1).toUpperCase() || "G";
             const displayName = resolveGuestDisplayName({
               uid: p.uid,
-              currentUid: currentUid || undefined,
+              currentUid: profileUid || currentUid || undefined,
             });
-            const isMe = Boolean(currentUid && p.uid === currentUid);
-            const isOwner = Boolean(activeSession?.masterId && p.uid === activeSession.masterId);
+            const isMe = Boolean(
+              profileUid && guestCustomerUidsMatch(p.uid, profileUid)
+            );
+            const isOwner = Boolean(
+              activeSession?.masterId && guestCustomerUidsMatch(p.uid, activeSession.masterId)
+            );
 
             return (
               <div
@@ -512,6 +534,7 @@ function MiniAppScreenRouter() {
     completeTableFeedbackSession,
     feedbackTargetStaffId,
     guestIdentity,
+    globalGuestUid,
     guestProfileUid,
     showLandingScanner,
   } = useGuestContext();
@@ -585,6 +608,8 @@ function MiniAppScreenRouter() {
           {guestAtTable ? (
             tab === "service" ? (
               tableSessionLoading ? <GuestTableConnectingLoader /> : <GuestSession />
+            ) : tab === "profile" ? (
+              <GuestProfileSettings />
             ) : (
               <GuestCabinet />
             )
@@ -594,6 +619,8 @@ function MiniAppScreenRouter() {
             ) : (
               <GuestTableConnectingLoader />
             )
+          ) : tab === "profile" ? (
+            <GuestProfileSettings />
           ) : (
             <GuestCabinet />
           )}
@@ -605,11 +632,11 @@ function MiniAppScreenRouter() {
       guestAwaitingTableFeedback &&
       activeSession?.id &&
       currentLocation.venueId?.trim() &&
-      guestProfileUid?.trim() ? (
+      (globalGuestUid?.trim() || guestProfileUid?.trim()) ? (
         <GuestFeedbackStars
           walletStaffId={feedbackTargetStaffId}
           venueId={currentLocation.venueId.trim()}
-          customerUid={guestProfileUid.trim()}
+          customerUid={(globalGuestUid?.trim() || guestProfileUid!.trim())}
           activeSessionId={activeSession.id}
           title="Отзыв и чаевые"
           subtitle="Заведение завершило визит. Звёзды и кнопка «Спасибо» привязаны к официанту из сессии (обновляется в реальном времени)."

@@ -8,7 +8,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { buildTelegramCustomerUid, guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 import {
   guestIdentityFromCustomerUid,
-  resolveOrCreateGlobalGuestUid,
+  resolveGlobalGuestUidForCheckIn,
   type GuestIdentityInput,
 } from "@/lib/identity/global-guest-hub";
 import { resolveVenueId } from "@/lib/standards/venue-default";
@@ -39,6 +39,8 @@ export interface CheckInGuestInput {
   guestIdentity?: MessengerIdentity | undefined;
   /** Браузерный якорь (visitor id / device id), чтобы не плодить global_users без anon-ключа */
   deviceAnchor?: string;
+  /** Уже известный global UID (cookie, хранилище клиента) — merge на входе без ожидания мессенджера */
+  knownGlobalGuestUid?: string;
 }
 
 /**
@@ -52,7 +54,8 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
   const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
 
-  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid, deviceAnchor } = input;
+  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid, deviceAnchor, knownGlobalGuestUid } =
+    input;
   const guestExternalId = guestIdentity?.externalId ?? undefined;
   const uidFromIdentity =
     guestIdentity?.channel === "telegram"
@@ -69,7 +72,10 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   if (identityInputs.length === 0 && anchor) {
     identityInputs.push({ key: "anon", value: anchor });
   }
-  const currentUid = await resolveOrCreateGlobalGuestUid(identityInputs);
+  const currentUid = await resolveGlobalGuestUidForCheckIn({
+    knownGlobalUid: knownGlobalGuestUid?.trim(),
+    identityInputs,
+  });
 
   const isSameGuestUid = (existingUid: string): boolean => {
     if (guestCustomerUidsMatch(existingUid, currentUid)) return true;

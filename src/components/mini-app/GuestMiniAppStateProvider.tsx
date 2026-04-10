@@ -48,6 +48,7 @@ import {
 } from "@/lib/guest-table-persistence";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
+import { setClientGuestCookie } from "@/lib/identity/guest-cookie";
 import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
@@ -310,8 +311,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [systemConfig, setSystemConfig] = useState<SotaSystemConfig>(DEFAULT_SYSTEM_CONFIG);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSdkReady, setIsSdkReady] = useState(false);
-  /** В Telegram ждём user id (или таймаут опроса), чтобы не «сжечь» восстановление стола на anon:… */
+  /** В Telegram ждём user id (или таймаут опроса), если нет сохранённого globalGuestUid. */
   const [telegramIdentityReady, setTelegramIdentityReady] = useState(false);
+  const [persistedSeatGlobalUid] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return readPersistedGuestSeat()?.globalGuestUid?.trim() || null;
+    } catch {
+      return null;
+    }
+  });
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
   const [telegramUid, setTelegramUid] = useState<string | null>(null);
@@ -360,6 +369,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const guestProfileUid = useMemo(
     () => globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || null,
     [globalGuestUid, guestIdentity.currentUid]
+  );
+
+  /** Ранний старт: есть сохранённый global UID — не ждём опроса Telegram user id. */
+  const bootstrapIdentityReady = useMemo(
+    () =>
+      telegramIdentityReady ||
+      Boolean(persistedSeatGlobalUid?.trim()) ||
+      Boolean(globalGuestUid?.trim()),
+    [telegramIdentityReady, persistedSeatGlobalUid, globalGuestUid]
   );
 
   // До isSdkReady initData может быть пустым; после ready() — опрос user id; затем один конвейер bootstrap.
@@ -662,6 +680,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         } catch {
           // ignore
         }
+        setClientGuestCookie(resolvedGlobal);
       }
       const tg = getTelegramWebApp();
       const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
@@ -684,11 +703,18 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   );
 
   const bootstrapTableByServer = useCallback(
-    async (venueId: string, tableId: string, participantUidHint?: string): Promise<boolean> => {
+    async (
+      venueId: string,
+      tableId: string,
+      participantUidHint?: string,
+      knownGlobalGuestUidHint?: string
+    ): Promise<boolean> => {
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
         const participantUid =
           (participantUidHint ?? guestIdentity.currentUid ?? "").trim() || undefined;
+        const knownGlobal =
+          (knownGlobalGuestUidHint ?? globalGuestUid ?? "").trim() || undefined;
         const res = await fetch("/api/check-in", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -697,6 +723,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             tableId,
             participantUid,
             deviceAnchor: deviceAnchor || undefined,
+            ...(knownGlobal ? { globalGuestUid: knownGlobal } : {}),
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -729,7 +756,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return false;
       }
     },
-    [applySuccessfulTableBootstrap, guestIdentity.currentUid, switchLocation]
+    [applySuccessfulTableBootstrap, globalGuestUid, guestIdentity.currentUid, persistedSeatGlobalUid, switchLocation]
   );
 
   const bootstrapSessionByGlobalGuestUid = useCallback(
@@ -777,7 +804,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   // Единый server-side bootstrap: один запрос за итоговым состоянием.
   useEffect(() => {
-    if (!isSdkReady || !telegramIdentityReady) return;
+    if (!isSdkReady || !bootstrapIdentityReady) return;
     const tgGate = getTelegramWebApp();
     const recvGate = normalizeBotUsername(tgGate?.initDataUnsafe?.receiver?.username);
     const staffGate = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
@@ -803,10 +830,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           booted = await bootstrapSessionByGlobalGuestUid(gg);
         }
         if (!booted && seat?.venueId?.trim() && seat?.tableId?.trim()) {
+          const seatG = seat.globalGuestUid?.trim();
           booted = await bootstrapTableByServer(
             seat.venueId.trim(),
             seat.tableId.trim(),
-            seat.globalGuestUid.trim()
+            undefined,
+            seatG
           );
         }
         if (!booted) {
@@ -833,7 +862,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [
     isSdkReady,
-    telegramIdentityReady,
+    bootstrapIdentityReady,
     searchParams,
     switchLocation,
     refreshVisitHistory,
@@ -1279,7 +1308,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           body: JSON.stringify({
             venueId,
             tableId,
-            customerUid: guestProfileUid ?? undefined,
+            customerUid: globalGuestUid?.trim() || guestProfileUid?.trim() || undefined,
             assignedStaffId: snap.assignedStaffId ?? undefined,
           }),
         });
@@ -1290,14 +1319,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [guestBlockedReason, isGuestBlocked, guestProfileUid]
+    [guestBlockedReason, isGuestBlocked, globalGuestUid, guestProfileUid]
   );
 
   const setTablePrivacyAllowJoin = useCallback(
     async (allowJoin: boolean) => {
       const v = currentLocation.venueId?.trim();
       const t = currentLocation.tableId?.trim();
-      const uid = guestProfileUid?.trim();
+      const uid = globalGuestUid?.trim() || guestProfileUid?.trim();
       if (!v || !t || !uid) {
         return { ok: false, error: "Не удалось определить стол или гостя" };
       }
@@ -1320,7 +1349,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return { ok: false, error: msg };
       }
     },
-    [currentLocation.venueId, currentLocation.tableId, guestProfileUid]
+    [currentLocation.venueId, currentLocation.tableId, globalGuestUid, guestProfileUid]
   );
 
   const requestBill = useCallback(
@@ -1333,7 +1362,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const snap = serviceHandshakeRef.current;
       const venueId = snap.venueId?.trim();
       const tableId = snap.tableId?.trim();
-      const uid = guestProfileUid?.trim();
+      const uid = globalGuestUid?.trim() || guestProfileUid?.trim();
       if (!venueId || !tableId || !uid) {
         toast.error("Не удалось определить гостя или стол");
         return;
@@ -1358,7 +1387,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
       }
     },
-    [guestProfileUid, guestBlockedReason, isGuestBlocked]
+    [globalGuestUid, guestProfileUid, guestBlockedReason, isGuestBlocked]
   );
 
   const guestAwaitingTableFeedback = useMemo(

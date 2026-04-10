@@ -42,6 +42,86 @@ export async function findGuestByExternalIdentity(
   return q.docs[0]!.id;
 }
 
+const IDENTITY_LOOKUP_ORDER: GuestIdentityKey[] = ["tg", "wa", "vk", "phone", "email", "anon"];
+
+async function mergeIdentitiesIntoExistingGuest(
+  globalUid: string,
+  identities: GuestIdentityInput[]
+): Promise<void> {
+  const normalized = identities
+    .map((x) => ({ key: x.key, value: normalizeIdentityValue(x.key, x.value) }))
+    .filter((x) => x.value);
+  if (normalized.length === 0) return;
+  const fs = getAdminFirestore();
+  const ref = fs.collection("global_users").doc(globalUid);
+  await fs.runTransaction(async (trx) => {
+    const snap = await trx.get(ref);
+    if (!snap.exists) return;
+    const prevIdentities = (snap.data()?.identities ?? {}) as Record<string, unknown>;
+    const systemRoleRaw =
+      typeof snap.data()?.systemRole === "string" ? String(snap.data()!.systemRole).trim().toUpperCase() : "";
+    const systemRole = systemRoleRaw === "STAFF" || systemRoleRaw === "ADMIN" ? systemRoleRaw : "GUEST";
+    const nextIdentities: Record<string, string> = {};
+    for (const x of normalized) nextIdentities[x.key] = x.value;
+    trx.set(
+      ref,
+      {
+        identities: { ...prevIdentities, ...nextIdentities },
+        systemRole,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+}
+
+/**
+ * Identity Hub: параллельный lookup по всем ключам, без ожидания «первого по очереди».
+ * 1) Известный globalUid — если документ есть, сразу используем и дописываем новые ключи.
+ * 2) Иначе ищем существующий профиль по любому ключу (приоритет tg → wa → vk → phone → email → anon).
+ * 3) Иначе создаём как resolveOrCreateGlobalGuestUid.
+ */
+export async function resolveGlobalGuestUidForCheckIn(args: {
+  knownGlobalUid?: string;
+  identityInputs: GuestIdentityInput[];
+}): Promise<string> {
+  const known = String(args.knownGlobalUid ?? "").trim();
+  const normalized = args.identityInputs
+    .map((x) => ({ key: x.key, value: normalizeIdentityValue(x.key, x.value) }))
+    .filter((x) => x.value);
+  const fs = getAdminFirestore();
+
+  if (known) {
+    const snap = await fs.collection("global_users").doc(known).get();
+    if (snap.exists) {
+      await mergeIdentitiesIntoExistingGuest(known, normalized);
+      return known;
+    }
+  }
+
+  if (normalized.length === 0) {
+    return "";
+  }
+
+  const hits = await Promise.all(
+    normalized.map(async (idt) => ({
+      key: idt.key,
+      value: idt.value,
+      uid: await findGuestByExternalIdentity(idt.key, idt.value),
+    }))
+  );
+
+  for (const key of IDENTITY_LOOKUP_ORDER) {
+    const row = hits.find((h) => h.key === key && h.uid);
+    if (row?.uid) {
+      await mergeIdentitiesIntoExistingGuest(row.uid, normalized);
+      return row.uid;
+    }
+  }
+
+  return resolveOrCreateGlobalGuestUid(normalized);
+}
+
 export async function resolveOrCreateGlobalGuestUid(identities: GuestIdentityInput[]): Promise<string> {
   const normalized = identities
     .map((x) => ({ key: x.key, value: normalizeIdentityValue(x.key, x.value) }))

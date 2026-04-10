@@ -5,6 +5,7 @@ import { restoreGuestSessionByGlobalUid } from "@/domain/usecases/check-in/resto
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { HEYWAITER_GUEST_COOKIE } from "@/lib/identity/guest-cookie";
 
 const ACTIVE_SESSION_STATUS_FILTER = [
   "check_in_success",
@@ -119,6 +120,9 @@ export async function POST(request: NextRequest) {
 
     const canonicalTableId = await resolveCanonicalTableId(venueId, tableId);
 
+    const cookieGid = request.cookies.get(HEYWAITER_GUEST_COOKIE)?.value?.trim() ?? "";
+    const knownGlobalForTable = globalGuestUidForRestore || cookieGid || "";
+
     const result = await checkInGuest({
       venueId,
       tableId: canonicalTableId,
@@ -127,6 +131,7 @@ export async function POST(request: NextRequest) {
       participantUid,
       guestIdentity,
       deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
+      knownGlobalGuestUid: knownGlobalForTable || undefined,
     });
 
     if (result.status === "check_in_success") {
