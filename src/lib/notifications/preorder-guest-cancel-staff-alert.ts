@@ -40,7 +40,7 @@ export async function notifyStaffPreorderGuestCancelled(args: PreorderGuestCance
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  const tgIds = await getTelegramIdsForStaffIds(args.firestore, targetUids);
+  const tgIds = await getTelegramIdsForStaffIds(args.firestore, venueId, targetUids);
   try {
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
     const token =

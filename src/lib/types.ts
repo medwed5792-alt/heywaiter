@@ -381,11 +381,13 @@ export interface Affiliation {
   venueId: string;
   /** Должность (ключ: sommelier, waiter, …) */
   role: string;
-  /** @deprecated Для определения «в штате» использовать только staff.active в коллекции staff (Единый Словарь V.2.0). */
+  /** @deprecated Использовать staffVenueActive / документ venues/{venueId}/staff. */
   status: AffiliationStatus;
   position?: string;
   onShift?: boolean;
   assignedTableIds?: string[];
+  /** Id документа в venues/{venueId}/staff/{staffFirestoreId} (часто `${venueId}_${globalUserId}`). */
+  staffFirestoreId?: string;
 }
 
 /** Медкнижка: часть «трудовой книжки», необязательные поля. */
@@ -425,6 +427,12 @@ export interface GlobalUser {
   updatedAt?: unknown;
   /** SOTA-ID сотрудника (S + подтип + 6 Base36), дублируется в staff при необходимости. */
   sotaId?: string;
+  /** Legacy id корневого staff-документа для резолва и чаевых (денормализация). */
+  staffLookupIds?: string[];
+  /** Заведения, где сотрудник числится в команде (штат). */
+  staffVenueActive?: string[];
+  /** Заведения, где сотрудник сейчас на смене (денорм., обновляется shift API). */
+  staffVenueOnShift?: string[];
 }
 
 /** Цифровой паспорт сотрудника (вид в контексте заведения). Для /admin/team собирается из global_users + staff. */

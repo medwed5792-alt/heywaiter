@@ -44,7 +44,7 @@ export async function notifyStaffAboutMenuGroupStopTime(args: MenuGroupStopTimeS
     updatedAt: FieldValue.serverTimestamp(),
   });
 
-  const tgIds = await getTelegramIdsForStaffIds(args.firestore, targetUids);
+  const tgIds = await getTelegramIdsForStaffIds(args.firestore, venueId, targetUids);
   try {
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
     const token = (await getBotTokenFromStore("telegram", "staff")) || process.env.TELEGRAM_STAFF_TOKEN;

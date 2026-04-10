@@ -49,6 +49,14 @@
         { "fieldPath": "venueId", "order": "ASCENDING" },
         { "fieldPath": "sessionId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "staff",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "tgId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

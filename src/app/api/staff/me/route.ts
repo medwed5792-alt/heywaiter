@@ -29,8 +29,7 @@ const STAFF_LOCK_GUEST_SESSION_STATUS = "check_in_success" as const;
  * Универсальный поиск:
  * 1) global_users по identities.<channelKey> (tg/wa/vk/viber/inst/wechat/fb/line)
  * 2) Fallback: если по соц-ID нет — ищем global_users по identities.phone и привязываем текущий соц-ID в identities
- * 3) staff на venue по userId
- * Если staff документа нет — не создаём новые записи (чтобы не плодить клонов).
+ * 3) Доступ к venue по affiliations в global_users; staffId = `${venueId}_${userId}`; onShift из venues/.../staff.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -101,39 +100,6 @@ export async function GET(request: NextRequest) {
               ? (identities.tg as string).trim()
               : "";
         if (!platformId && idFromIdent) platformId = idFromIdent;
-      }
-      if (!foundGlobalUserId) {
-        const bySotaStaff = await firestore
-          .collection("staff")
-          .where("venueId", "==", venueId)
-          .where("sotaId", "==", sotaIdParam)
-          .limit(1)
-          .get();
-        if (!bySotaStaff.empty) {
-          const sd = bySotaStaff.docs[0].data() ?? {};
-          const uid = typeof sd.userId === "string" ? sd.userId.trim() : "";
-          if (uid) {
-            foundGlobalUserId = uid;
-            const PLATFORM_STAFF_FIELD: Partial<Record<string, string>> = {
-              tg: "tgId",
-              wa: "waId",
-              vk: "vkId",
-              viber: "viberId",
-              wechat: "wechatId",
-              inst: "instagramId",
-              fb: "facebookId",
-              line: "lineId",
-            };
-            const sf = PLATFORM_STAFF_FIELD[key];
-            const ext =
-              sf && typeof sd[sf] === "string"
-                ? (sd[sf] as string).trim()
-                : typeof sd.tgId === "string"
-                  ? sd.tgId.trim()
-                  : "";
-            if (!platformId && ext) platformId = ext;
-          }
-        }
       }
     }
 
@@ -222,108 +188,34 @@ export async function GET(request: NextRequest) {
         a?.venueId === venueId && a?.status !== "former"
     );
 
-    // Дополнительно (совместимость): иногда может существовать документ venues/.../staff/{socialId}
-    const venueStaffBySocialSnap =
-      platformId != null && platformId !== ""
-        ? await firestore
-            .collection("venues")
-            .doc(venueId)
-            .collection("staff")
-            .doc(platformId)
-            .get()
-        : null;
-
-    if (!hasVenueByAffiliation && !(venueStaffBySocialSnap?.exists === true)) {
+    if (!hasVenueByAffiliation) {
       return NextResponse.json(
         { error: "Сотрудник не найден для этого заведения" },
         { status: 404 }
       );
     }
 
-    // 3) Локальная запись сотрудника (root staff doc для этого venue)
-    // Ищем staff в корневой коллекции по venueId + userId (global user id),
-    // т.к. именно этот staffId дальше используется для onShift в venues/.../staff/{staffId}.
-    let staffSnap = await firestore
-      .collection("staff")
-      .where("venueId", "==", venueId)
-      .where("userId", "==", foundGlobalUserId)
-      .limit(1)
-      .get();
+    // staffId для UI/столов: канон `${venueId}_${globalUserId}`; совпадает с venues/{v}/staff/{staffDocId}.
+    const staffDocId = `${venueId}_${foundGlobalUserId}`;
+    const userId = foundGlobalUserId;
 
-    // Фолбэк на совместимость по внешнему ID в staff документе (tgId/waId/vkId/...)
-    if (staffSnap.empty && platformId) {
-      const PLATFORM_STAFF_FIELD: Partial<Record<typeof key, string>> = {
-        tg: "tgId",
-        wa: "waId",
-        vk: "vkId",
-        viber: "viberId",
-        wechat: "wechatId",
-        inst: "instagramId",
-        fb: "facebookId",
-        line: "lineId",
-      };
-
-      const field = PLATFORM_STAFF_FIELD[key];
-      if (field) {
-        staffSnap = await firestore
-          .collection("staff")
-          .where("venueId", "==", venueId)
-          .where(field, "==", platformId)
-          .limit(1)
-          .get();
-      }
-
-      // Ещё один совместимый вариант: external identities внутри staff
-      if (staffSnap.empty) {
-        staffSnap = await firestore
-          .collection("staff")
-          .where("venueId", "==", venueId)
-          .where(`identities.${key}`, "==", platformId)
-          .limit(1)
-          .get();
-      }
-    }
-
-    if (staffSnap.empty) {
-      return NextResponse.json(
-        { error: "Сотрудник не найден для этого заведения" },
-        { status: 404 }
-      );
-    }
-
-    const staffDoc = staffSnap.docs[0];
-    const staffDocId = staffDoc.id;
-    const staffData = staffDoc.data() ?? {};
-    const userId = (staffData.userId as string | undefined) ?? foundGlobalUserId;
-
-    const staffSotaId =
-      typeof staffData.sotaId === "string" && staffData.sotaId.trim() ? staffData.sotaId.trim() : null;
+    const staffSotaId = globalSotaId;
 
     let responseSotaId = globalSotaId ?? staffSotaId;
 
-    // Soft backfill: если у активного сотрудника отсутствует SOTA-ID — создаём на лету.
-    if (!globalSotaId || !staffSotaId) {
-      const shouldGenerate =
-        !globalSotaId && !staffSotaId && (hasVenueByAffiliation || venueStaffBySocialSnap?.exists === true);
-      const targetSotaId = globalSotaId ?? staffSotaId ?? (shouldGenerate ? generateSotaId("S", "W") : null);
+    // Soft backfill SOTA только в global_users.
+    if (!globalSotaId) {
+      const shouldGenerate = hasVenueByAffiliation;
+      const targetSotaId = globalSotaId ?? (shouldGenerate ? generateSotaId("S", "W") : null);
 
       if (targetSotaId) {
         try {
-          if (!globalSotaId) {
-            await globalUserRef.set(
-              { sotaId: targetSotaId, updatedAt: FieldValue.serverTimestamp() },
-              { merge: true }
-            );
-          }
-          if (!staffSotaId) {
-            await staffDoc.ref.set(
-              { sotaId: targetSotaId, updatedAt: FieldValue.serverTimestamp() },
-              { merge: true }
-            );
-          }
+          await globalUserRef.set(
+            { sotaId: targetSotaId, updatedAt: FieldValue.serverTimestamp() },
+            { merge: true }
+          );
           responseSotaId = targetSotaId;
         } catch (e) {
-          // Не ломаем вход при проблемах бэкофила.
           console.warn("[staff/me] SOTA backfill failed:", e);
         }
       }

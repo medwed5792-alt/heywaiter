@@ -55,20 +55,6 @@ export async function GET(request: NextRequest) {
         { merge: true }
       );
 
-      // Синхронизируем в staff для всех активных affiliation (если такие документы существуют).
-      for (const aff of affiliations) {
-        const a = aff as { status?: string; venueId?: string };
-        if (a.status === "former") continue;
-        const venueId = typeof a.venueId === "string" ? a.venueId.trim() : "";
-        if (!venueId) continue;
-        const staffDocId = `${venueId}_${doc.id}`;
-        const staffRef = firestore.collection("staff").doc(staffDocId);
-        await staffRef.set(
-          { sotaId: newSotaId, updatedAt: FieldValue.serverTimestamp() },
-          { merge: true }
-        );
-      }
-
       sotaId = newSotaId;
     }
 

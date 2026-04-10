@@ -51,7 +51,7 @@ export async function notifyStaffAboutStopList(args: NotifyStaffAboutStopListArg
     });
   }
 
-  const tgIds = await getTelegramIdsForStaffIds(args.firestore, targetUids);
+  const tgIds = await getTelegramIdsForStaffIds(args.firestore, venueId, targetUids);
   const combined = lines.join("\n");
   try {
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");

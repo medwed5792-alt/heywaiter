@@ -8,26 +8,24 @@ import type { ServiceRole } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import { sendMessage } from "@/adapters/telegram/telegramApi";
+import { resolveStaffFirestoreIdToGlobalUser } from "@/lib/identity/global-user-staff-bridge";
 
 async function getTelegramIdsForStaff(
   firestore: Firestore,
+  venueId: string,
   staffIds: string[]
 ): Promise<Set<string>> {
+  const vid = venueId.trim();
   const tgIds = new Set<string>();
   for (const sid of staffIds) {
-    const staffSnap = await firestore.collection("staff").doc(sid).get();
-    if (!staffSnap.exists) continue;
-    const staffData = staffSnap.data() ?? {};
-    const userId = (staffData.userId as string) || sid;
-    let tgId: string | null =
-      (staffData.tgId as string) || (staffData.identity as { externalId?: string })?.externalId || null;
-    const globalSnap = await firestore.collection("global_users").doc(userId).get();
-    if (globalSnap.exists) {
-      const globalData = globalSnap.data() ?? {};
-      const identities = globalData.identities as { tg?: string } | undefined;
-      if (identities?.tg) tgId = identities.tg;
-    }
-    if (tgId && tgId.trim()) tgIds.add(tgId.trim());
+    const resolved = vid ? await resolveStaffFirestoreIdToGlobalUser(firestore, sid, vid) : null;
+    if (!resolved) continue;
+    const globalSnap = await firestore.collection("global_users").doc(resolved.globalUserId).get();
+    if (!globalSnap.exists) continue;
+    const globalData = globalSnap.data() ?? {};
+    const identities = globalData.identities as { tg?: string } | undefined;
+    const tgId = identities?.tg?.trim();
+    if (tgId) tgIds.add(tgId);
   }
   return tgIds;
 }
@@ -45,18 +43,20 @@ export async function getOperationalWaiterForTable(
 }
 
 async function getLprStaffIds(firestore: Firestore, venueId: string): Promise<string[]> {
+  const vid = venueId.trim();
+  if (!vid) return [];
   const snap = await firestore
-    .collection("staff")
-    .where("venueId", "==", venueId)
-    .where("active", "==", true)
-    .where("onShift", "==", true)
+    .collection("global_users")
+    .where("staffVenueOnShift", "array-contains", vid)
     .get();
   const ids: string[] = [];
-  snap.docs.forEach((d) => {
+  for (const d of snap.docs) {
     const data = d.data();
-    const role = (data.position as string) ?? (data.serviceRole as string) ?? (data.role as string);
-    if (role && LPR_ROLES.includes(role as ServiceRole)) ids.push(d.id);
-  });
+    const aff = Array.isArray(data.affiliations) ? data.affiliations : [];
+    const row = aff.find((a: { venueId?: string }) => a?.venueId === vid);
+    const role = (row?.role as string) ?? (row?.position as string) ?? "";
+    if (role && LPR_ROLES.includes(role as ServiceRole)) ids.push(`${vid}_${d.id}`);
+  }
   return ids;
 }
 
@@ -107,7 +107,7 @@ export async function pushCallWaiterNotification(input: PushCallWaiterInput): Pr
     isOrphan = true;
   }
 
-  const tgIds = await getTelegramIdsForStaff(firestore, targetUids);
+  const tgIds = await getTelegramIdsForStaff(firestore, venueId, targetUids);
   const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
   const token =
     (await getBotTokenFromStore("telegram", "staff")) || process.env.TELEGRAM_STAFF_TOKEN;

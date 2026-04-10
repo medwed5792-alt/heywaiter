@@ -435,7 +435,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const byVenue = new Map<string, GuestVisitEntry>();
       for (const uid of uidSet) {
         const q = query(
-          collection(db, "users", uid, "visits"),
+          collection(db, "global_users", uid, "visits"),
           orderBy("lastVisitAt", "desc"),
           limit(5)
         );

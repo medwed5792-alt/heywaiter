@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
     const firestore = getAdminFirestore();
     const snap = await firestore
-      .collection("staff")
+      .collectionGroup("staff")
       .where("tgId", "==", telegramId)
       .where("status", "==", "pending_offer")
       .get();

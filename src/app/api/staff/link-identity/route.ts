@@ -65,59 +65,74 @@ export async function POST(request: NextRequest) {
 
     const globalData = globalSnap.data() ?? {};
     const identities: UnifiedIdentities = { ...(globalData.identities as UnifiedIdentities), [key]: platformId };
-    await globalRef.update({
-      identities,
-      systemRole: "STAFF",
-      updatedAt: FieldValue.serverTimestamp(),
-    });
 
     const staffDocId = `${venueId}_${foundUserId}`;
-    const staffRef = firestore.collection("staff").doc(staffDocId);
-    let staffSnap = await staffRef.get();
-
-    if (!staffSnap.exists) {
-      const affiliations: Affiliation[] = Array.isArray(globalData.affiliations) ? [...globalData.affiliations] : [];
-      const hasAff = affiliations.some((a: { venueId: string }) => a.venueId === venueId);
-      if (!hasAff) {
-        affiliations.push({
-          venueId,
-          role: "waiter",
-          status: "active",
-          onShift: false,
-        });
-        await globalRef.update({ affiliations });
-      }
-      await staffRef.set({
+    const affiliations: Affiliation[] = Array.isArray(globalData.affiliations) ? [...globalData.affiliations] : [];
+    const hasAff = affiliations.some((a: { venueId: string }) => a.venueId === venueId);
+    if (!hasAff) {
+      affiliations.push({
         venueId,
-        userId: foundUserId,
         role: "waiter",
-        primaryChannel: platform === "tg" || key === "tg" ? "telegram" : "telegram",
-        identity: globalData.identity ?? { channel: "telegram", externalId: platformId, locale: "ru" },
+        status: "active",
         onShift: false,
-        active: true,
-        ...(key === "tg" && { tgId: platformId }),
-        firstName: globalData.firstName ?? null,
-        lastName: globalData.lastName ?? null,
-        updatedAt: FieldValue.serverTimestamp(),
+        staffFirestoreId: staffDocId,
       });
-      staffSnap = await staffRef.get();
     } else {
-      const staffData = staffSnap.data() ?? {};
-      const updates: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
-      if (key === "tg" && platformId) updates.tgId = platformId;
-      if (Object.keys(updates).length > 1) await staffRef.update(updates);
+      const ix = affiliations.findIndex((a) => a.venueId === venueId);
+      if (ix >= 0) {
+        affiliations[ix] = { ...affiliations[ix], staffFirestoreId: staffDocId };
+      }
     }
 
-    if (!staffSnap.exists) {
-      return NextResponse.json({ error: "Не удалось привязать к заведению" }, { status: 500 });
+    const prevLookup: string[] = Array.isArray(globalData.staffLookupIds) ? globalData.staffLookupIds : [];
+    const lookup = [...new Set([...prevLookup, staffDocId])];
+    const prevActive: string[] = Array.isArray(globalData.staffVenueActive) ? globalData.staffVenueActive : [];
+    const venuesActive = [...new Set([...prevActive, venueId])];
+
+    await globalRef.set(
+      {
+        identities,
+        systemRole: "STAFF",
+        affiliations,
+        staffLookupIds: lookup,
+        staffVenueActive: venuesActive,
+        staffVenueOnShift: Array.isArray(globalData.staffVenueOnShift) ? globalData.staffVenueOnShift : [],
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
+    const vsSnap = await venueStaffRef.get();
+    const vs = vsSnap.data() ?? {};
+    let onShift = vs.onShift === true;
+    if (!vsSnap.exists) {
+      await venueStaffRef.set(
+        {
+          venueId,
+          userId: foundUserId,
+          role: "waiter",
+          primaryChannel: key === "tg" ? "telegram" : "telegram",
+          identity: globalData.identity ?? { channel: "telegram", externalId: platformId, locale: "ru" },
+          onShift: false,
+          active: true,
+          tgId: key === "tg" ? platformId : vs.tgId,
+          firstName: globalData.firstName ?? null,
+          lastName: globalData.lastName ?? null,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      onShift = false;
+    } else if (key === "tg" && platformId) {
+      await venueStaffRef.set({ tgId: platformId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     }
 
-    const d = staffSnap.data() ?? {};
     return NextResponse.json({
       userId: foundUserId,
-      staffId: staffSnap.id,
-      venueId: d.venueId ?? venueId,
-      onShift: d.onShift === true,
+      staffId: staffDocId,
+      venueId,
+      onShift,
     });
   } catch (err) {
     console.error("[staff/link-identity]", err);

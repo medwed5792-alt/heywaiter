@@ -115,7 +115,7 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
 
   async function recordGuestVisit() {
     if (!currentUid) return;
-    const ref = firestore.doc(`users/${currentUid}/visits/${venueId}`);
+    const ref = firestore.collection("global_users").doc(currentUid).collection("visits").doc(venueId);
     const prev = await ref.get();
     shouldShowPinHint = !prev.exists;
     await ref.set(
@@ -324,17 +324,18 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   }) {
     let name = args.guestNameFromBooking ?? "Гость";
     if (args.guestId) {
-      const guestSnap = await firestore
-        .collection("venues")
-        .doc(VENUE_EVENTS_ID)
-        .collection("guests")
-        .doc(args.guestId)
-        .get();
-
+      const guestSnap = await firestore.collection("global_users").doc(args.guestId).get();
       if (guestSnap.exists) {
         const d = guestSnap.data() as Record<string, unknown> | undefined;
+        const first = (d?.firstName as string) || "";
+        const last = (d?.lastName as string) || "";
+        const fromName = [first, last].filter(Boolean).join(" ").trim();
+        const identities = (d?.identities as Record<string, string> | undefined) ?? {};
         name =
-          (d?.name as string) || (d?.phone as string) || name;
+          fromName ||
+          (d?.name as string) ||
+          (identities.phone ? String(identities.phone) : "") ||
+          name;
       }
     }
 

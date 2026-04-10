@@ -36,7 +36,7 @@ async function sendTelegram(
 
 /**
  * POST /api/admin/staff/offer
- * 1) Создаёт запись в venues/[venueId]/staff и в корне staff со статусом pending_offer.
+ * 1) Создаёт запись в venues/[venueId]/staff со статусом pending_offer (без корневой коллекции staff).
  * 2) Потом пробует отправить уведомление в Telegram. При ошибке Telegram — не блокируем, возвращаем success с пометкой.
  * Body: { userId, venueId, tgId, firstName?, lastName?, venueName? }
  */
@@ -64,13 +64,12 @@ export async function POST(request: NextRequest) {
     const firestore = getAdminFirestore();
     const staffDocId = `${venueId}_${userId}`;
 
-    // Проверка существующей записи в корне staff
-    const rootStaffRef = firestore.collection("staff").doc(staffDocId);
-    const existing = await rootStaffRef.get();
-    console.log("[offer] Root staff exists:", existing.exists);
+    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
+    const existingVenueStaff = await venueStaffRef.get();
+    console.log("[offer] Venue staff exists:", existingVenueStaff.exists);
 
-    if (existing.exists) {
-      const d = existing.data() ?? {};
+    if (existingVenueStaff.exists) {
+      const d = existingVenueStaff.data() ?? {};
       if (d.active === true) {
         console.log("[offer] Already active");
         return NextResponse.json(
@@ -102,16 +101,10 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     };
 
-    // 1) Сначала запись в venues/[venueId]/staff
-    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffDocId);
     await venueStaffRef.set(staffPayload);
     console.log("[offer] Written to venues/%s/staff/%s", venueId, staffDocId);
 
-    // 2) Запись в корень staff (для callback бота и списков)
-    await rootStaffRef.set(staffPayload);
-    console.log("[offer] Written to staff/%s", staffDocId);
-
-    // 3) Отправка в Telegram — таймаут 2 с; при ошибке/таймауте не блокируем ответ
+    // Отправка в Telegram — таймаут 2 с; при ошибке/таймауте не блокируем ответ
     let telegramSent = false;
     try {
       let token = await getBotTokenFromStore("telegram", "staff");

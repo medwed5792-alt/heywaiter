@@ -1,5 +1,5 @@
 /**
- * Unified customer UID (cartId / users/.../visits / CRM): один контракт для всех каналов.
+ * Unified customer UID (cartId / global_users/.../visits / CRM): один контракт для всех каналов.
  * Канонический формат: tg: | wa: | vk: | anon: (короткие префиксы, без привязки к конкретному мессенджеру в коде потребителя).
  * Legacy: telegram_user_id: и anonymous_id: — поддерживаются в Firestore rules и при миграции визитов.
  */
@@ -83,7 +83,7 @@ export function guestCustomerUidsMatch(a: string, b: string): boolean {
   return false;
 }
 
-/** Кандидаты путей users/{uid}/visits при смене формата UID (tg: ↔ telegram_user_id:). */
+/** Кандидаты путей global_users/{uid}/visits при смене формата UID (tg: ↔ telegram_user_id:). */
 export function visitHistoryUidCandidates(primaryUid: string): string[] {
   const u = primaryUid.trim();
   if (!u) return [];

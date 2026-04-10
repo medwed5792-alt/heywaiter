@@ -5,6 +5,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
 import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
+import { resolveStaffFirestoreIdToGlobalUser } from "@/lib/identity/global-user-staff-bridge";
 
 type Body = {
   venueId?: string;
@@ -127,16 +128,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const staffSnap = await firestore.collection("staff").doc(candidateStaffId).get();
-    if (!staffSnap.exists) {
+    const resolvedStaff = await resolveStaffFirestoreIdToGlobalUser(
+      firestore,
+      candidateStaffId,
+      venueId
+    );
+    if (!resolvedStaff) {
       return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
     }
-    const staff = (staffSnap.data() ?? {}) as Record<string, unknown>;
-    const staffUnifiedId = typeof staff.userId === "string" ? staff.userId.trim() : "";
-    if (!staffUnifiedId) {
-      return NextResponse.json({ error: "Не найден unified_id сотрудника" }, { status: 400 });
-    }
-    const staffSotaId = typeof staff.sotaId === "string" ? staff.sotaId.trim() : null;
+    const staffUnifiedId = resolvedStaff.globalUserId;
+    const staffSotaId = resolvedStaff.sotaId;
 
     const walletRef = firestore.collection("staff_wallets").doc(staffUnifiedId);
     const txRef = walletRef.collection("transactions").doc();

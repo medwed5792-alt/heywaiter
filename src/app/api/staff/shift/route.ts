@@ -3,8 +3,12 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
-import type { DocumentReference, Firestore } from "firebase-admin/firestore";
+import type { Firestore, QuerySnapshot } from "firebase-admin/firestore";
 import { DEFAULT_VENUE_ID, resolveVenueId } from "@/lib/standards/venue-default";
+import {
+  resolveStaffFirestoreIdToGlobalUser,
+  syncGlobalUserShiftVenues,
+} from "@/lib/identity/global-user-staff-bridge";
 
 /** При завершении смены — очистить waiterId у всех столов, где сотрудник был назначен с Дашборда */
 async function clearWaiterFromTables(
@@ -43,8 +47,39 @@ function nowHHmm(): string {
 function factHoursFromCheckInOut(checkIn: string, checkOut: string): number {
   const [sh, sm] = checkIn.split(":").map(Number);
   const [eh, em] = checkOut.split(":").map(Number);
-  const m = (eh * 60 + em) - (sh * 60 + sm);
+  const m = eh * 60 + em - (sh * 60 + sm);
   return m <= 0 ? 0 : Math.round((m / 60) * 10) / 10;
+}
+
+function shortDisplayNameFromGlobalUser(d: Record<string, unknown>): string {
+  const gFirst = (d.firstName as string | undefined) ?? "";
+  const gLast = (d.lastName as string | undefined) ?? "";
+  const identityName =
+    ((d.identity as { displayName?: string })?.displayName as string | undefined) ??
+    ((d.identity as { name?: string })?.name as string | undefined) ??
+    "";
+  const full = [gFirst, gLast].filter(Boolean).join(" ").trim() || String(identityName).trim();
+  return full ? full.split(" ")[0]! : "Сотрудник";
+}
+
+async function scheduleEntriesForStaffCandidates(
+  firestore: Firestore,
+  venueId: string,
+  staffIds: string[]
+): Promise<QuerySnapshot> {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const sid of staffIds) {
+    const s = sid?.trim();
+    if (!s) continue;
+    const snap = await firestore
+      .collection("scheduleEntries")
+      .where("staffId", "==", s)
+      .where("venueId", "==", venueId)
+      .where("slot.date", "==", today)
+      .get();
+    if (!snap.empty) return snap;
+  }
+  return firestore.collection("scheduleEntries").where("venueId", "==", "__none__").limit(0).get();
 }
 
 /**
@@ -54,12 +89,14 @@ function factHoursFromCheckInOut(checkIn: string, checkOut: string): number {
  *
  * - start: onShift = true, shiftStartTime; при наличии смены на сегодня в scheduleEntries — пишем checkIn (HH:mm).
  * - stop: onShift = false, shiftEndTime; при наличии смены с checkIn — пишем checkOut и factHours (для План/Факт).
+ *
+ * Источник идентичности — global_users; venues/{venueId}/staff/{venueId}_{globalUserId}.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const staffIdBody = (body.staffId as string)?.trim();
-    const userId = (body.userId as string)?.trim();
+    const userIdBody = (body.userId as string)?.trim();
     const venueId = resolveVenueId(typeof body.venueId === "string" ? body.venueId : undefined);
     const action = (body.action as string)?.trim();
 
@@ -71,15 +108,28 @@ export async function POST(request: NextRequest) {
     }
 
     const firestore = getAdminFirestore();
-    let staffRef: DocumentReference;
-    let staffDocId: string;
+    const staffVenueId = (venueId && venueId.trim()) || DEFAULT_VENUE_ID;
+    const vid = staffVenueId.trim();
 
-    if (staffIdBody) {
-      staffRef = firestore.collection("staff").doc(staffIdBody);
-      staffDocId = staffIdBody;
-    } else if (userId) {
-      staffDocId = `${venueId}_${userId}`;
-      staffRef = firestore.collection("staff").doc(staffDocId);
+    let globalUserId: string | null = null;
+    let legacyStaffIdForSchedule: string | null = null;
+
+    if (userIdBody) {
+      const g = await firestore.collection("global_users").doc(userIdBody).get();
+      if (!g.exists) {
+        return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
+      }
+      globalUserId = userIdBody;
+      const canonical = `${vid}_${globalUserId}`;
+      if (staffIdBody && staffIdBody !== canonical) legacyStaffIdForSchedule = staffIdBody;
+    } else if (staffIdBody) {
+      const resolved = await resolveStaffFirestoreIdToGlobalUser(firestore, staffIdBody, vid);
+      if (!resolved) {
+        return NextResponse.json({ error: "Запись сотрудника не найдена" }, { status: 404 });
+      }
+      globalUserId = resolved.globalUserId;
+      const canonical = `${vid}_${resolved.globalUserId}`;
+      if (staffIdBody !== canonical) legacyStaffIdForSchedule = staffIdBody;
     } else {
       return NextResponse.json(
         { error: "Укажите staffId либо userId" },
@@ -87,156 +137,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let snap = await staffRef.get();
-    const staffVenueId =
-      (venueId && venueId.trim()) || (snap.exists ? (snap.data()?.venueId as string) : null) || DEFAULT_VENUE_ID;
+    const staffDocId = `${vid}_${globalUserId}`;
+    const scheduleStaffIds = [...new Set([staffDocId, legacyStaffIdForSchedule].filter(Boolean) as string[])];
 
-    if (!snap.exists) {
-      if (staffIdBody) {
-        return NextResponse.json(
-          { error: "Запись сотрудника не найдена" },
-          { status: 404 }
-        );
-      }
-      const alt = await firestore
-        .collection("staff")
-        .where("venueId", "==", venueId)
-        .where("userId", "==", userId)
-        .limit(1)
-        .get();
-      if (alt.empty) {
-        return NextResponse.json(
-          { error: "Запись сотрудника для этого заведения не найдена" },
-          { status: 404 }
-        );
-      }
-      const docRef = alt.docs[0].ref;
-      const legacyId = alt.docs[0].id;
-      const staffData = alt.docs[0].data() ?? {};
-      const firstName = (staffData.firstName as string) ?? "";
-      const lastName = (staffData.lastName as string) ?? "";
-      let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+    const globalSnap = await firestore.collection("global_users").doc(globalUserId).get();
+    const displayName = shortDisplayNameFromGlobalUser(globalSnap.data() ?? {});
 
-      // Если в локальном документе нет имени — подтягиваем имя из global_users.
-      if (!displayName && userId) {
-        const globalSnap = await firestore.collection("global_users").doc(userId).get();
-        if (globalSnap.exists) {
-          const d = globalSnap.data() ?? {};
-          const gFirst = (d.firstName as string | undefined) ?? "";
-          const gLast = (d.lastName as string | undefined) ?? "";
-          const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
-          displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
-        }
-      }
-      displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
+    const venueStaffRef = firestore.collection("venues").doc(vid).collection("staff").doc(staffDocId);
 
-      if (action === "start") {
-        // Для venues/{venue}/staff doc-id используем staffId (корневой staff doc id).
-        // Поле userId внутри документа оставляем глобальным userId.
-        const resolvedUserIdForVenue = legacyId;
-        const venueStaffRef = firestore
-          .collection("venues")
-          .doc(venueId)
-          .collection("staff")
-          .doc(resolvedUserIdForVenue);
-        await venueStaffRef.set(
-          {
-            onShift: true,
-            shiftStartTime: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-            userId,
-            active: true,
-          },
-          { merge: true }
-        );
-        if (venueId) {
-          const today = new Date().toISOString().slice(0, 10);
-          const entriesSnap = await firestore
-            .collection("scheduleEntries")
-            .where("staffId", "==", legacyId)
-            .where("venueId", "==", venueId)
-            .where("slot.date", "==", today)
-            .get();
-          const toSet = entriesSnap.docs.find((d) => !d.data().checkIn);
-          if (toSet) await toSet.ref.update({ checkIn: nowHHmm(), updatedAt: FieldValue.serverTimestamp() });
-        }
-        await firestore
-          .collection("venues")
-          .doc(venueId)
-          .collection("events")
-          .add({
-            type: "shift",
-            message: `${displayName} заступил на смену`,
-            staffId: legacyId,
-            createdAt: FieldValue.serverTimestamp(),
-          });
-      } else {
-        if (venueId) {
-          const today = new Date().toISOString().slice(0, 10);
-          const entriesSnap = await firestore
-            .collection("scheduleEntries")
-            .where("staffId", "==", legacyId)
-            .where("venueId", "==", venueId)
-            .where("slot.date", "==", today)
-            .get();
-          const toSet = entriesSnap.docs.find((d) => d.data().checkIn && !d.data().checkOut);
-          if (toSet) {
-            const data = toSet.data();
-            const cin = (data.checkIn as string) || nowHHmm();
-            await toSet.ref.update({
-              checkOut: nowHHmm(),
-              factHours: factHoursFromCheckInOut(cin, nowHHmm()),
-              updatedAt: FieldValue.serverTimestamp(),
-            });
-          }
-        }
-        const resolvedUserIdForVenue = legacyId;
-        const venueStaffRef = firestore
-          .collection("venues")
-          .doc(venueId)
-          .collection("staff")
-          .doc(resolvedUserIdForVenue);
-        await venueStaffRef.set(
-          {
-            onShift: false,
-            shiftEndTime: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-            userId,
-            active: true,
-          },
-          { merge: true }
-        );
-        if (venueId) {
-          await clearWaiterFromTables(firestore, venueId, legacyId);
-          await firestore
-            .collection("venues")
-            .doc(venueId)
-            .collection("events")
-            .add({
-              type: "shift",
-              message: `${displayName} ушел со смены`,
-              staffId: legacyId,
-              createdAt: FieldValue.serverTimestamp(),
-            });
-        }
-      }
-      return NextResponse.json({
-        ok: true,
-        onShift: action === "start",
-        staffId: legacyId,
-        ...(action === "start" && { shiftStartTime: new Date().toISOString() }),
-        ...(action === "stop" && { shiftEndTime: new Date().toISOString() }),
-      });
-    }
+    const tableWaiterIds = [...new Set([staffDocId, legacyStaffIdForSchedule].filter(Boolean) as string[])];
 
     if (action === "start") {
-      const resolvedUserIdForVenue = staffDocId;
-      const globalUserId = (snap.data()?.userId as string | undefined) ?? userId;
-      const venueStaffRef = firestore
-        .collection("venues")
-        .doc(staffVenueId)
-        .collection("staff")
-        .doc(resolvedUserIdForVenue);
       await venueStaffRef.set(
         {
           onShift: true,
@@ -247,48 +158,21 @@ export async function POST(request: NextRequest) {
         },
         { merge: true }
       );
-      if (staffVenueId) {
-        const today = new Date().toISOString().slice(0, 10);
-        const entriesSnap = await firestore
-          .collection("scheduleEntries")
-          .where("staffId", "==", staffDocId)
-          .where("venueId", "==", staffVenueId)
-          .where("slot.date", "==", today)
-          .get();
-        const toSetCheckIn = entriesSnap.docs.find((d) => !d.data().checkIn);
-        if (toSetCheckIn) {
-          await toSetCheckIn.ref.update({
-            checkIn: nowHHmm(),
-            updatedAt: FieldValue.serverTimestamp(),
-          });
-        }
-        const staffData = snap.data() ?? {};
-        const firstName = (staffData.firstName as string) ?? "";
-        const lastName = (staffData.lastName as string) ?? "";
-        let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
-        // Если в локальном документе нет имени — подтягиваем имя из global_users.
-        if (!displayName && globalUserId) {
-          const globalSnap = await firestore.collection("global_users").doc(globalUserId).get();
-          if (globalSnap.exists) {
-            const d = globalSnap.data() ?? {};
-            const gFirst = (d.firstName as string | undefined) ?? "";
-            const gLast = (d.lastName as string | undefined) ?? "";
-            const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
-            displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
-          }
-        }
-        displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
-        await firestore
-          .collection("venues")
-          .doc(staffVenueId)
-          .collection("events")
-          .add({
-            type: "shift",
-            message: `${displayName} заступил на смену`,
-            staffId: staffDocId,
-            createdAt: FieldValue.serverTimestamp(),
-          });
+      await syncGlobalUserShiftVenues(firestore, globalUserId, vid, true);
+
+      const entriesSnap = await scheduleEntriesForStaffCandidates(firestore, vid, scheduleStaffIds);
+      const toSetCheckIn = entriesSnap.docs.find((d) => !d.data().checkIn);
+      if (toSetCheckIn) {
+        await toSetCheckIn.ref.update({ checkIn: nowHHmm(), updatedAt: FieldValue.serverTimestamp() });
       }
+
+      await firestore.collection("venues").doc(vid).collection("events").add({
+        type: "shift",
+        message: `${displayName} заступил на смену`,
+        staffId: staffDocId,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
       return NextResponse.json({
         ok: true,
         onShift: true,
@@ -297,34 +181,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (staffVenueId) {
-      const today = new Date().toISOString().slice(0, 10);
-      const entriesSnap = await firestore
-        .collection("scheduleEntries")
-        .where("staffId", "==", staffDocId)
-        .where("venueId", "==", staffVenueId)
-        .where("slot.date", "==", today)
-        .get();
-      const toSetCheckOut = entriesSnap.docs.find((d) => d.data().checkIn && !d.data().checkOut);
-      if (toSetCheckOut) {
-        const data = toSetCheckOut.data();
-        const cin = (data.checkIn as string) || nowHHmm();
-        const cout = nowHHmm();
-        await toSetCheckOut.ref.update({
-          checkOut: cout,
-          factHours: factHoursFromCheckInOut(cin, cout),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
+    const entriesSnap = await scheduleEntriesForStaffCandidates(firestore, vid, scheduleStaffIds);
+    const toSetCheckOut = entriesSnap.docs.find((d) => d.data().checkIn && !d.data().checkOut);
+    if (toSetCheckOut) {
+      const data = toSetCheckOut.data();
+      const cin = (data.checkIn as string) || nowHHmm();
+      const cout = nowHHmm();
+      await toSetCheckOut.ref.update({
+        checkOut: cout,
+        factHours: factHoursFromCheckInOut(cin, cout),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     }
 
-    const resolvedUserIdForVenue = staffDocId;
-    const globalUserId = (snap.data()?.userId as string | undefined) ?? userId;
-    const venueStaffRef = firestore
-      .collection("venues")
-      .doc(staffVenueId)
-      .collection("staff")
-      .doc(resolvedUserIdForVenue);
     await venueStaffRef.set(
       {
         onShift: false,
@@ -335,35 +204,19 @@ export async function POST(request: NextRequest) {
       },
       { merge: true }
     );
-    if (staffVenueId) {
-      await clearWaiterFromTables(firestore, staffVenueId, staffDocId);
-      const staffData = snap.data() ?? {};
-      const firstName = (staffData.firstName as string) ?? "";
-      const lastName = (staffData.lastName as string) ?? "";
-      let displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
-      // Если в локальном документе нет имени — подтягиваем имя из global_users.
-      if (!displayName && globalUserId) {
-        const globalSnap = await firestore.collection("global_users").doc(globalUserId).get();
-        if (globalSnap.exists) {
-          const d = globalSnap.data() ?? {};
-          const gFirst = (d.firstName as string | undefined) ?? "";
-          const gLast = (d.lastName as string | undefined) ?? "";
-          const identityName = ((d.identity as any)?.displayName as string | undefined) ?? ((d.identity as any)?.name as string | undefined) ?? "";
-          displayName = [gFirst, gLast].filter(Boolean).join(" ").trim() || identityName.trim();
-        }
-      }
-      displayName = displayName ? displayName.split(' ')[0] : "Сотрудник";
-      await firestore
-        .collection("venues")
-        .doc(staffVenueId)
-        .collection("events")
-        .add({
-          type: "shift",
-          message: `${displayName} ушел со смены`,
-          staffId: staffDocId,
-          createdAt: FieldValue.serverTimestamp(),
-        });
+    await syncGlobalUserShiftVenues(firestore, globalUserId, vid, false);
+
+    for (const sid of tableWaiterIds) {
+      await clearWaiterFromTables(firestore, vid, sid);
     }
+
+    await firestore.collection("venues").doc(vid).collection("events").add({
+      type: "shift",
+      message: `${displayName} ушел со смены`,
+      staffId: staffDocId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
     return NextResponse.json({
       ok: true,
       onShift: false,

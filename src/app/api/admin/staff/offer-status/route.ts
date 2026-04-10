@@ -19,7 +19,12 @@ export async function GET(request: NextRequest) {
     }
     const firestore = getAdminFirestore();
     const staffDocId = `${venueId}_${userId}`;
-    const snap = await firestore.collection("staff").doc(staffDocId).get();
+    const snap = await firestore
+      .collection("venues")
+      .doc(venueId)
+      .collection("staff")
+      .doc(staffDocId)
+      .get();
     if (!snap.exists) {
       return NextResponse.json({ status: null, staffId: null });
     }

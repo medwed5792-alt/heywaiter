@@ -4,7 +4,7 @@
  * Callback offer_accept_<staffId> / offer_decline_<staffId> = цифровой контракт (принять/отклонить предложение).
  */
 import { NextRequest } from "next/server";
-import { collection, addDoc, query, where, getDocs, doc, getDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, getDoc, deleteDoc, serverTimestamp, limit } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
@@ -13,26 +13,33 @@ import { getAppUrl } from "@/lib/webhook/utils";
 import { answerCallbackQuery, sendMessage } from "@/adapters/telegram/telegramApi";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-/** Определить venueId по Telegram ID сотрудника */
+/** Определить venueId по Telegram ID сотрудника (global_users.identities.tg). */
 async function getVenueIdByStaffTgId(tgId: string): Promise<string | null> {
-  const staffRef = collection(db, "staff");
-  const q = query(staffRef, where("tgId", "==", tgId), where("active", "==", true));
-  const snap = await getDocs(q);
-  const d = snap.docs[0];
-  return d?.exists() ? (d.data().venueId as string) ?? null : null;
+  const row = await getStaffByTgId(tgId);
+  return row?.venueId ?? null;
 }
 
-/** Данные сотрудника по tgId (для сети: venueIds и staffId) */
+/** Данные сотрудника по tgId (для сети: venueIds и staffId) — только global_users. */
 async function getStaffByTgId(tgId: string): Promise<{ staffId: string; venueId: string; venueIds?: string[] } | null> {
-  const q = query(collection(db, "staff"), where("tgId", "==", tgId), where("active", "==", true));
+  const q = query(collection(db, "global_users"), where("identities.tg", "==", tgId), limit(1));
   const snap = await getDocs(q);
   const d = snap.docs[0];
   if (!d?.exists()) return null;
   const data = d.data();
+  const uid = d.id;
+  const fromDenorm: string[] = Array.isArray(data.staffVenueActive) ? data.staffVenueActive : [];
+  const aff = Array.isArray(data.affiliations) ? data.affiliations : [];
+  const fromAff = aff
+    .filter((a: { status?: string; venueId?: string }) => a?.status !== "former" && a?.venueId)
+    .map((a: { venueId: string }) => String(a.venueId));
+  const merged = [...new Set([...fromDenorm, ...fromAff].map((x) => String(x).trim()).filter(Boolean))];
+  if (merged.length === 0) return null;
+  const venueId = merged[0]!;
+  const staffId = `${venueId}_${uid}`;
   return {
-    staffId: d.id,
-    venueId: (data.venueId as string) ?? "",
-    venueIds: data.venueIds as string[] | undefined,
+    staffId,
+    venueId,
+    venueIds: merged.length > 1 ? merged : undefined,
   };
 }
 
@@ -156,13 +163,17 @@ export async function handleTelegramStaff(request: NextRequest, token: string): 
           return;
         }
         const adminDb = getAdminFirestore();
-        const staffRef = adminDb.collection("staff").doc(staffDocId);
-        const staffSnap = await staffRef.get();
-        if (staffSnap.exists) {
-          await staffRef.update({
-            status: "declined",
-            updatedAt: FieldValue.serverTimestamp(),
-          });
+        const { parseCanonicalStaffDocId } = await import("@/lib/identity/global-user-staff-bridge");
+        const parsed = parseCanonicalStaffDocId(staffDocId);
+        if (parsed) {
+          const vref = adminDb.collection("venues").doc(parsed.venueId).collection("staff").doc(staffDocId);
+          const vs = await vref.get();
+          if (vs.exists) {
+            await vref.update({
+              status: "declined",
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+          }
         }
         await answerOnce("Предложение отклонено");
         await sendMessage(token, {

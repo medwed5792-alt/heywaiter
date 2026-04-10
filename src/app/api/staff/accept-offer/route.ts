@@ -21,15 +21,24 @@ export async function POST(request: NextRequest) {
 
     if (telegramId) {
       const firestore = getAdminFirestore();
-      const staffSnap = await firestore.collection("staff").doc(staffId).get();
-      if (staffSnap.exists) {
-        const data = staffSnap.data() ?? {};
-        if (String(data.tgId) !== String(telegramId)) {
-          return NextResponse.json(
-            { error: "Это предложение предназначено другому пользователю" },
-            { status: 403 }
-          );
-        }
+      const byTg = await firestore
+        .collection("global_users")
+        .where("identities.tg", "==", telegramId)
+        .limit(1)
+        .get();
+      if (byTg.empty) {
+        return NextResponse.json(
+          { error: "Это предложение предназначено другому пользователю" },
+          { status: 403 }
+        );
+      }
+      const uid = byTg.docs[0].id;
+      const suffix = `_${uid}`;
+      if (!staffId.endsWith(suffix)) {
+        return NextResponse.json(
+          { error: "Это предложение предназначено другому пользователю" },
+          { status: 403 }
+        );
       }
     }
 

@@ -1,6 +1,7 @@
 /**
  * Guest Recognition Engine — сквозной поиск по всем 7 ID.
  * Масштабируется на все каналы (TG, WA, Viber, WeChat, Insta, FB, Line).
+ * Источник данных: коллекция global_users (identities.*).
  */
 import {
   collection,
@@ -14,26 +15,64 @@ import {
   Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Guest, Reservation } from "@/lib/types";
+import type { Guest, GuestType, Reservation, UnifiedIdentities } from "@/lib/types";
 
 export type RecognitionPlatform =
-  | "tg" | "wa" | "vk" | "viber" | "wechat" | "instagram" | "facebook" | "line";
+  | "tg"
+  | "wa"
+  | "vk"
+  | "viber"
+  | "wechat"
+  | "instagram"
+  | "facebook"
+  | "line";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 мин
 
-const PLATFORM_FIELD: Record<
-  RecognitionPlatform,
-  keyof Pick<Guest, "tgId" | "waId" | "vkId" | "viberId" | "wechatId" | "instagramId" | "facebookId" | "lineId">
-> = {
-  tg: "tgId",
-  wa: "waId",
-  vk: "vkId",
-  viber: "viberId",
-  wechat: "wechatId",
-  instagram: "instagramId",
-  facebook: "facebookId",
-  line: "lineId",
+const IDENTITY_KEY: Record<RecognitionPlatform, keyof UnifiedIdentities> = {
+  tg: "tg",
+  wa: "wa",
+  vk: "vk",
+  viber: "viber",
+  wechat: "wechat",
+  instagram: "inst",
+  facebook: "fb",
+  line: "line",
 };
+
+function globalUserDocToGuest(id: string, data: Record<string, unknown>): Guest {
+  const identities = (data.identities ?? {}) as UnifiedIdentities;
+  const typeRaw = data.guestType ?? data.type;
+  const type: GuestType =
+    typeRaw === "constant" ||
+    typeRaw === "regular" ||
+    typeRaw === "favorite" ||
+    typeRaw === "vip" ||
+    typeRaw === "blacklisted"
+      ? typeRaw
+      : "regular";
+  const first = (data.firstName as string | undefined) ?? "";
+  const last = (data.lastName as string | undefined) ?? "";
+  return {
+    id,
+    sotaId: typeof data.sotaId === "string" ? data.sotaId : undefined,
+    phone: identities.phone,
+    tgId: identities.tg,
+    waId: identities.wa,
+    vkId: identities.vk,
+    viberId: identities.viber,
+    wechatId: identities.wechat,
+    instagramId: identities.inst,
+    facebookId: identities.fb,
+    lineId: identities.line,
+    name: [first, last].filter(Boolean).join(" ").trim() || (data.name as string | undefined),
+    nickname: data.nickname as string | undefined,
+    type,
+    tier: data.tier as Guest["tier"],
+    lastVisitAt: data.lastVisitAt,
+    note: data.note as string | undefined,
+  };
+}
 
 export interface IdentifyResult {
   guest: Guest | null;
@@ -61,25 +100,28 @@ export async function identifyGuest(
   platform: RecognitionPlatform,
   options?: { phone?: string }
 ): Promise<IdentifyResult> {
-  const field = PLATFORM_FIELD[platform];
-  const guestsRef = collection(db, "guests");
-  const q = query(guestsRef, where(field, "==", platformId), limit(1));
+  const identityKey = IDENTITY_KEY[platform];
+  const usersRef = collection(db, "global_users");
+  const q = query(usersRef, where(`identities.${identityKey}`, "==", platformId), limit(1));
   const snap = await getDocs(q);
   const found = snap.docs[0];
   if (found?.exists()) {
-    const guest = { id: found.id, ...found.data() } as Guest;
+    const guest = globalUserDocToGuest(found.id, found.data() as Record<string, unknown>);
     return { guest, kind: "OWN" };
   }
   if (options?.phone?.trim()) {
     const normalized = normalizePhone(options.phone.trim());
     if (normalized.length >= 10) {
-      const byPhone = query(guestsRef, where("phone", "==", options.phone.trim()), limit(1));
+      const byPhone = query(usersRef, where("identities.phone", "==", options.phone.trim()), limit(1));
       const phoneSnap = await getDocs(byPhone);
-      const byPhoneAlt = query(guestsRef, where("phone", "==", normalized), limit(1));
+      const byPhoneAlt = query(usersRef, where("identities.phone", "==", normalized), limit(1));
       const phoneSnapAlt = await getDocs(byPhoneAlt);
       const existing = phoneSnap.docs[0] ?? phoneSnapAlt.docs[0];
       if (existing?.exists()) {
-        const mergeCandidate = { id: existing.id, ...existing.data() } as Guest;
+        const mergeCandidate = globalUserDocToGuest(
+          existing.id,
+          existing.data() as Record<string, unknown>
+        );
         return { guest: null, kind: "MERGE_CANDIDATE", mergeCandidate };
       }
     }
@@ -88,7 +130,7 @@ export async function identifyGuest(
 }
 
 /**
- * Склейка профилей: добавляет platformId нового канала к существующему гостю (primary).
+ * Склейка профилей: добавляет platformId нового канала к существующему гостю (primary) в global_users.
  */
 export async function mergeGuestProfiles(
   primaryGuestId: string,
@@ -96,9 +138,9 @@ export async function mergeGuestProfiles(
   platform: RecognitionPlatform
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const field = PLATFORM_FIELD[platform];
-    await updateDoc(doc(db, "guests", primaryGuestId), {
-      [field]: platformId,
+    const identityKey = IDENTITY_KEY[platform];
+    await updateDoc(doc(db, "global_users", primaryGuestId), {
+      [`identities.${identityKey}`]: platformId,
       updatedAt: serverTimestamp(),
     });
     return { ok: true };
@@ -130,11 +172,11 @@ export async function getReservationForTable(
     limit(1)
   );
   const snap = await getDocs(q);
-  const doc = snap.docs[0];
-  if (!doc?.exists()) {
+  const docSnap = snap.docs[0];
+  if (!docSnap?.exists()) {
     return { reserved: false, isOwner: false, reservation: null };
   }
-  const reservation = { id: doc.id, ...doc.data() } as Reservation & { id: string };
+  const reservation = { id: docSnap.id, ...docSnap.data() } as Reservation & { id: string };
   const isOwner = Boolean(guestTgId && String(reservation.tgId) === String(guestTgId));
   return { reserved: true, isOwner, reservation };
 }

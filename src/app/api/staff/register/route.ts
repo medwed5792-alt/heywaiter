@@ -11,7 +11,7 @@ import { generateSotaId } from "@/lib/sota-id";
 /**
  * POST /api/staff/register
  * Онбординг: регистрация нового сотрудника (форма Имя, Фамилия).
- * Создаёт global_users и staff для текущей платформы и venueId.
+ * Создаёт только global_users (цифровой паспорт + привязка к venue). Коллекция staff в коде не используется.
  * Тело: { firstName: string, lastName: string, platform: string, platformId: string, venueId: string }
  */
 export async function POST(request: NextRequest) {
@@ -51,37 +51,26 @@ export async function POST(request: NextRequest) {
     const newRef = firestore.collection("global_users").doc();
     const userId = newRef.id;
     const sotaId = generateSotaId("S", "W");
+    const staffDocId = `${venueId}_${userId}`;
     const affiliation: Affiliation = {
       venueId,
       role: "waiter",
       status: "active",
       onShift: false,
+      staffFirestoreId: staffDocId,
     };
 
     await newRef.set({
+      systemRole: "STAFF",
       firstName: firstName || null,
       lastName: lastName || null,
       sotaId,
       identities,
       affiliations: [affiliation],
+      staffLookupIds: [staffDocId],
+      staffVenueActive: [venueId],
+      staffVenueOnShift: [],
       careerHistory: [],
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    const staffDocId = `${venueId}_${userId}`;
-    const staffRef = firestore.collection("staff").doc(staffDocId);
-    await staffRef.set({
-      venueId,
-      userId,
-      sotaId,
-      role: "waiter",
-      primaryChannel: "telegram",
-      identity: { channel: "telegram", externalId: platformId, locale: "ru", displayName: [firstName, lastName].filter(Boolean).join(" ") },
-      onShift: false,
-      active: true,
-      ...(key === "tg" && { tgId: platformId }),
-      firstName: firstName || null,
-      lastName: lastName || null,
       updatedAt: FieldValue.serverTimestamp(),
     });
 

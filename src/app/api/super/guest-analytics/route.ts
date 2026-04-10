@@ -47,11 +47,11 @@ export async function GET(request: NextRequest) {
   const firestore = getAdminFirestore();
 
   try {
-    const visitsRef = firestore.collection("users").doc(uid).collection("visits");
+    const visitsRef = firestore.collection("global_users").doc(uid).collection("visits");
     const visitsSnap = await visitsRef.get();
 
     // Schema from `checkInGuest.ts`:
-    // users/${uid}/visits/${venueId} doc contains:
+    // global_users/${uid}/visits/${venueId} doc contains:
     // - totalVisits (increment)
     // - lastVisitAt (serverTimestamp)
     const venueCounters = new Map<string, { venueId: string; visits: number }>();

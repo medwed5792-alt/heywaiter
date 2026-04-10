@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { parseCanonicalStaffDocId } from "@/lib/identity/global-user-staff-bridge";
 
 /**
  * POST /api/staff/decline-offer
@@ -18,14 +19,25 @@ export async function POST(request: NextRequest) {
     }
 
     const firestore = getAdminFirestore();
-    const staffRef = firestore.collection("staff").doc(staffId);
-    const staffSnap = await staffRef.get();
-    if (staffSnap.exists) {
-      const data = staffSnap.data() ?? {};
-      if (String(data.tgId) !== String(telegramId)) {
-        return NextResponse.json({ error: "Это предложение предназначено другому пользователю" }, { status: 403 });
-      }
-      await staffRef.update({
+    const parsed = parseCanonicalStaffDocId(staffId);
+    if (!parsed) {
+      return NextResponse.json({ error: "Некорректный staffId" }, { status: 400 });
+    }
+    const { venueId, globalUserId } = parsed;
+
+    const byTg = await firestore
+      .collection("global_users")
+      .where("identities.tg", "==", telegramId)
+      .limit(1)
+      .get();
+    if (byTg.empty || byTg.docs[0].id !== globalUserId) {
+      return NextResponse.json({ error: "Это предложение предназначено другому пользователю" }, { status: 403 });
+    }
+
+    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffId);
+    const snap = await venueStaffRef.get();
+    if (snap.exists) {
+      await venueStaffRef.update({
         status: "declined",
         updatedAt: FieldValue.serverTimestamp(),
       });
