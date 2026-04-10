@@ -4,7 +4,7 @@ import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 
 /**
  * Обратная совместимость: POST /api/webhook/telegram → обрабатывается как Telegram Client Bot.
- * Токен из Firestore (system_settings/bots) или env.
+ * Токен из Firestore (system_configs/bots) или env.
  */
 export async function POST(request: NextRequest) {
   let token = await getBotTokenFromStore("telegram", "client");

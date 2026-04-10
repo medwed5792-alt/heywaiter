@@ -1,5 +1,5 @@
 /**
- * Pre-Order (предзаказ): корзина до прихода, флаги из ЦУП (system_settings/global) и venue.moduleConfig.
+ * Pre-Order (предзаказ): корзина до прихода, флаги из ЦУП (system_configs/global_settings) и venue.moduleConfig.
  * Firestore: venues/{venueId}/preorder_carts/{customerUid}
  */
 
@@ -11,7 +11,7 @@ import {
   pickPreorderVenuePolicy,
 } from "@/lib/system-configs/preorder-module-config";
 
-/** Фрагмент system_settings/global для предзаказа (задаётся в ЦУП /super/system). */
+/** Фрагмент system_configs/global_settings для предзаказа (задаётся в ЦУП /super/system). */
 export type PreOrderGlobalConfigSlice = {
   preOrderBySotaVenueId?: Record<string, boolean>;
   preOrderByVenueDocId?: Record<string, boolean>;
@@ -62,12 +62,12 @@ function parseBoolRecord(raw: unknown, normalizeKey: (k: string) => string): Rec
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Из system_settings/global: ключи VR… (нормализуются). */
+/** Из system_configs/global_settings: ключи VR… (нормализуются). */
 export function parsePreOrderBySotaVenueId(raw: unknown): Record<string, boolean> | undefined {
   return parseBoolRecord(raw, (k) => normalizeSotaId(k));
 }
 
-/** Из system_settings/global: ключи = Firestore doc id заведения. */
+/** Из system_configs/global_settings: ключи = Firestore doc id заведения. */
 export function parsePreOrderByVenueDocId(raw: unknown): Record<string, boolean> | undefined {
   return parseBoolRecord(raw, (k) => k);
 }

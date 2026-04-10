@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import toast from "react-hot-toast";
-
-const SYSTEM_CONFIG_GOOGLE_MAPS = "google_maps";
+import {
+  GOOGLE_MAPS_SYSTEM_CONFIG_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
 
 export default function SuperInfrastructureInner() {
   const [googleMapsApiKey, setGoogleMapsApiKey] = useState("");
@@ -15,7 +17,9 @@ export default function SuperInfrastructureInner() {
 
   useEffect(() => {
     (async () => {
-      const snap = await getDoc(doc(db, "system_config", SYSTEM_CONFIG_GOOGLE_MAPS));
+      const snap = await getDoc(
+        doc(db, SYSTEM_CONFIGS_COLLECTION, GOOGLE_MAPS_SYSTEM_CONFIG_DOC_ID)
+      );
       if (snap.exists()) {
         const d = snap.data();
         setGoogleMapsApiKey(d.googleMapsApiKey ?? "");
@@ -30,7 +34,7 @@ export default function SuperInfrastructureInner() {
     setSaving(true);
     try {
       await setDoc(
-        doc(db, "system_config", SYSTEM_CONFIG_GOOGLE_MAPS),
+        doc(db, SYSTEM_CONFIGS_COLLECTION, GOOGLE_MAPS_SYSTEM_CONFIG_DOC_ID),
         {
           googleMapsApiKey: String(googleMapsApiKey ?? "").trim(),
           googlePlacesApiKey: String(googlePlacesApiKey ?? "").trim(),
@@ -52,7 +56,7 @@ export default function SuperInfrastructureInner() {
     <div style={{ zoom: 0.75 }}>
       <h2 className="text-lg font-semibold text-gray-900">Инфраструктура / API Ключи</h2>
       <p className="mt-2 text-sm text-gray-600">
-        Централизованное хранение ключей в Firestore (system_config/google_maps). Карта в настройках заведения (/admin/settings) подгружает ключ отсюда.
+        Централизованное хранение ключей в Firestore (system_configs/google_maps). Карта в настройках заведения (/admin/settings) подгружает ключ отсюда.
       </p>
       <form onSubmit={handleSave} className="mt-6 max-w-xl space-y-4">
         <label className="block">

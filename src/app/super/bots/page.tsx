@@ -20,7 +20,7 @@ const CHANNEL_LABEL: Record<string, string> = {
 type BotStatus = { channel: string; botType: BotType; active: boolean; username?: string };
 
 /**
- * Супер-админ: настройки ботов. Токены Telegram вводятся в таблицу и сохраняются в Firestore (system_settings/bots).
+ * Супер-админ: настройки ботов. Токены Telegram вводятся в таблицу и сохраняются в Firestore (system_configs/bots).
  * Кнопка «Тест связи» для Telegram: проверка токена (getMe), установка webhook, сохранение.
  */
 export default function SuperBotsPage() {

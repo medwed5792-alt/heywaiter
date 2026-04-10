@@ -21,6 +21,10 @@ import {
 } from "@/lib/pre-order";
 import { readVenueTimezone } from "@/lib/venue-timezone";
 import {
+  GLOBAL_SETTINGS_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
+import {
   parsePreorderModuleConfig,
   PREORDER_SYSTEM_CONFIG_DOC_ID,
   type PreorderModuleConfig,
@@ -564,9 +568,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       });
   }, [isSdkReady]);
 
-  // Global runtime config from system_settings/global with safe defaults.
+  // Global runtime config from system_configs/global_settings with safe defaults.
   useEffect(() => {
-    const ref = doc(db, "system_settings", "global");
+    const ref = doc(db, SYSTEM_CONFIGS_COLLECTION, GLOBAL_SETTINGS_DOC_ID);
     const unsub = onSnapshot(
       ref,
       (snap) => {

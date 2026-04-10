@@ -3,8 +3,10 @@
 import { useState, useEffect } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-
-const SYSTEM_CONFIG_GOOGLE_MAPS = "google_maps";
+import {
+  GOOGLE_MAPS_SYSTEM_CONFIG_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
 
 export interface GoogleMapsConfig {
   apiKey: string;
@@ -13,7 +15,7 @@ export interface GoogleMapsConfig {
 }
 
 /**
- * Ключ: сначала Firestore (system_config/google_maps), затем .env (NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
+ * Ключ: сначала Firestore (system_configs/google_maps), затем .env (NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
  */
 export function useGoogleMapsConfig(): GoogleMapsConfig {
   const [apiKey, setApiKey] = useState("");
@@ -23,7 +25,9 @@ export function useGoogleMapsConfig(): GoogleMapsConfig {
   useEffect(() => {
     (async () => {
       try {
-        const snap = await getDoc(doc(db, "system_config", SYSTEM_CONFIG_GOOGLE_MAPS));
+        const snap = await getDoc(
+          doc(db, SYSTEM_CONFIGS_COLLECTION, GOOGLE_MAPS_SYSTEM_CONFIG_DOC_ID)
+        );
         if (snap.exists()) {
           const d = snap.data();
           const mapsKey = String(d?.googleMapsApiKey ?? "").trim();

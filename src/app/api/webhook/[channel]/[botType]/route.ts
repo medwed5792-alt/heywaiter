@@ -9,7 +9,7 @@ import { getBotTokenFromStore } from "@/lib/webhook/bots-store";
 /**
  * Универсальный роутер для 14 ботов: 7 каналов × 2 типа (Client + Staff).
  * POST /api/webhook/telegram/client, /api/webhook/telegram/staff, ...
- * Токен Telegram берётся из Firestore (system_settings/bots) или env.
+ * Токен Telegram берётся из Firestore (system_configs/bots) или env.
  */
 export async function POST(
   request: NextRequest,

@@ -5,7 +5,7 @@ export const DEFAULT_VENUE_GEO_RADIUS_METERS = 100;
 
 /**
  * Верхняя граница радиуса «приёмной зоны» по умолчанию (метры).
- * Фактическое значение: `system_settings/global.geoRadiusLimit`; при отсутствии — эта константа.
+ * Фактическое значение: `system_configs/global_settings.geoRadiusLimit`; при отсутствии — эта константа.
  * Эффективный радиус для проверок = min(radius заведения, этот лимит).
  */
 export const DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS = 500;

@@ -8,6 +8,10 @@ import {
   DEFAULT_VENUE_GEO_RADIUS_METERS,
   haversineDistanceM,
 } from "@/lib/geo";
+import {
+  GLOBAL_SETTINGS_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
 
 type LocationStatus = "idle" | "requesting" | "ready" | "denied" | "unavailable" | "error";
 type LocationSource = "none" | "gps" | "network" | "ip";
@@ -109,7 +113,7 @@ export function SotaLocationProvider({ children }: { children: ReactNode }) {
   }, [source]);
 
   useEffect(() => {
-    const ref = doc(db, "system_settings", "global");
+    const ref = doc(db, SYSTEM_CONFIGS_COLLECTION, GLOBAL_SETTINGS_DOC_ID);
     const unsub = onSnapshot(
       ref,
       (snap) => {

@@ -12,6 +12,10 @@ import {
 import { createGuestEscapeAlert, createStaffEscapeAlert } from "@/lib/stealth-notifications";
 import { getSimulateOutOfZone } from "@/components/debug/DebugPanelTrigger";
 import type { VenueGeo } from "@/lib/types";
+import {
+  GLOBAL_SETTINGS_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
 
 const CHECK_INTERVAL_MS = 30_000;
 const COARSE_OPTIONS: PositionOptions = {
@@ -160,7 +164,9 @@ export function useGeoFencing(params: UseGeoFencingParams) {
       const venueSnap = await getDoc(doc(db, "venues", venueId));
       const geo = venueSnap.exists() ? venueSnap.data().geo : undefined;
       if (!geo?.lat || !geo?.lng) return;
-      const globalSnap = await getDoc(doc(db, "system_settings", "global"));
+      const globalSnap = await getDoc(
+        doc(db, SYSTEM_CONFIGS_COLLECTION, GLOBAL_SETTINGS_DOC_ID)
+      );
       const gRaw = (globalSnap.data() ?? {}) as Record<string, unknown>;
       const globalLimit =
         typeof gRaw.geoRadiusLimit === "number" && Number.isFinite(gRaw.geoRadiusLimit)

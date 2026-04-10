@@ -1,7 +1,7 @@
 /**
  * Документ Firestore: system_configs/preorder
  * No-code модуль предзаказа для ЦУП: VR-ID, окна времени, лимиты.
- * Дополняет legacy-ключи в system_settings/global (preOrderBySotaVenueId и т.д.).
+ * Дополняет legacy-ключи в system_configs/global_settings (preOrderBySotaVenueId и т.д.).
  */
 
 import { wallClockMinutesSinceMidnight } from "@/lib/iana-wall-clock";

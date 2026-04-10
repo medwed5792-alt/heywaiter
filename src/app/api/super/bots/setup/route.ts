@@ -1,6 +1,6 @@
 /**
  * POST /api/super/bots/setup
- * Инициализация бота: проверка токена (getMe), установка webhook, сохранение в Firestore (system_settings/bots).
+ * Инициализация бота: проверка токена (getMe), установка webhook, сохранение в Firestore (system_configs/bots).
  * Тело: { token: string, botType: "client" | "staff" }
  */
 

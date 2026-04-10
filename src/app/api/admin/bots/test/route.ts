@@ -12,7 +12,7 @@ const TELEGRAM_API = "https://api.telegram.org/bot";
  * POST /api/admin/bots/test
  * Тело: { channel: string, botType: "client" | "staff" }
  * Проверяет связь с ботом: для Telegram — getMe; при успехе возвращает ok.
- * Токен берётся из Firestore (system_settings/bots) или env.
+ * Токен берётся из Firestore (system_configs/bots) или env.
  */
 export async function POST(request: NextRequest) {
   try {

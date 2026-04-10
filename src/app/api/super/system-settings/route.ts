@@ -4,8 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSuperAdmin } from "@/lib/superadmin-guard";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import {
+  GLOBAL_SETTINGS_DOC_ID,
+  SYSTEM_CONFIGS_COLLECTION,
+} from "@/lib/system-configs/collection";
 
-const DOC_PATH = "system_settings/global";
+const DOC_PATH = `${SYSTEM_CONFIGS_COLLECTION}/${GLOBAL_SETTINGS_DOC_ID}`;
 
 export async function GET(request: NextRequest) {
   const auth = await requireSuperAdmin(request);
