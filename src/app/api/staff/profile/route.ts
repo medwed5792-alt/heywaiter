@@ -58,9 +58,14 @@ export async function GET(request: NextRequest) {
       sotaId = newSotaId;
     }
 
+    const systemRoleRaw =
+      typeof data.systemRole === "string" && data.systemRole.trim()
+        ? String(data.systemRole).trim().toUpperCase()
+        : "GUEST";
+
     return NextResponse.json({
       userId: doc.id,
-      sotaId,
+      sotaId: sotaId ?? null,
       firstName: data.firstName ?? null,
       lastName: data.lastName ?? null,
       phone: data.phone ?? null,
@@ -69,6 +74,7 @@ export async function GET(request: NextRequest) {
       identities: data.identities ?? {},
       affiliations,
       isFreeAgent,
+      systemRole: systemRoleRaw,
     });
   } catch (err) {
     console.error("[staff/profile GET]", err);

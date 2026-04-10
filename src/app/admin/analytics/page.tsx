@@ -70,7 +70,9 @@ export default function AdminAnalyticsPage() {
               limit(500)
             )
           ).catch(() => ({ docs: [] })),
-          getDocs(query(collection(db, "staff"), where("venueId", "==", VENUE_ID))).catch(() => ({ docs: [] })),
+          getDocs(
+            query(collection(db, "global_users"), where("staffVenueActive", "array-contains", VENUE_ID))
+          ).catch(() => ({ docs: [] })),
         ]);
 
         if (cancelled) return;
@@ -83,7 +85,7 @@ export default function AdminAnalyticsPage() {
             (data?.identity?.displayName as string) ||
             d?.id;
           const venueRating = typeof data?.venueRating === "number" ? data.venueRating : undefined;
-          staffMap.set(d.id, { name, venueRating });
+          staffMap.set(`${VENUE_ID}_${d.id}`, { name, venueRating });
         });
 
         const calls =

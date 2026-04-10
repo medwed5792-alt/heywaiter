@@ -241,6 +241,19 @@ export async function GET(request: NextRequest) {
       shiftEndTime = (vd.shiftEndTime as { toDate?: () => Date })?.toDate?.()?.toISOString?.() ?? null;
     }
 
+    const affForVenue = affiliations.find(
+      (a: { venueId?: string; status?: string; role?: string }) =>
+        a?.venueId === resolvedVenueId && a?.status !== "former"
+    );
+    const role =
+      typeof affForVenue?.role === "string" && affForVenue.role.trim()
+        ? affForVenue.role.trim()
+        : "waiter";
+    const firstNameOut =
+      typeof globalData.firstName === "string" ? globalData.firstName : null;
+    const lastNameOut =
+      typeof globalData.lastName === "string" ? globalData.lastName : null;
+
     return NextResponse.json({
       userId,
       staffId: staffDocId,
@@ -248,7 +261,11 @@ export async function GET(request: NextRequest) {
       onShift,
       shiftStartTime,
       shiftEndTime,
-      sotaId: responseSotaId,
+      sotaId: responseSotaId ?? null,
+      role,
+      firstName: firstNameOut ?? null,
+      lastName: lastNameOut ?? null,
+      systemRole: systemRoleRaw || "STAFF",
     });
   } catch (err) {
     console.error("[staff/me]", err);

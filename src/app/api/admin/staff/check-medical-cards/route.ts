@@ -5,48 +5,27 @@ import type { Firestore } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import type { ServiceRole } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
+import { getTelegramIdsForStaffIds } from "@/lib/notifications/staff-notify-helpers";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const DAYS_THRESHOLD = 15;
 
 async function getLprStaffIdsForVenue(firestore: Firestore, venueId: string): Promise<string[]> {
+  const vid = venueId.trim();
+  if (!vid) return [];
   const snap = await firestore
-    .collection("staff")
-    .where("venueId", "==", venueId)
-    .where("active", "==", true)
+    .collection("global_users")
+    .where("staffVenueActive", "array-contains", vid)
     .get();
   const ids: string[] = [];
-  snap.docs.forEach((d) => {
+  for (const d of snap.docs) {
     const data = d.data();
-    const role = (data.serviceRole ?? data.position) as ServiceRole | undefined;
-    if (role && LPR_ROLES.includes(role)) ids.push(d.id);
-  });
-  return ids;
-}
-
-async function getTelegramIdsForStaff(
-  firestore: Firestore,
-  staffIds: string[]
-): Promise<Set<string>> {
-  const tgIds = new Set<string>();
-  for (const sid of staffIds) {
-    const staffSnap = await firestore.collection("staff").doc(sid).get();
-    if (!staffSnap.exists) continue;
-    const staffData = staffSnap.data() ?? {};
-    const userId = (staffData.userId as string) || sid;
-    let tgId: string | null =
-      (staffData.tgId as string) ||
-      (staffData.identity as { externalId?: string })?.externalId ||
-      null;
-    const globalSnap = await firestore.collection("global_users").doc(userId).get();
-    if (globalSnap.exists) {
-      const globalData = globalSnap.data() ?? {};
-      const identities = globalData.identities as { tg?: string } | undefined;
-      if (identities?.tg) tgId = identities.tg;
-    }
-    if (tgId && tgId.trim()) tgIds.add(tgId.trim());
+    const aff = Array.isArray(data.affiliations) ? data.affiliations : [];
+    const row = aff.find((a: { venueId?: string }) => a?.venueId === vid);
+    const role = (row?.role as string) ?? (row?.position as string) ?? "";
+    if (role && LPR_ROLES.includes(role as ServiceRole)) ids.push(`${vid}_${d.id}`);
   }
-  return tgIds;
+  return ids;
 }
 
 async function sendTelegramMessage(token: string, chatId: string, text: string): Promise<void> {
@@ -63,9 +42,7 @@ async function sendTelegramMessage(token: string, chatId: string, text: string):
 
 /**
  * GET /api/admin/staff/check-medical-cards?venueId=current
- * Проверяет сроки медкнижек: если до окончания <= 15 дней, создаёт NOTIFY_LPR
- * (запись в staffNotifications и отправка в @waitertalk_bot ЛПР заведения).
- * Вызывается при входе в админку (страница Команда) или по крону.
+ * Медкнижки читаются из global_users (staffVenueActive + medicalCard).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -80,9 +57,8 @@ export async function GET(request: NextRequest) {
     today.setHours(0, 0, 0, 0);
 
     const staffSnap = await firestore
-      .collection("staff")
-      .where("venueId", "==", venueId)
-      .where("active", "==", true)
+      .collection("global_users")
+      .where("staffVenueActive", "array-contains", venueId)
       .get();
 
     const expiring: { staffId: string; name: string; expiryDate: string; daysLeft: number }[] = [];
@@ -98,10 +74,14 @@ export async function GET(request: NextRequest) {
       const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
       if (daysLeft > DAYS_THRESHOLD) continue;
 
-      const firstName = data.firstName ?? "";
-      const lastName = data.lastName ?? "";
-      const name = [firstName, lastName].filter(Boolean).join(" ") || (data.identity as { displayName?: string })?.displayName || d.id;
-      expiring.push({ staffId: d.id, name, expiryDate: expiryStr, daysLeft });
+      const firstName = (data.firstName as string) ?? "";
+      const lastName = (data.lastName as string) ?? "";
+      const name =
+        [firstName, lastName].filter(Boolean).join(" ") ||
+        ((data.identity as { displayName?: string })?.displayName as string) ||
+        d.id;
+      const staffDocId = `${venueId}_${d.id}`;
+      expiring.push({ staffId: staffDocId, name, expiryDate: expiryStr, daysLeft });
     }
 
     if (expiring.length === 0) {
@@ -109,7 +89,7 @@ export async function GET(request: NextRequest) {
     }
 
     const lprIds = await getLprStaffIdsForVenue(firestore, venueId);
-    const tgIds = await getTelegramIdsForStaff(firestore, lprIds);
+    const tgIds = await getTelegramIdsForStaffIds(firestore, venueId, lprIds);
 
     const { getBotTokenFromStore } = await import("@/lib/webhook/bots-store");
     const token =
@@ -123,7 +103,7 @@ export async function GET(request: NextRequest) {
           : item.daysLeft === 0
             ? "сегодня"
             : "истёк";
-      const message = `⚠️ Срок медкнижки сотрудника ${item.name} истекает ${daysText} (${item.expiryDate}).`;
+      const message = `\u26a0\ufe0f Срок медкнижки сотрудника ${item.name} истекает ${daysText} (${item.expiryDate}).`;
 
       await firestore.collection("staffNotifications").add({
         venueId,

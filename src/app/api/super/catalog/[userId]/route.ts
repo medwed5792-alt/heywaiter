@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSuperAdmin } from "@/lib/superadmin-guard";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { parseCanonicalStaffDocId } from "@/lib/identity/global-user-staff-bridge";
 
 /**
  * PATCH /api/super/catalog/[userId]
@@ -48,7 +49,7 @@ export async function PATCH(
 
 /**
  * DELETE /api/super/catalog/[userId]
- * Супер-админ: полное удаление пользователя из системы (global_users и связи в staff).
+ * Супер-админ: полное удаление пользователя из системы (global_users и подколлекции staff у venues).
  */
 export async function DELETE(
   request: NextRequest,
@@ -67,17 +68,39 @@ export async function DELETE(
     if (!snap.exists) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
-    await globalRef.delete();
-
-    const staffSnap = await firestore.collection("staff").where("userId", "==", userId).get();
-    for (const d of staffSnap.docs) {
-      const data = d.data() ?? {};
-      const venueId = typeof data.venueId === "string" ? data.venueId : "";
-      await d.ref.delete();
-      if (venueId) {
-        await firestore.collection("venues").doc(venueId).collection("staff").doc(d.id).delete().catch(() => undefined);
-      }
+    const data = snap.data() ?? {};
+    const venueSet = new Set<string>();
+    for (const a of Array.isArray(data.affiliations) ? data.affiliations : []) {
+      const vid = (a as { venueId?: string })?.venueId;
+      if (vid) venueSet.add(vid);
     }
+    for (const v of Array.isArray(data.staffVenueActive) ? data.staffVenueActive : []) {
+      if (typeof v === "string" && v.trim()) venueSet.add(v.trim());
+    }
+    for (const vid of venueSet) {
+      const canonical = `${vid}_${userId}`;
+      await firestore
+        .collection("venues")
+        .doc(vid)
+        .collection("staff")
+        .doc(canonical)
+        .delete()
+        .catch(() => undefined);
+    }
+    for (const lid of Array.isArray(data.staffLookupIds) ? data.staffLookupIds : []) {
+      if (typeof lid !== "string") continue;
+      const p = parseCanonicalStaffDocId(lid);
+      if (!p) continue;
+      await firestore
+        .collection("venues")
+        .doc(p.venueId)
+        .collection("staff")
+        .doc(lid)
+        .delete()
+        .catch(() => undefined);
+    }
+
+    await globalRef.delete();
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[super/catalog] DELETE Error:", err);

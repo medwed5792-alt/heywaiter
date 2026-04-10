@@ -103,12 +103,8 @@ export async function sosFanOut(
   tableId: string,
   staffChannel: MessengerChannel = "telegram"
 ): Promise<{ ok: boolean }> {
-  const staffRef = collection(db, "staff");
-  const q = query(
-    staffRef,
-    where("venueId", "==", venueId),
-    where("active", "==", true)
-  );
+  const venueStaffRef = collection(db, "venues", venueId, "staff");
+  const q = query(venueStaffRef, where("active", "==", true));
   const snap = await getDocs(q);
   const message = `🚨 SOS: Стол №${tableId}. Требуется внимание охраны/менеджера.`;
 
@@ -120,7 +116,15 @@ export async function sosFanOut(
 
   for (const d of snap.docs) {
     const s = d.data();
-    const tgId = s.tgId || s.identity?.externalId;
+    let tgId = (s.tgId as string) || (s.identity as { externalId?: string } | undefined)?.externalId;
+    const uid = typeof s.userId === "string" ? s.userId.trim() : "";
+    if (!tgId && uid) {
+      const g = await getDoc(doc(db, "global_users", uid));
+      if (g.exists()) {
+        const ident = g.data()?.identities as { tg?: string } | undefined;
+        tgId = ident?.tg;
+      }
+    }
     if (tgId) {
       try {
         await sendMessage(staffToken as string, { chat_id: tgId, text: message });

@@ -722,40 +722,39 @@ function StaffContentInner() {
     try {
       if (!platformIdForDetect) throw new Error("Не удалось определить ID платформы");
 
-      // Жёсткий поиск root staff doc по tgId/phone, чтобы не плодить новые IDs.
+      // Канонический staffId: `${venueId}_${globalUserId}` (global_users — единый источник).
       let resolvedStaffId: string | null = staffId;
 
-      // Если staffId уже получен через StaffProvider — используем его как основной.
-      // Иначе делаем поиск по tgId/phone (fallback совместимости).
-      if (!resolvedStaffId) {
+      if (!resolvedStaffId && userId) {
+        resolvedStaffId = `${venueId}_${userId}`;
+      }
 
-        // 1) По tgId
-        if (platformKey === "tg") {
+      if (!resolvedStaffId && platformKey === "tg") {
+        const snap = await getDocs(
+          query(
+            collection(db, "global_users"),
+            where("identities.tg", "==", platformIdForDetect),
+            limit(1)
+          )
+        );
+        if (!snap.empty) {
+          resolvedStaffId = `${venueId}_${snap.docs[0].id}`;
+        }
+      }
+
+      if (!resolvedStaffId && userId) {
+        const globalSnap = await getDoc(doc(db, "global_users", userId));
+        const phoneClean = String(globalSnap.data()?.phone ?? "").replace(/\D/g, "");
+        if (phoneClean) {
           const snap = await getDocs(
             query(
-              collection(db, "staff"),
-              where("venueId", "==", venueId),
-              where("tgId", "==", platformIdForDetect),
+              collection(db, "global_users"),
+              where("identities.phone", "==", phoneClean),
               limit(1)
             )
           );
-          if (!snap.empty) resolvedStaffId = snap.docs[0].id;
-        }
-
-        // 2) По phone (если удалось достать phone из global_users)
-        if (!resolvedStaffId && userId) {
-          const globalSnap = await getDoc(doc(db, "global_users", userId));
-          const phoneClean = String(globalSnap.data()?.phone ?? "").replace(/\D/g, "");
-          if (phoneClean) {
-            const snap = await getDocs(
-              query(
-                collection(db, "staff"),
-                where("venueId", "==", venueId),
-                where("phone", "==", phoneClean),
-                limit(1)
-              )
-            );
-            if (!snap.empty) resolvedStaffId = snap.docs[0].id;
+          if (!snap.empty) {
+            resolvedStaffId = `${venueId}_${snap.docs[0].id}`;
           }
         }
       }

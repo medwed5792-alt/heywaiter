@@ -57,18 +57,21 @@ export async function getAssignedStaffForTable(
  * Список staffId сотрудников ЛПР заведения, которые на смене (для KPI).
  */
 async function getLprStaffIds(venueId: string): Promise<string[]> {
-  const staffRef = collection(db, "staff");
   const q = query(
-    staffRef,
-    where("venueId", "==", venueId),
-    where("active", "==", true),
-    where("onShift", "==", true)
+    collection(db, "global_users"),
+    where("staffVenueOnShift", "array-contains", venueId)
   );
   const snap = await getDocs(q);
   const ids: string[] = [];
   snap.docs.forEach((d) => {
-    const role = d.data().serviceRole as ServiceRole | undefined;
-    if (role && LPR_ROLES.includes(role)) ids.push(d.id);
+    const aff = (Array.isArray(d.data().affiliations) ? d.data().affiliations : []) as {
+      venueId?: string;
+      role?: string;
+      position?: string;
+    }[];
+    const row = aff.find((a) => a.venueId === venueId);
+    const role = (row?.role ?? row?.position) as ServiceRole | undefined;
+    if (role && LPR_ROLES.includes(role)) ids.push(`${venueId}_${d.id}`);
   });
   return ids;
 }
@@ -80,16 +83,22 @@ async function getStaffIdsByRoleOnShift(
   venueId: string,
   role: ServiceRole
 ): Promise<string[]> {
-  const staffRef = collection(db, "staff");
   const q = query(
-    staffRef,
-    where("venueId", "==", venueId),
-    where("active", "==", true),
-    where("onShift", "==", true),
-    where("serviceRole", "==", role)
+    collection(db, "global_users"),
+    where("staffVenueOnShift", "array-contains", venueId)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => d.id);
+  const ids: string[] = [];
+  for (const d of snap.docs) {
+    const aff = (Array.isArray(d.data().affiliations) ? d.data().affiliations : []) as {
+      venueId?: string;
+      role?: string;
+    }[];
+    const row = aff.find((a) => a.venueId === venueId);
+    const r = row?.role as ServiceRole | undefined;
+    if (r === role) ids.push(`${venueId}_${d.id}`);
+  }
+  return ids;
 }
 
 /**

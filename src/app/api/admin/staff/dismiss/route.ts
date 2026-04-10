@@ -6,22 +6,17 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { StaffCareerEntry, Affiliation } from "@/lib/types";
 
 import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
+import {
+  parseCanonicalStaffDocId,
+  resolveStaffFirestoreIdToGlobalUser,
+  syncGlobalUserShiftVenues,
+} from "@/lib/identity/global-user-staff-bridge";
 
 /**
  * POST /api/admin/staff/dismiss (Unlink / Расторжение контракта)
  * Тело: { staffId: string, venueId?: string, exitReason: string (текст), rating: number (1-5) }
  *
- * Концепция: заведение не удаляет пользователя, а разрывает связь (Affiliation) и оставляет
- * запись в трудовой книжке (careerHistory) для Биржи смен.
- *
- * 1. Находит staff и global_users по userId.
- * 2. Удаляет текущий venueId из массива affiliations (разрыв связи).
- * 3. Находит последнюю запись в careerHistory для этого заведения или создаёт новую;
- *    записывает endDate, exitReason: "contract_terminated", rating и comment.
- * 4. В коллекции venues/[venueId]/staff/[staffId] устанавливает status: 'inactive'
- *    (скрывает из списка «Команда», сохраняет в архиве заведения).
- * 5. В корневой коллекции staff ставит active: false, onShift: false.
- * 6. Удаляет будущие смены (scheduleEntries).
+ * Работает через global_users + venues/{venueId}/staff (без корневой staff).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -55,21 +50,59 @@ export async function POST(request: NextRequest) {
     }
 
     const firestore = getAdminFirestore();
+    const sid = staffId.trim();
+    const venueFallback = (bodyVenueId && String(bodyVenueId).trim()) || VENUE_ID;
 
-    const staffSnap = await firestore.collection("staff").doc(staffId).get();
-    if (!staffSnap.exists) {
+    let userId: string | null = null;
+    let venueId = venueFallback;
+    const parsed = parseCanonicalStaffDocId(sid);
+    if (parsed) {
+      userId = parsed.globalUserId;
+      venueId = parsed.venueId || venueFallback;
+    } else {
+      const r = await resolveStaffFirestoreIdToGlobalUser(firestore, sid, venueFallback);
+      if (r) userId = r.globalUserId;
+    }
+    if (!userId) {
       return NextResponse.json({ error: "Staff not found" }, { status: 404 });
     }
 
-    const staffData = staffSnap.data() ?? {};
-    const venueId = (bodyVenueId && String(bodyVenueId).trim()) || (staffData.venueId as string) || VENUE_ID;
-    const userId = (staffData.userId as string) || staffId;
-    const position = (staffData.position as string) || "Сотрудник";
+    const canonicalStaffDocId = `${venueId}_${userId}`;
+
+    const globalRef = firestore.collection("global_users").doc(userId);
+    const globalSnap = await globalRef.get();
+    if (!globalSnap.exists) {
+      return NextResponse.json({ error: "Staff not found" }, { status: 404 });
+    }
+
+    const globalData = globalSnap.data() ?? {};
+    const affiliations: Affiliation[] = Array.isArray(globalData.affiliations)
+      ? [...globalData.affiliations]
+      : [];
+    const affForVenue = affiliations.find((a) => a.venueId === venueId);
+    const position =
+      (affForVenue?.position as string) ||
+      (affForVenue?.role as string) ||
+      "Сотрудник";
+
+    const mirrorSnap = await firestore
+      .collection("venues")
+      .doc(venueId)
+      .collection("staff")
+      .doc(sid)
+      .get();
+    const mirrorCanonical = await firestore
+      .collection("venues")
+      .doc(venueId)
+      .collection("staff")
+      .doc(canonicalStaffDocId)
+      .get();
+    const staffMirror = (mirrorSnap.exists ? mirrorSnap.data() : null) ?? (mirrorCanonical.exists ? mirrorCanonical.data() : null) ?? {};
+    const joinDateRaw = staffMirror.invitedAt ?? staffMirror.createdAt ?? globalData.updatedAt;
     const nowIso = new Date().toISOString();
-    const joinDateRaw = staffData.invitedAt ?? staffData.createdAt;
     const joinDate =
       joinDateRaw !== undefined && joinDateRaw !== null
-        ? typeof joinDateRaw === "object" && "toDate" in joinDateRaw
+        ? typeof joinDateRaw === "object" && joinDateRaw !== null && "toDate" in joinDateRaw
           ? (joinDateRaw as { toDate: () => Date }).toDate().toISOString()
           : String(joinDateRaw)
         : nowIso;
@@ -84,81 +117,81 @@ export async function POST(request: NextRequest) {
       comment: exitReason.trim(),
     };
 
-    const globalRef = firestore.collection("global_users").doc(userId);
-    const globalSnap = await globalRef.get();
+    const filteredAffiliations = affiliations.filter((a: { venueId: string }) => a.venueId !== venueId);
 
-    if (globalSnap.exists) {
-      const globalData = globalSnap.data() ?? {};
-      const affiliations: Affiliation[] = Array.isArray(globalData.affiliations)
-        ? [...globalData.affiliations]
-        : [];
-      const filteredAffiliations = affiliations.filter((a: { venueId: string }) => a.venueId !== venueId);
-
-      let careerHistory: StaffCareerEntry[] = Array.isArray(globalData.careerHistory)
-        ? [...globalData.careerHistory]
-        : [];
-      const lastIdxForVenue = careerHistory.map((e, i) => (e.venueId === venueId ? i : -1)).filter((i) => i >= 0).pop();
-      if (lastIdxForVenue !== undefined && lastIdxForVenue >= 0) {
-        careerHistory[lastIdxForVenue] = {
-          ...careerHistory[lastIdxForVenue],
-          exitDate: nowIso,
-          exitReason: "contract_terminated",
-          rating: ratingNum,
-          comment: exitReason.trim(),
-        };
-      } else {
-        careerHistory = [...careerHistory, newEntry];
-      }
-
-      const ratingsWithValues = careerHistory
-        .map((e) => e.rating)
-        .filter((r): r is number => typeof r === "number" && r >= 1 && r <= 5);
-      const globalScore =
-        ratingsWithValues.length > 0
-          ? Math.round((ratingsWithValues.reduce((a, b) => a + b, 0) / ratingsWithValues.length) * 10) / 10
-          : undefined;
-
-      await globalRef.update({
-        affiliations: filteredAffiliations,
-        careerHistory,
-        ...(globalScore != null && { globalScore }),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+    let careerHistory: StaffCareerEntry[] = Array.isArray(globalData.careerHistory)
+      ? [...globalData.careerHistory]
+      : [];
+    const lastIdxForVenue = careerHistory.map((e, i) => (e.venueId === venueId ? i : -1)).filter((i) => i >= 0).pop();
+    if (lastIdxForVenue !== undefined && lastIdxForVenue >= 0) {
+      careerHistory[lastIdxForVenue] = {
+        ...careerHistory[lastIdxForVenue],
+        exitDate: nowIso,
+        exitReason: "contract_terminated",
+        rating: ratingNum,
+        comment: exitReason.trim(),
+      };
     } else {
-      await globalRef.set({
-        firstName: staffData.firstName ?? null,
-        lastName: staffData.lastName ?? null,
-        identity: staffData.identity ?? null,
-        identities: staffData.identities ?? null,
-        affiliations: [],
-        careerHistory: [newEntry],
-        globalScore: ratingNum,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      careerHistory = [...careerHistory, newEntry];
     }
 
-    await firestore.collection("staff").doc(staffId).update({
-      active: false,
-      onShift: false,
+    const ratingsWithValues = careerHistory
+      .map((e) => e.rating)
+      .filter((r): r is number => typeof r === "number" && r >= 1 && r <= 5);
+    const globalScore =
+      ratingsWithValues.length > 0
+        ? Math.round((ratingsWithValues.reduce((a, b) => a + b, 0) / ratingsWithValues.length) * 10) / 10
+        : undefined;
+
+    const prevLookup: string[] = Array.isArray(globalData.staffLookupIds) ? globalData.staffLookupIds : [];
+    const nextLookup = prevLookup.filter((x) => x !== sid && x !== canonicalStaffDocId);
+    const prevActive: string[] = Array.isArray(globalData.staffVenueActive) ? globalData.staffVenueActive : [];
+    const nextActive = prevActive.filter((v) => v !== venueId);
+
+    await globalRef.update({
+      affiliations: filteredAffiliations,
+      careerHistory,
+      staffLookupIds: nextLookup,
+      staffVenueActive: nextActive,
+      ...(globalScore != null && { globalScore }),
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const venueStaffRef = firestore.collection("venues").doc(venueId).collection("staff").doc(staffId);
-    await venueStaffRef.set(
-      { status: "inactive", updatedAt: FieldValue.serverTimestamp() },
+    await syncGlobalUserShiftVenues(firestore, userId, venueId, false);
+
+    const venueStaffCanonicalRef = firestore
+      .collection("venues")
+      .doc(venueId)
+      .collection("staff")
+      .doc(canonicalStaffDocId);
+    await venueStaffCanonicalRef.set(
+      { status: "inactive", active: false, onShift: false, updatedAt: FieldValue.serverTimestamp() },
       { merge: true }
     );
+    if (sid !== canonicalStaffDocId) {
+      const leg = firestore.collection("venues").doc(venueId).collection("staff").doc(sid);
+      const ls = await leg.get();
+      if (ls.exists) {
+        await leg.set(
+          { status: "inactive", active: false, onShift: false, updatedAt: FieldValue.serverTimestamp() },
+          { merge: true }
+        );
+      }
+    }
 
     const today = new Date().toISOString().slice(0, 10);
-    const futureShiftsSnap = await firestore
-      .collection("scheduleEntries")
-      .where("staffId", "==", staffId)
-      .get();
-    for (const d of futureShiftsSnap.docs) {
-      const slot = d.data().slot as { date?: string } | undefined;
-      const date = slot?.date ?? (d.data().date as string);
-      if (date && date >= today) {
-        await firestore.collection("scheduleEntries").doc(d.id).delete();
+    const scheduleIds = [...new Set([sid, canonicalStaffDocId])];
+    for (const scheduleStaffId of scheduleIds) {
+      const futureShiftsSnap = await firestore
+        .collection("scheduleEntries")
+        .where("staffId", "==", scheduleStaffId)
+        .get();
+      for (const d of futureShiftsSnap.docs) {
+        const slot = d.data().slot as { date?: string } | undefined;
+        const date = slot?.date ?? (d.data().date as string);
+        if (date && date >= today) {
+          await firestore.collection("scheduleEntries").doc(d.id).delete();
+        }
       }
     }
 

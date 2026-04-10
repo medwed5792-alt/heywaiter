@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 function isValidTableIdEntry(x: unknown): boolean {
   if (x === null || x === undefined) return false;
@@ -34,16 +35,20 @@ function cleanStringTableList(arr: unknown): string[] | null {
 
 /**
  * POST /api/admin/cleanup-staff-table-arrays
- * Удаляет из staff и global_users записи 0 / null / пустые строки в списках столов.
+ * Удаляет из global_users.affiliations[].assignedTableIds и venues/{venue}/staff мусорные значения.
  */
 export async function POST(_request: NextRequest) {
   try {
     const firestore = getAdminFirestore();
-    let staffUpdated = 0;
+    let venueStaffUpdated = 0;
     let globalUpdated = 0;
 
-    const staffSnap = await firestore.collection("staff").get();
-    for (const d of staffSnap.docs) {
+    const venueStaffSnap = await firestore
+      .collection("venues")
+      .doc(VENUE_ID)
+      .collection("staff")
+      .get();
+    for (const d of venueStaffSnap.docs) {
       const data = d.data();
       const patch: Record<string, unknown> = {};
       const ca = cleanStringTableList(data.assignedTableIds);
@@ -52,7 +57,7 @@ export async function POST(_request: NextRequest) {
       if (cd) patch.defaultTables = cd;
       if (Object.keys(patch).length > 0) {
         await d.ref.update(patch);
-        staffUpdated += 1;
+        venueStaffUpdated += 1;
       }
     }
 
@@ -77,7 +82,7 @@ export async function POST(_request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ ok: true, staffUpdated, globalUpdated });
+    return NextResponse.json({ ok: true, venueStaffUpdated, globalUpdated });
   } catch (err) {
     console.error("[admin/cleanup-staff-table-arrays]", err);
     return NextResponse.json(

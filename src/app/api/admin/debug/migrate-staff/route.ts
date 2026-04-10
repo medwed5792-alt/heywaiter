@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { FieldValue, type DocumentReference } from "firebase-admin/firestore";
+import { parseCanonicalStaffDocId } from "@/lib/identity/global-user-staff-bridge";
 
 const MIGRATE_SECRET = "HW_CLEAN_2026";
 const JUNK_SUBSTRINGS = ["о1", "о2", "с1", "гури", "ааа", "тест"];
@@ -52,10 +53,12 @@ export async function GET(request: NextRequest) {
     const venueStaffRef = firestore.collection("venues").doc(venueId.trim()).collection("staff");
     const staffSnap = await venueStaffRef.get();
 
-    const rootStaffById = new Map<string, Record<string, unknown>>();
+    const globalByStaffDocId = new Map<string, Record<string, unknown>>();
     for (const d of staffSnap.docs) {
-      const rootSnap = await firestore.collection("staff").doc(d.id).get();
-      if (rootSnap.exists) rootStaffById.set(d.id, rootSnap.data() as Record<string, unknown>);
+      const parsed = parseCanonicalStaffDocId(d.id);
+      if (!parsed) continue;
+      const gs = await firestore.collection("global_users").doc(parsed.globalUserId).get();
+      if (gs.exists) globalByStaffDocId.set(d.id, gs.data() as Record<string, unknown>);
     }
 
     type DocEntry = { id: string; ref: DocumentReference; data: Record<string, unknown>; displayName: string };
@@ -63,8 +66,8 @@ export async function GET(request: NextRequest) {
 
     for (const d of staffSnap.docs) {
       const data = d.data() as Record<string, unknown>;
-      const rootData = rootStaffById.get(d.id) ?? null;
-      const displayName = getDisplayName(data, rootData);
+      const globalData = globalByStaffDocId.get(d.id) ?? null;
+      const displayName = getDisplayName(data, globalData);
       entries.push({ id: d.id, ref: d.ref, data, displayName });
     }
 

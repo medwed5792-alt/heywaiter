@@ -159,13 +159,32 @@ export default function AdminSchedulePage() {
 
   useEffect(() => {
     const q = query(
-      collection(db, "staff"),
-      where("venueId", "==", VENUE_ID)
+      collection(db, "global_users"),
+      where("staffVenueActive", "array-contains", VENUE_ID)
     );
     const unsub = onSnapshot(q, (snap) => {
-      const activeOnly = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Staff))
-        .filter((s) => s.active === true);
+      const activeOnly: Staff[] = [];
+      for (const d of snap.docs) {
+        const g = d.data() as Record<string, unknown>;
+        const affs = Array.isArray(g.affiliations) ? g.affiliations : [];
+        const aff = affs.find((a: { venueId?: string }) => a?.venueId === VENUE_ID) as
+          | { status?: string; role?: string }
+          | undefined;
+        if (!aff || aff.status === "former") continue;
+        const sid = `${VENUE_ID}_${d.id}`;
+        activeOnly.push({
+          id: sid,
+          userId: d.id,
+          venueId: VENUE_ID,
+          active: true,
+          role: (aff.role as Staff["role"]) ?? "waiter",
+          primaryChannel: (g.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+          identity: (g.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
+          firstName: g.firstName as string | undefined,
+          lastName: g.lastName as string | undefined,
+          onShift: false,
+        } as Staff);
+      }
       const displayKey = (s: Staff) =>
         (s as { displayName?: string }).displayName ??
         (s as { name?: string }).name ??

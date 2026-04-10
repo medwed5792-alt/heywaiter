@@ -8,106 +8,58 @@ import { DEFAULT_VENUE_ID as VENUE_ID } from "@/lib/standards/venue-default";
 
 /**
  * GET /api/admin/team
- * Список команды заведения: только те, у кого venueId === currentVenueId.
- * Данные из staff + global_users (если есть userId).
+ * Список команды: global_users (staffVenueActive) + venues/{venue}/staff (без корневой staff).
  */
 export async function GET() {
   try {
     const staffSnap = await getDocs(
-      query(collection(db, "staff"), where("venueId", "==", VENUE_ID))
+      query(collection(db, "global_users"), where("staffVenueActive", "array-contains", VENUE_ID))
     );
 
     const staffList: Staff[] = [];
-    const userIds: string[] = [];
 
     for (const d of staffSnap.docs) {
-      const data = d.data();
-      const userId = data.userId as string | undefined;
-      if (userId) {
-        userIds.push(userId);
-      }
-    }
+      const global = { id: d.id, ...d.data() } as GlobalUser;
+      const aff = global.affiliations?.find((a) => a.venueId === VENUE_ID);
+      if (!aff || aff.status === "former") continue;
 
-    // Batch read global_users for linked staff
-    const globalUsers = new Map<string, GlobalUser>();
-    for (const uid of [...new Set(userIds)]) {
-      const ref = doc(db, "global_users", uid);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        globalUsers.set(uid, { id: snap.id, ...snap.data() } as GlobalUser);
-      }
-    }
+      const staffDocId = `${VENUE_ID}_${d.id}`;
+      const vsSnap = await getDoc(doc(db, "venues", VENUE_ID, "staff", staffDocId));
+      const vd = vsSnap.exists() ? vsSnap.data() : {};
 
-    for (const d of staffSnap.docs) {
-      const data = d.data();
-      const userId = data.userId as string | undefined;
-      const global = userId ? globalUsers.get(userId) : null;
-      const aff = global?.affiliations?.find((a) => a.venueId === VENUE_ID);
-      const isActive = data.active === true;
-      if (!isActive) continue;
+      if (vd.status === "inactive" || vd.active === false) continue;
 
-      if (global) {
-        const sotaId =
-          typeof data.sotaId === "string" && data.sotaId.trim()
-            ? data.sotaId.trim()
-            : typeof global.sotaId === "string" && global.sotaId.trim()
-              ? global.sotaId.trim()
-              : undefined;
-        staffList.push({
-          id: d.id,
-          userId: global.id,
-          venueId: VENUE_ID,
-          ...(sotaId ? { sotaId } : {}),
-          role: (data.role as Staff["role"]) ?? "waiter",
-          primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
-          identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
-          onShift: data.onShift ?? aff?.onShift ?? false,
-          active: true,
-          firstName: global.firstName ?? data.firstName,
-          lastName: global.lastName ?? data.lastName,
-          position: aff?.position ?? data.position,
-          group: data.group ?? undefined,
-          call_category: data.call_category ?? undefined,
-          assignedTableIds: data.assignedTableIds ?? [],
-          globalScore: global.globalScore ?? data.globalScore,
-          guestRating: global.guestRating ?? data.guestRating,
-          venueRating: global.venueRating ?? data.venueRating,
-          photoUrl: global.photoUrl ?? data.photoUrl,
-          phone: global.phone ?? data.phone,
-          tgId: global.tgId ?? data.tgId,
-          identities: global.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
-          careerHistory: global.careerHistory,
-          updatedAt: global.updatedAt ?? data.updatedAt,
-        } as Staff);
-      } else {
-        const sotaId =
-          typeof data.sotaId === "string" && data.sotaId.trim() ? data.sotaId.trim() : undefined;
-        staffList.push({
-          id: d.id,
-          venueId: VENUE_ID,
-          ...(sotaId ? { sotaId } : {}),
-          role: (data.role as Staff["role"]) ?? "waiter",
-          primaryChannel: (data.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
-          identity: (data.identity as Staff["identity"]) ?? { channel: "telegram", externalId: "", locale: "ru" },
-          onShift: data.onShift ?? false,
-          active: true,
-          firstName: data.firstName,
-          lastName: data.lastName,
-          position: data.position,
-          group: data.group,
-          call_category: data.call_category,
-          assignedTableIds: data.assignedTableIds ?? [],
-          globalScore: data.globalScore,
-          guestRating: data.guestRating,
-          venueRating: data.venueRating,
-          photoUrl: data.photoUrl,
-          phone: data.phone,
-          tgId: data.tgId,
-          identities: data.identities ?? (data.tgId ? { tg: data.tgId } : undefined),
-          careerHistory: data.careerHistory,
-          updatedAt: data.updatedAt,
-        } as Staff);
-      }
+      const sotaId =
+        (typeof vd.sotaId === "string" && vd.sotaId.trim() && vd.sotaId.trim()) ||
+        (typeof global.sotaId === "string" && global.sotaId.trim() && global.sotaId.trim()) ||
+        undefined;
+
+      staffList.push({
+        id: staffDocId,
+        userId: global.id,
+        venueId: VENUE_ID,
+        ...(sotaId ? { sotaId } : {}),
+        role: (vd.role as Staff["role"]) ?? (aff.role as Staff["role"]) ?? "waiter",
+        primaryChannel: (global.primaryChannel as Staff["primaryChannel"]) ?? "telegram",
+        identity: global.identity ?? { channel: "telegram", externalId: "", locale: "ru" },
+        onShift: vd.onShift === true || aff.onShift === true,
+        active: true,
+        firstName: global.firstName ?? (vd.firstName as string) ?? null,
+        lastName: global.lastName ?? (vd.lastName as string) ?? null,
+        position: aff.position ?? (vd.position as string) ?? undefined,
+        group: vd.group ?? undefined,
+        call_category: vd.call_category ?? undefined,
+        assignedTableIds: (aff.assignedTableIds as string[]) ?? (vd.assignedTableIds as string[]) ?? [],
+        globalScore: global.globalScore,
+        guestRating: global.guestRating,
+        venueRating: global.venueRating,
+        photoUrl: global.photoUrl ?? (vd.photoUrl as string) ?? undefined,
+        phone: global.phone ?? (vd.phone as string) ?? undefined,
+        tgId: global.tgId ?? (vd.tgId as string) ?? undefined,
+        identities: global.identities ?? (vd.tgId ? { tg: vd.tgId as string } : undefined),
+        careerHistory: global.careerHistory,
+        updatedAt: global.updatedAt ?? vd.updatedAt,
+      } as Staff);
     }
 
     return NextResponse.json({ staff: staffList });
