@@ -8,40 +8,9 @@ import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import { resolveTableNumberFromDoc } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
 import type { ActiveSessionParticipant } from "@/lib/types";
+import { extractOrderBillInfo, type OrderBillItemInfo } from "@/lib/orders/order-bill-amount";
 
-type BillItemInfo = { label: string; amount: number };
-
-function parseNumber(raw: unknown): number {
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  if (typeof raw === "string") {
-    const n = Number(raw.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
-function extractOrderBillInfo(data: Record<string, unknown>): { amount: number; items: BillItemInfo[] } {
-  const rawItems = Array.isArray(data.items) ? data.items : [];
-  const items: BillItemInfo[] = [];
-  for (const i of rawItems) {
-    const x = (i ?? {}) as Record<string, unknown>;
-    const label =
-      String(x.name ?? x.title ?? x.dishName ?? x.itemName ?? "").trim() || "Позиция";
-    const qty = Math.max(parseNumber(x.qty ?? x.quantity), 1);
-    const unit = parseNumber(x.price ?? x.unitPrice);
-    const row = parseNumber(x.amount ?? x.total);
-    const amount = row > 0 ? row : unit > 0 ? unit * qty : 0;
-    items.push({ label: qty > 1 ? `${label} x${qty}` : label, amount });
-  }
-
-  if (items.length === 0) {
-    const single = parseNumber(data.amount) || parseNumber(data.total) || parseNumber(data.sum) || parseNumber(data.price);
-    if (single > 0) items.push({ label: `Заказ`, amount: single });
-  }
-
-  const amount = items.reduce((acc, i) => acc + i.amount, 0);
-  return { amount, items };
-}
+type BillItemInfo = OrderBillItemInfo;
 
 export async function POST(request: NextRequest) {
   try {

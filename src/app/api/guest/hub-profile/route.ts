@@ -70,10 +70,19 @@ export async function POST(request: NextRequest) {
       device: { linked: Boolean(identities.anon), hint: identities.anon ? "устройство привязано" : undefined },
     };
 
+    const localeRaw = snap.data()?.locale;
+    const timezoneRaw = snap.data()?.timezone;
+    const lastSeenRaw = snap.data()?.lastSeen;
+    const registeredAtRaw = snap.data()?.registeredAt;
+
     return NextResponse.json({
       ok: true,
       globalGuestUid: docId,
       channels,
+      locale: typeof localeRaw === "string" ? localeRaw : null,
+      timezone: typeof timezoneRaw === "string" ? timezoneRaw : null,
+      lastSeen: lastSeenRaw && typeof lastSeenRaw === "object" ? lastSeenRaw : null,
+      registeredAt: registeredAtRaw ?? null,
     });
   } catch (e) {
     console.error("[api/guest/hub-profile]", e);

@@ -1,16 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { getIdToken } from "firebase/auth";
 import toast from "react-hot-toast";
 import { auth } from "@/lib/firebase";
 
 const TIP_PRESETS = [100, 200, 500] as const;
 
+type TelegramWebAppInit = {
+  initData?: string;
+};
+
+function getTelegramWebApp(): TelegramWebAppInit | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { Telegram?: { WebApp?: TelegramWebAppInit } }).Telegram?.WebApp;
+}
+
 type GuestFeedbackStarsProps = {
   /** swid — id документа staff для staff_wallets */
   walletStaffId: string | null;
   venueId: string;
+  tableId: string;
   customerUid: string;
   activeSessionId: string;
   title?: string;
@@ -21,10 +31,12 @@ type GuestFeedbackStarsProps = {
 
 /**
  * Экран звёзд + «Спасибо» с привязкой к кошельку официанта (real-time swid из сессии).
+ * Отзыв пишется в `reviews` (sessionId + venueId) при выборе звёзд и перед финализацией визита.
  */
 export function GuestFeedbackStars({
   walletStaffId,
   venueId,
+  tableId,
   customerUid,
   activeSessionId,
   title = "Спасибо за визит!",
@@ -34,6 +46,40 @@ export function GuestFeedbackStars({
   const [stars, setStars] = useState(0);
   const [amount, setAmount] = useState<number>(TIP_PRESETS[0]);
   const [busy, setBusy] = useState(false);
+
+  const persistReview = useCallback(
+    async (starCount: number) => {
+      const tg = getTelegramWebApp();
+      const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
+      if (!initData) return;
+      const v = venueId.trim();
+      const t = tableId.trim();
+      const sid = activeSessionId.trim();
+      const uid = customerUid.trim();
+      if (!v || !t || !sid || !uid) return;
+      try {
+        const res = await fetch("/api/guest/session-review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            initData,
+            venueId: v,
+            tableId: t,
+            sessionId: sid,
+            customerUid: uid,
+            stars: starCount,
+          }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          console.warn("[GuestFeedbackStars] session-review", data.error ?? res.status);
+        }
+      } catch (e) {
+        console.warn("[GuestFeedbackStars] session-review", e);
+      }
+    },
+    [venueId, tableId, activeSessionId, customerUid]
+  );
 
   const runThankYou = async () => {
     if (!walletStaffId?.trim()) {
@@ -47,6 +93,7 @@ export function GuestFeedbackStars({
     }
     setBusy(true);
     try {
+      await persistReview(stars);
       const token = await getIdToken(user);
       const res = await fetch("/api/guest/tips", {
         method: "POST",
@@ -79,6 +126,7 @@ export function GuestFeedbackStars({
   const skipTips = async () => {
     setBusy(true);
     try {
+      await persistReview(stars);
       await onFinalize();
     } finally {
       setBusy(false);
@@ -97,11 +145,14 @@ export function GuestFeedbackStars({
               <button
                 key={n}
                 type="button"
-                onClick={() => setStars(n)}
+                onClick={() => {
+                  setStars(n);
+                  void persistReview(n);
+                }}
                 className={`text-3xl leading-none ${n <= stars ? "text-amber-400" : "text-slate-300"}`}
                 aria-label={`Поставить ${n} звезд`}
               >
-                ★
+                {"\u2605"}
               </button>
             ))}
           </div>
@@ -118,7 +169,7 @@ export function GuestFeedbackStars({
                       amount === v ? "border-emerald-600 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-white text-slate-700"
                     }`}
                   >
-                    {v} ₽
+                    {v} {"\u20BD"}
                   </button>
                 ))}
               </div>

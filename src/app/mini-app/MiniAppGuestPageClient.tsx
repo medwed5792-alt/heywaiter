@@ -632,10 +632,12 @@ function MiniAppScreenRouter() {
       guestAwaitingTableFeedback &&
       activeSession?.id &&
       currentLocation.venueId?.trim() &&
+      currentLocation.tableId?.trim() &&
       (globalGuestUid?.trim() || guestProfileUid?.trim()) ? (
         <GuestFeedbackStars
           walletStaffId={feedbackTargetStaffId}
           venueId={currentLocation.venueId.trim()}
+          tableId={currentLocation.tableId.trim()}
           customerUid={(globalGuestUid?.trim() || guestProfileUid!.trim())}
           activeSessionId={activeSession.id}
           title="Отзыв и чаевые"

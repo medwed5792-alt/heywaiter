@@ -1,5 +1,6 @@
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { isActiveSessionWithinMaxAge, activeSessionCreatedAtMillis } from "@/lib/session-freshness";
+import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
 
 /** «Активный» визит за столом в терминах Staff-lock / бесшовного входа. */
 const RESTORE_SESSION_STATUS = "check_in_success" as const;
@@ -64,6 +65,12 @@ export async function restoreGuestSessionByGlobalUid(globalGuestUid: string): Pr
   const venueId = String(data.venueId ?? "").trim();
   const tableId = String(data.tableId ?? "").trim();
   if (!venueId || !tableId) return { ok: false, reason: "not_found" };
+
+  await syncGuestGlobalProfileOnVisit(fs, {
+    globalUid: uid,
+    venueId,
+    tableId,
+  });
 
   return {
     ok: true,

@@ -1,5 +1,6 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { DEFAULT_GUEST_LOCALE } from "@/lib/identity/guest-global-profile";
 
 type GuestIdentityKey = "tg" | "wa" | "vk" | "anon" | "phone" | "email";
 
@@ -159,6 +160,9 @@ export async function resolveOrCreateGlobalGuestUid(identities: GuestIdentityInp
     identities: nextIdentities,
     systemRole: "GUEST",
     affiliations: [],
+    registeredAt: FieldValue.serverTimestamp(),
+    locale: DEFAULT_GUEST_LOCALE,
+    timezone: "",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });

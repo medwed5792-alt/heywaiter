@@ -255,6 +255,25 @@ export interface Review {
   createdAt: unknown;
 }
 
+/** Архив визита после закрытия activeSessions (коллекция archived_visits, id = sessionId). */
+export interface ArchivedVisit {
+  sessionId: string;
+  venueId: string;
+  tableId: string;
+  tableNumber: number;
+  masterId: string | null;
+  participantUids: string[];
+  assignedStaffId: string | null;
+  sessionStatusAtArchive: string;
+  createdAt: unknown;
+  closedAt: unknown;
+  archivedAt: unknown;
+  closeSource: "guest_feedback_finalized" | "force_closed";
+  ordersTotalRub: number;
+  guestReviews: { reviewId: string; stars: number; text?: string }[];
+  staffRatedGuestAt: unknown;
+}
+
 /** Тайм-слот смены (сетевые заведения: точка + время) */
 export interface ShiftSlot {
   date: string;

@@ -14,6 +14,7 @@ import {
   collectTelegramNumericIdsFromSessionDoc,
 } from "@/lib/active-sessions-index";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
+import { buildArchivedVisitPayload } from "@/domain/usecases/session/archiveClosedVisit";
 
 const IDX = "active_sessions";
 
@@ -140,6 +141,20 @@ export async function finalizeGuestSessionClosedAfterFeedback(params: {
   const idxRef = fs.collection(IDX).doc(idxId);
 
   const sessionSnap = await sessionRef.get();
+  const archiveRef = fs.collection("archived_visits").doc(sessionId);
+  const archiveSnap = await archiveRef.get();
+
+  let archivedPayload: Record<string, unknown> | null = null;
+  if (sessionSnap.exists && !archiveSnap.exists) {
+    const sDataPre = (sessionSnap.data() ?? {}) as Record<string, unknown>;
+    const v0 = String(sDataPre.venueId ?? "").trim() === venueId;
+    const t0 = String(sDataPre.tableId ?? "").trim() === tableId;
+    const st0 = String(sDataPre.status ?? "").trim();
+    if (v0 && t0 && (st0 === "awaiting_guest_feedback" || st0 === "completed")) {
+      archivedPayload = await buildArchivedVisitPayload(fs, sessionId, sDataPre, "guest_feedback_finalized");
+    }
+  }
+
   const batch = fs.batch();
   if (sessionSnap.exists) {
     const sData = (sessionSnap.data() ?? {}) as Record<string, unknown>;
@@ -153,6 +168,9 @@ export async function finalizeGuestSessionClosedAfterFeedback(params: {
           closedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
+        if (archivedPayload) {
+          batch.set(archiveRef, archivedPayload);
+        }
       }
     }
   }
@@ -205,12 +223,22 @@ export async function closeSessionForceClosedAndFreeTable(params: {
   }
 
   const existing = tableSnap.exists ? (tableSnap.data() ?? {}) : {};
+  const archiveRef = fs.collection("archived_visits").doc(sessionId);
+  const archiveSnap = await archiveRef.get();
+  let archivedPayload: Record<string, unknown> | null = null;
+  if (!archiveSnap.exists) {
+    archivedPayload = await buildArchivedVisitPayload(fs, sessionId, sData, "force_closed");
+  }
+
   const batch = fs.batch();
   batch.update(sessionRef, {
     status: "closed",
     closedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+  if (archivedPayload) {
+    batch.set(archiveRef, archivedPayload);
+  }
   batch.set(
     tableRef,
     {

@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
       guestIdentity: rawGuest,
       deviceAnchor,
       globalGuestUid: rawGlobalGuestUid,
+      locale: rawLocale,
+      timezone: rawTimezone,
     } = body as {
       venueId?: string;
       tableId?: string;
@@ -72,6 +74,8 @@ export async function POST(request: NextRequest) {
       deviceAnchor?: string;
       /** Восстановление без QR: global UID (id global_users), только status check_in_success и возраст сессии по createdAt */
       globalGuestUid?: string;
+      locale?: string;
+      timezone?: string;
     };
     const guestIdentity: MessengerIdentity | undefined =
       rawGuest && typeof rawGuest === "object" && "channel" in rawGuest && "externalId" in rawGuest
@@ -132,6 +136,8 @@ export async function POST(request: NextRequest) {
       guestIdentity,
       deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
       knownGlobalGuestUid: knownGlobalForTable || undefined,
+      locale: typeof rawLocale === "string" ? rawLocale : undefined,
+      timezone: typeof rawTimezone === "string" ? rawTimezone : undefined,
     });
 
     if (result.status === "check_in_success") {

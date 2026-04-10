@@ -13,6 +13,7 @@ import {
 } from "@/lib/identity/global-guest-hub";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
 import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
@@ -41,6 +42,9 @@ export interface CheckInGuestInput {
   deviceAnchor?: string;
   /** Уже известный global UID (cookie, хранилище клиента) — merge на входе без ожидания мессенджера */
   knownGlobalGuestUid?: string;
+  /** Предпочтения гостя для аналитики / маркетинга (опционально). */
+  locale?: string;
+  timezone?: string;
 }
 
 /**
@@ -54,8 +58,19 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   const windowStart = new Date(now.getTime() - RESERVATION_WINDOW_MS);
   const windowEnd = new Date(now.getTime() + RESERVATION_WINDOW_MS);
 
-  const { venueId, tableId, tableNumber, guestId, guestIdentity, participantUid, deviceAnchor, knownGlobalGuestUid } =
-    input;
+  const {
+    venueId,
+    tableId,
+    tableNumber,
+    guestId,
+    guestIdentity,
+    participantUid,
+    deviceAnchor,
+    knownGlobalGuestUid,
+    locale,
+    timezone,
+  } = input;
+  const firestore = getAdminFirestore();
   const guestExternalId = guestIdentity?.externalId ?? undefined;
   const uidFromIdentity =
     guestIdentity?.channel === "telegram"
@@ -77,6 +92,16 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     identityInputs,
   });
 
+  if (currentUid) {
+    await syncGuestGlobalProfileOnVisit(firestore, {
+      globalUid: currentUid,
+      venueId,
+      tableId,
+      locale,
+      timezone,
+    });
+  }
+
   const isSameGuestUid = (existingUid: string): boolean => {
     if (guestCustomerUidsMatch(existingUid, currentUid)) return true;
     if (rawUidCandidate && guestCustomerUidsMatch(existingUid, rawUidCandidate)) return true;
@@ -86,7 +111,6 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   // API route historically routes "events" through a resolved default venue id.
   const VENUE_EVENTS_ID = resolveVenueId(venueId);
 
-  const firestore = getAdminFirestore();
   let shouldShowPinHint = false;
 
   async function recordGuestVisit() {
