@@ -57,7 +57,7 @@ import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
 } from "@/lib/active-session-waiter";
-import { isActiveSessionWithinMaxAge } from "@/lib/session-freshness";
+import { isActiveSessionWithinMaxAge, pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -980,29 +980,45 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setParticipants(parsedParticipants);
     };
 
+    /** Без orderBy по createdAt: иначе нужен отдельный составной индекс; при его отсутствии onSnapshot падает и UI «вечно грузится». Свежесть — через pickNewestFreshActiveSessionDoc. */
     const q = query(
       collection(db, "activeSessions"),
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
       where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-      orderBy("createdAt", "desc"),
-      limit(1)
+      limit(25)
     );
 
-    unsub = onSnapshot(q, (snap) => {
-      if (snap.empty) {
-        setActiveSession(null);
-        setParticipants([]);
-        if (sawSessionDoc) {
-          sawSessionDoc = false;
-          void switchLocation(venueId, null);
+    unsub = onSnapshot(
+      q,
+      (snap) => {
+        if (snap.empty) {
+          setActiveSession(null);
+          setParticipants([]);
+          if (sawSessionDoc) {
+            sawSessionDoc = false;
+            void switchLocation(venueId, null);
+          }
+          return;
         }
-        return;
-      }
 
-      const first = snap.docs[0]!;
-      applySessionDoc(first.id, (first.data() ?? {}) as Record<string, unknown>);
-    });
+        const picked = pickNewestFreshActiveSessionDoc(snap.docs);
+        if (!picked) {
+          setActiveSession(null);
+          setParticipants([]);
+          if (sawSessionDoc) {
+            sawSessionDoc = false;
+            void switchLocation(venueId, null);
+          }
+          return;
+        }
+
+        applySessionDoc(picked.id, (picked.data() ?? {}) as Record<string, unknown>);
+      },
+      (err) => {
+        console.error("[guest] activeSessions listener failed (проверьте индексы Firestore и правила):", err);
+      }
+    );
 
     return () => {
       cancelled = true;
