@@ -39,7 +39,7 @@ import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
-import { resolveSotaStartappToVenueTable } from "@/lib/sota-resolve";
+import { resolveGuestTableFromQrText } from "@/lib/guest-qr-table-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
@@ -337,6 +337,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     Record<string, VenueMenuVenueBlock | null>
   >({});
   const [showLandingScanner, setShowLandingScanner] = useState(false);
+  /** Счётчик для принудительного пересоздания подписки activeSessions (встроенный сканер = тот же check-in, что и deep link). */
+  const [tableListenerEpoch, setTableListenerEpoch] = useState(0);
   const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -711,7 +713,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       venueId: string,
       tableId: string,
       participantUidHint?: string,
-      knownGlobalGuestUidHint?: string
+      knownGlobalGuestUidHint?: string,
+      options?: { forceTableListenerResubscribe?: boolean }
     ): Promise<boolean> => {
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
@@ -746,6 +749,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             globalGuestUid: data.globalGuestUid,
             onboardingHint: data.onboardingHint ?? null,
           });
+          if (options?.forceTableListenerResubscribe) {
+            setTableListenerEpoch((n) => n + 1);
+          }
           return true;
         }
         setShowLandingScanner(true);
@@ -760,7 +766,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return false;
       }
     },
-    [applySuccessfulTableBootstrap, globalGuestUid, guestIdentity.currentUid, persistedSeatGlobalUid, switchLocation]
+    [applySuccessfulTableBootstrap, globalGuestUid, guestIdentity.currentUid, switchLocation]
+  );
+
+  /** Единый конвейер входа за стол: тот же POST /api/check-in + applySuccessfulTableBootstrap, что и у внешнего deep link. */
+  const enterGuestTableThroughGateway = useCallback(
+    async (
+      venueId: string,
+      tableId: string,
+      options?: { forceTableListenerResubscribe?: boolean }
+    ): Promise<boolean> => {
+      return bootstrapTableByServer(venueId, tableId, undefined, undefined, options);
+    },
+    [bootstrapTableByServer]
   );
 
   const bootstrapSessionByGlobalGuestUid = useCallback(
@@ -854,7 +872,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
 
       try {
-        await bootstrapTableByServer(entryTable.venueId, entryTable.tableId);
+        await enterGuestTableThroughGateway(entryTable.venueId, entryTable.tableId);
         if (cancelled) return;
       } finally {
         if (!cancelled) setIsInitializing(false);
@@ -870,6 +888,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     searchParams,
     switchLocation,
     refreshVisitHistory,
+    enterGuestTableThroughGateway,
     bootstrapTableByServer,
     bootstrapSessionByGlobalGuestUid,
   ]);
@@ -966,6 +985,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       where("venueId", "==", venueId),
       where("tableId", "==", tableId),
       where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+      orderBy("createdAt", "desc"),
       limit(1)
     );
 
@@ -988,7 +1008,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       cancelled = true;
       unsub?.();
     };
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation]);
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation, tableListenerEpoch]);
 
   // Live orders data for the table.
   useEffect(() => {
@@ -1193,91 +1213,24 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
 
-          const resolveFromUrl = async (u: URL) => {
-            const path = u.pathname || "";
-            if (path.includes("/check-in") || path.includes("/mini-app")) {
-              const v = u.searchParams.get("v") || u.searchParams.get("venueId");
-              const t = u.searchParams.get("t") || u.searchParams.get("tableId") || u.searchParams.get("tableRef") || "";
-              if (v && v.trim()) return { venueId: v.trim(), tableId: t.trim() };
-            }
-            const startapp = u.searchParams.get("startapp");
-            if (startapp) {
-              const decoded = (() => {
-                try {
-                  return decodeURIComponent(startapp.trim());
-                } catch {
-                  return startapp.trim();
-                }
-              })();
-              const sota = parseSotaStartappPayload(decoded);
-              if (sota) {
-                const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
-                if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
-              }
-              const legacy = parseStartParamPayload(decoded);
-              if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
-            }
-            return null;
-          };
-
-          const resolveFromText = async (text: string) => {
-            try {
-              if (/^https?:\/\//i.test(text)) return await resolveFromUrl(new URL(text));
-              if (text.includes("heywaiter.vercel.app")) {
-                const normalized = text.startsWith("heywaiter.vercel.app")
-                  ? `https://${text}`
-                  : `https://${text.replace(/^\/+/, "")}`;
-                return await resolveFromUrl(new URL(normalized));
-              }
-            } catch {
-              // ignore
-            }
-
-            const startappMatch = text.match(/startapp=([^&\s]+)/i);
-            if (startappMatch?.[1]) {
-              const rawToken = startappMatch[1];
-              const decoded = (() => {
-                try {
-                  return decodeURIComponent(rawToken.trim());
-                } catch {
-                  return rawToken.trim();
-                }
-              })();
-              const sota = parseSotaStartappPayload(decoded);
-              if (sota) {
-                const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
-                if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
-              }
-              const legacy = parseStartParamPayload(decoded);
-              if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
-            }
-
-            const legacy = parseStartParamPayload(text);
-            if (legacy) return { venueId: legacy.venueId, tableId: legacy.tableId };
-            const sota = parseSotaStartappPayload(text);
-            if (sota) {
-              const resolved = await resolveSotaStartappToVenueTable(db, sota.venueSotaId, sota.tableRef);
-              if (resolved) return { venueId: resolved.venueId, tableId: resolved.tableId || "" };
-            }
-            return null;
-          };
-
-          const resolved = await resolveFromText(raw);
-          if (!resolved) {
+          const resolved = await resolveGuestTableFromQrText(raw, db);
+          if (!resolved?.venueId?.trim()) {
             toast.error("Неверный QR");
             return;
           }
-          const access = await checkGuestQrVenueAccess(resolved.venueId);
+          const venueId = resolved.venueId.trim();
+          const access = await checkGuestQrVenueAccess(venueId);
           if (!access.ok) {
             toast.error(access.message);
             return;
           }
-          const resolvedTableId = (resolved.tableId || "").trim();
-          if (!resolvedTableId) {
+          const tableId = (resolved.tableId || "").trim();
+          if (!tableId) {
             toast.error("В QR не указан стол");
             return;
           }
-          await bootstrapTableByServer(resolved.venueId, resolvedTableId);
+
+          await enterGuestTableThroughGateway(venueId, tableId, { forceTableListenerResubscribe: true });
           tg.closeScanQrPopup?.();
         })();
       });
@@ -1289,7 +1242,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push("/");
-  }, [router, checkGuestQrVenueAccess, bootstrapTableByServer]);
+  }, [router, checkGuestQrVenueAccess, enterGuestTableThroughGateway]);
 
   const callWaiter = useCallback(async () => {
       if (isGuestBlocked) {
