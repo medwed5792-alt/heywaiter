@@ -10,7 +10,7 @@
 
 2. **Гостевой финал:**
    - после экрана отзыва (и при необходимости чаевых) сессия переводится в `closed`;
-   - индекс `active_sessions` переводится в `visit_ended`.
+   - единственная коллекция жизненного цикла визита — `activeSessions` (отдельный индекс не используется).
 
 Это убирает старый поток "цифра в Staff-боте -> thankYou-сообщение гостю" как источник истины для закрытия.
 
@@ -38,14 +38,11 @@ Use-case:
 - освобождает стол:
   - `status = "free"`
   - `currentGuest = null`
-  - сохраняет `assignments` (merge);
-- обновляет индекс `active_sessions` для Telegram-участников сессии:
-  - `order_status = "AWAITING_FEEDBACK"`
-  - `vr_id`, `table_id`, `last_seen`.
+  - сохраняет `assignments` (merge).
 
 Итог шага:
 - стол свободен для новых гостей сразу после операционного закрытия;
-- текущий гость (или участники) остаётся в фазе пост-визита для отзыва.
+- текущий гость (или участники) остаётся в фазе пост-визита для отзыва; Mini App находит сессию по `activeSessions` (подписка по столу / глобальный uid).
 
 ## Шаг 2. Финал после отзыва гостя
 
@@ -54,21 +51,22 @@ Use-case:
 
 Как работает:
 - роут верифицирует `initData` Telegram Mini App;
-- читает `active_sessions/tg_{telegramUserId}`;
-- если `order_status !== "AWAITING_FEEDBACK"` -> идемпотентно возвращает `already: true`;
-- иначе ищет сессию `activeSessions` по `venueId + tableId` в статусах `awaiting_guest_feedback|completed`.
+- по `telegram user id` резолвит профиль `global_users` (поле `identities.tg`) и канонический `tg:<id>`;
+- ищет документ в `activeSessions` со статусом `awaiting_guest_feedback` или `completed`, где `masterId` или `participantUids` совпадает с этими идентификаторами (см. `src/lib/active-session-feedback-phase.ts`);
+- если сессия не найдена — идемпотентно `{ ok: true, already: true }`.
 
 Use-case:
 - `finalizeGuestSessionClosedAfterFeedback(...)` из `src/domain/usecases/session/closeTableSession.ts`
 
-Что делает use-case одним `batch.commit()`:
-- если найдена целевая сессия в нужной фазе:
-  - `status = "closed"`
-  - `closedAt = serverTimestamp`
-  - `updatedAt = serverTimestamp`;
-- всегда обновляет индекс `active_sessions`:
-  - `order_status = "visit_ended"`
-  - `last_seen = serverTimestamp`.
+Что делает use-case одним `batch.commit()` при подходящей сессии:
+- `status = "closed"`
+- `closedAt = serverTimestamp`
+- `updatedAt = serverTimestamp`
+- при необходимости — запись в `archived_visits`.
+
+**Индексы Firestore** для запросов финала (добавить через консоль или `firestore.indexes.json`):
+- `activeSessions`: `masterId` + `status`
+- `activeSessions`: `participantUids` (array-contains) + `status`
 
 ## Роль мастера стола (split bill)
 
@@ -97,4 +95,4 @@ Use-case:
 - Мастер стола (гость) не имеет права переводить стол в `free`.
 - `closed + free` в один шаг допустим только для force-операций (зависшие кейсы).
 - Состояние стола и сессии обновляется атомарно в batch, чтобы не было окна рассинхрона.
-- `active_sessions` — источник для recover/follow-up в Mini App, а не признак "стол занят/свободен".
+- Все сценарии гостя после закрытия стола опираются только на `activeSessions` и привязку Telegram ↔ `global_users`.

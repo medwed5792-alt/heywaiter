@@ -1071,17 +1071,13 @@ function AdminDashboardContent() {
           sessionId: payload.sessionId,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; indexedGuests?: number };
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         toast.error(typeof data.error === "string" ? data.error : "Ошибка закрытия стола");
         return;
       }
       setCloseTableModal(null);
-      toast.success(
-        data.indexedGuests && data.indexedGuests > 0
-          ? "Визит завершён: гости увидят экран отзыва и чаевых в приложении."
-          : "Стол освобождён. Гость без Telegram в индексе — отзыв только вручную."
-      );
+      toast.success("Визит завершён: гость увидит экран отзыва и чаевых в Mini App (по привязке Telegram к профилю).");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка закрытия стола");
     } finally {

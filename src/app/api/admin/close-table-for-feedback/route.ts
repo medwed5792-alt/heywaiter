@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 /**
  * POST /api/admin/close-table-for-feedback
- * Закрывает визит для гостя: сессия → awaiting_guest_feedback, индекс active_sessions → AWAITING_FEEDBACK, стол освобождается.
+ * Закрывает визит для гостя: сессия → awaiting_guest_feedback, стол освобождается (activeSessions — единственный источник).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.httpStatus });
     }
-    return NextResponse.json({ ok: true, indexedGuests: result.indexedGuests });
+    return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[admin/close-table-for-feedback]", e);
     return NextResponse.json(

@@ -13,10 +13,6 @@ async function postSessionContext(body: Record<string, string>): Promise<Respons
   });
 }
 
-export type GuestRecoverSessionResponse =
-  | { active: false }
-  | { active: true; vrId: string; tableId: string; order_status?: string };
-
 export async function guestSessionClear(initData: string): Promise<void> {
   await postSessionContext({ action: "clear", initData }).catch(() => undefined);
 }

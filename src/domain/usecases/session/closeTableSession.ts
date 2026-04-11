@@ -8,25 +8,18 @@
  */
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import {
-  ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK,
-  activeSessionsIndexDocIdForTelegramUser,
-  collectTelegramNumericIdsFromSessionDoc,
-} from "@/lib/active-sessions-index";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import { buildArchivedVisitPayload } from "@/domain/usecases/session/archiveClosedVisit";
-
-const IDX = "active_sessions";
 
 /** В кодовой базе свободный стол = Table.status "free" (аналог «vacant»). */
 export const TABLE_STATUS_VACANT = "free" as const;
 
 export type CloseAwaitingFeedbackResult =
-  | { ok: true; indexedGuests: number }
+  | { ok: true }
   | { ok: false; error: string; httpStatus: number };
 
 /**
- * Только админ-дашборд: визит завершён — сессия в фазу отзыва, стол свободен, индекс active_sessions обновлён.
+ * Только админ-дашборд: визит завершён — сессия в фазу отзыва, стол свободен.
  * Один `batch.commit()` — сессия и стол уходят в хранилище атомарно (без окна рассинхрона).
  * `participants` — опционально: список участников с тем же коммитом, что и переход в awaiting_guest_feedback.
  */
@@ -65,7 +58,6 @@ export async function closeSessionAwaitingGuestFeedback(params: {
     return { ok: false, error: "session_not_active", httpStatus: 409 };
   }
 
-  const tgIds = collectTelegramNumericIdsFromSessionDoc(sData);
   const tableSnap = await tableRef.get();
   const existing = tableSnap.exists ? (tableSnap.data() ?? {}) : {};
   const waiterSwid = getWaiterIdFromTablePayload(existing as Record<string, unknown>);
@@ -88,20 +80,6 @@ export async function closeSessionAwaitingGuestFeedback(params: {
     },
     { merge: true }
   );
-  for (const tg of tgIds) {
-    const idxId = activeSessionsIndexDocIdForTelegramUser(tg);
-    if (!idxId) continue;
-    batch.set(
-      fs.collection(IDX).doc(idxId),
-      {
-        vr_id: venueId,
-        table_id: tableId,
-        last_seen: FieldValue.serverTimestamp(),
-        order_status: ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK,
-      },
-      { merge: true }
-    );
-  }
 
   try {
     await batch.commit();
@@ -109,79 +87,62 @@ export async function closeSessionAwaitingGuestFeedback(params: {
     console.error("[closeSessionAwaitingGuestFeedback]", e);
     return { ok: false, error: e instanceof Error ? e.message : "batch_failed", httpStatus: 500 };
   }
-  return { ok: true, indexedGuests: tgIds.length };
+  return { ok: true };
 }
 
 export type CloseSessionClosedResult = { ok: true } | { ok: false; error: string };
 
 /**
- * Финальный шаг гостя после экрана отзыва: сессия → closed (если в нужной фазе), индекс → visit_ended.
- * Стол на этом шаге уже свободен. Один batch — сессия и индекс без рассинхрона.
+ * Финальный шаг гостя после экрана отзыва: сессия → closed (если в фазе awaiting_guest_feedback / completed).
+ * Стол на этом шаге уже свободен.
  */
 export async function finalizeGuestSessionClosedAfterFeedback(params: {
   venueId: string;
   tableId: string;
   sessionId: string;
-  telegramUserId: string;
 }): Promise<CloseSessionClosedResult> {
   const venueId = String(params.venueId ?? "").trim();
   const tableId = String(params.tableId ?? "").trim();
   const sessionId = String(params.sessionId ?? "").trim();
-  const telegramUserId = String(params.telegramUserId ?? "").trim();
-  if (!venueId || !tableId || !sessionId || !telegramUserId) {
-    return { ok: false, error: "venueId, tableId, sessionId, telegramUserId required" };
+  if (!venueId || !tableId || !sessionId) {
+    return { ok: false, error: "venueId, tableId, sessionId required" };
   }
 
   const fs = getAdminFirestore();
   const sessionRef = fs.collection("activeSessions").doc(sessionId);
-  const idxId = activeSessionsIndexDocIdForTelegramUser(telegramUserId);
-  if (!idxId) {
-    return { ok: false, error: "invalid_telegram_user" };
-  }
-  const idxRef = fs.collection(IDX).doc(idxId);
-
   const sessionSnap = await sessionRef.get();
+  if (!sessionSnap.exists) {
+    return { ok: true };
+  }
+
+  const sData = (sessionSnap.data() ?? {}) as Record<string, unknown>;
+  const v = String(sData.venueId ?? "").trim() === venueId;
+  const t = String(sData.tableId ?? "").trim() === tableId;
+  if (!v || !t) {
+    return { ok: false, error: "session_mismatch" };
+  }
+
+  const st = String(sData.status ?? "").trim();
+  if (st !== "awaiting_guest_feedback" && st !== "completed") {
+    return { ok: true };
+  }
+
   const archiveRef = fs.collection("archived_visits").doc(sessionId);
   const archiveSnap = await archiveRef.get();
-
   let archivedPayload: Record<string, unknown> | null = null;
-  if (sessionSnap.exists && !archiveSnap.exists) {
-    const sDataPre = (sessionSnap.data() ?? {}) as Record<string, unknown>;
-    const v0 = String(sDataPre.venueId ?? "").trim() === venueId;
-    const t0 = String(sDataPre.tableId ?? "").trim() === tableId;
-    const st0 = String(sDataPre.status ?? "").trim();
-    if (v0 && t0 && (st0 === "awaiting_guest_feedback" || st0 === "completed")) {
-      archivedPayload = await buildArchivedVisitPayload(fs, sessionId, sDataPre, "guest_feedback_finalized");
-    }
+  if (!archiveSnap.exists) {
+    archivedPayload = await buildArchivedVisitPayload(fs, sessionId, sData, "guest_feedback_finalized");
   }
 
   const batch = fs.batch();
-  if (sessionSnap.exists) {
-    const sData = (sessionSnap.data() ?? {}) as Record<string, unknown>;
-    const v = String(sData.venueId ?? "").trim() === venueId;
-    const t = String(sData.tableId ?? "").trim() === tableId;
-    if (v && t) {
-      const st = String(sData.status ?? "").trim();
-      if (st === "awaiting_guest_feedback" || st === "completed") {
-        batch.update(sessionRef, {
-          status: "closed",
-          closedAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-        if (archivedPayload) {
-          batch.set(archiveRef, archivedPayload);
-        }
-      }
-    }
+  batch.update(sessionRef, {
+    status: "closed",
+    closedAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  if (archivedPayload) {
+    batch.set(archiveRef, archivedPayload);
   }
-  batch.set(
-    idxRef,
-    {
-      last_seen: FieldValue.serverTimestamp(),
-      order_status: "visit_ended",
-    },
-    { merge: true }
-  );
 
   try {
     await batch.commit();

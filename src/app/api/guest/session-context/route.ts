@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import { linkIdentityToGlobalGuestUid } from "@/lib/identity/global-guest-hub";
 
 export const runtime = "nodejs";
-
-/** Служебная склейка мессенджер→стол (не доменная activeSessions). */
-const IDX = "active_sessions";
-
-function idxDocId(telegramUserId: string): string {
-  const id = telegramUserId.trim();
-  return id ? `tg_${id}` : "";
-}
 
 async function resolveVerifiedUser(initData: string) {
   const token = await getEffectiveBotToken("telegram", "client");
@@ -41,9 +32,6 @@ export async function POST(request: NextRequest) {
     if ("error" in verified) return verified.error;
     const { userId } = verified;
 
-    const fs = getAdminFirestore();
-    const docId = idxDocId(userId);
-    const ref = fs.collection(IDX).doc(docId);
     if (action === "link_identity") {
       const globalGuestUid = String(body.globalGuestUid ?? "").trim();
       if (!globalGuestUid) {
@@ -52,7 +40,7 @@ export async function POST(request: NextRequest) {
       const ok = await linkIdentityToGlobalGuestUid(globalGuestUid, { key: "tg", value: userId });
       return NextResponse.json({ ok });
     }
-    await ref.delete().catch(() => undefined);
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[api/guest/session-context]", e);

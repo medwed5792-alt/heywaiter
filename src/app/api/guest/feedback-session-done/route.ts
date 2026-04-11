@@ -1,21 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
-import {
-  ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK,
-  activeSessionsIndexDocIdForTelegramUser,
-} from "@/lib/active-sessions-index";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
-import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { finalizeGuestSessionClosedAfterFeedback } from "@/domain/usecases/session/closeTableSession";
+import { findActiveSessionInGuestFeedbackPhaseForTelegramUser } from "@/lib/active-session-feedback-phase";
 
 export const runtime = "nodejs";
 
-const IDX = "active_sessions";
-
 /**
  * POST /api/guest/feedback-session-done
- * После экрана отзыва: сессия → closed, индекс active_sessions → visit_ended (единый use-case, одна транзакция).
+ * После экрана отзыва: ищем сессию в activeSessions (masterId / participantUids + фаза отзыва),
+ * затем сессия → closed (единый use-case finalizeGuestSessionClosedAfterFeedback).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -35,50 +30,25 @@ export async function POST(request: NextRequest) {
     }
 
     const fs = getAdminFirestore();
-    const idxRef = fs.collection(IDX).doc(activeSessionsIndexDocIdForTelegramUser(v.userId));
-    const idxSnap = await idxRef.get();
-    if (!idxSnap.exists) {
-      return NextResponse.json({ ok: true, already: true });
-    }
-    const idx = (idxSnap.data() ?? {}) as { vr_id?: string; table_id?: string; order_status?: string };
-    const vrId = typeof idx.vr_id === "string" ? idx.vr_id.trim() : "";
-    const tableId = typeof idx.table_id === "string" ? idx.table_id.trim() : "";
-    const os = typeof idx.order_status === "string" ? idx.order_status.trim() : "";
-    if (!vrId || !tableId) {
-      await idxRef.delete().catch(() => undefined);
-      return NextResponse.json({ ok: true });
-    }
-    if (os !== ACTIVE_SESSIONS_ORDER_AWAITING_FEEDBACK) {
+    const sessionDoc = await findActiveSessionInGuestFeedbackPhaseForTelegramUser(fs, v.userId);
+    if (!sessionDoc) {
       return NextResponse.json({ ok: true, already: true });
     }
 
-    const q = await fs
-      .collection("activeSessions")
-      .where("venueId", "==", vrId)
-      .where("tableId", "==", tableId)
-      .where("status", "in", ["awaiting_guest_feedback", "completed"])
-      .limit(1)
-      .get();
+    const s = sessionDoc.data() as Record<string, unknown>;
+    const venueId = String(s.venueId ?? "").trim();
+    const tableId = String(s.tableId ?? "").trim();
+    if (!venueId || !tableId) {
+      return NextResponse.json({ ok: true, already: true });
+    }
 
-    const sessionId = q.empty ? "" : q.docs[0]!.id;
-    if (sessionId) {
-      const done = await finalizeGuestSessionClosedAfterFeedback({
-        venueId: vrId,
-        tableId,
-        sessionId,
-        telegramUserId: v.userId,
-      });
-      if (!done.ok) {
-        return NextResponse.json({ error: done.error }, { status: 500 });
-      }
-    } else {
-      await idxRef.set(
-        {
-          last_seen: FieldValue.serverTimestamp(),
-          order_status: "visit_ended",
-        },
-        { merge: true }
-      );
+    const done = await finalizeGuestSessionClosedAfterFeedback({
+      venueId,
+      tableId,
+      sessionId: sessionDoc.id,
+    });
+    if (!done.ok) {
+      return NextResponse.json({ error: done.error }, { status: 500 });
     }
     return NextResponse.json({ ok: true });
   } catch (e) {
