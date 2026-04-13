@@ -133,13 +133,15 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
   preOrderByVenueDocId: {},
 };
 
-/** Статусы сессии для гостевого сервиса (включая check_in_success). */
+/**
+ * Статусы для live-подписки гостя. Без `closed`: при финализации документ выпадает из запроса → пустой снимок,
+ * иначе «закрытая» сессия остаётся в выборке и может конкурировать с новым check-in при гонках.
+ */
 const ACTIVE_SESSION_STATUS_FILTER = [
   "check_in_success",
   "payment_confirmed",
   "awaiting_guest_feedback",
   "completed",
-  "closed",
 ] as const;
 
 /**
@@ -355,6 +357,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
+  /** Инкремент при смене «фазы стола» / размонтировании bootstrap — отбрасывает поздние ответы /api/check-in. */
+  const guestTableBootstrapEpochRef = useRef(0);
 
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
@@ -716,6 +720,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       knownGlobalGuestUidHint?: string,
       options?: { forceTableListenerResubscribe?: boolean }
     ): Promise<boolean> => {
+      const epochAtStart = guestTableBootstrapEpochRef.current;
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
         const participantUid =
@@ -743,6 +748,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
+          if (epochAtStart !== guestTableBootstrapEpochRef.current) {
+            return false;
+          }
           await applySuccessfulTableBootstrap({
             venueId: data.venueId,
             tableId: data.tableId,
@@ -783,6 +791,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const bootstrapSessionByGlobalGuestUid = useCallback(
     async (globalGuestUid: string): Promise<boolean> => {
+      const epochAtStart = guestTableBootstrapEpochRef.current;
       try {
         const uid = globalGuestUid.trim();
         if (!uid) return false;
@@ -801,6 +810,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
+          if (epochAtStart !== guestTableBootstrapEpochRef.current) {
+            return false;
+          }
           await applySuccessfulTableBootstrap({
             venueId: data.venueId,
             tableId: data.tableId,
@@ -881,6 +893,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     return () => {
       cancelled = true;
+      guestTableBootstrapEpochRef.current += 1;
     };
   }, [
     isSdkReady,
@@ -920,7 +933,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         setActiveSession(null);
         setParticipants([]);
         sawSessionDoc = false;
-        void switchLocation(venueId, null);
+        setShowLandingScanner(true);
+        guestTableBootstrapEpochRef.current += 1;
+        void switchLocation(null, null);
         return;
       }
 
@@ -928,7 +943,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         setActiveSession(null);
         setParticipants([]);
         sawSessionDoc = false;
-        void switchLocation(venueId, null);
+        setShowLandingScanner(true);
+        guestTableBootstrapEpochRef.current += 1;
+        void switchLocation(null, null);
         return;
       }
 
@@ -997,7 +1014,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            void switchLocation(venueId, null);
+            setShowLandingScanner(true);
+            guestTableBootstrapEpochRef.current += 1;
+            void switchLocation(null, null);
           }
           return;
         }
@@ -1008,7 +1027,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            void switchLocation(venueId, null);
+            setShowLandingScanner(true);
+            guestTableBootstrapEpochRef.current += 1;
+            void switchLocation(null, null);
           }
           return;
         }
@@ -1378,7 +1399,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
-    const v = currentLocationRef.current.venueId?.trim() || null;
+    guestTableBootstrapEpochRef.current += 1;
+    setShowLandingScanner(true);
     const tg = getTelegramWebApp();
     const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
     if (init) {
@@ -1392,7 +1414,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         // best-effort
       }
     }
-    await switchLocation(v, null);
+    await switchLocation(null, null);
   }, [switchLocation]);
 
   const value = useMemo<GuestMiniAppContextValue>(
