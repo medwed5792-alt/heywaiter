@@ -2,6 +2,7 @@ import { Timestamp, type QuerySnapshot } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
 import { activeSessionCreatedAtMillis, pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 
 const ACTIVE_SESSION_STATUS = ["check_in_success", "payment_confirmed"] as const;
 
@@ -20,6 +21,7 @@ export type ResolveGuestPoliteStateResult =
       phase: "thank_you";
       globalGuestUid: string;
       visitId: string;
+      feedbackActSessionId: string;
       venueId: string;
       tableId: string;
       tableNumber: number;
@@ -194,6 +196,7 @@ export async function resolveGuestPoliteState(globalGuestUid: string): Promise<R
       phase: "thank_you",
       globalGuestUid: uid,
       visitId: archPick.id,
+      feedbackActSessionId: buildFeedbackActSessionId(archPick.id),
       venueId: String(raw.venueId ?? "").trim(),
       tableId: String(raw.tableId ?? "").trim(),
       tableNumber: typeof raw.tableNumber === "number" ? raw.tableNumber : 0,

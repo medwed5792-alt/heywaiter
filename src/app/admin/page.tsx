@@ -28,6 +28,7 @@ import type { VenueType } from "@/lib/types";
 import type { Guest } from "@/lib/types";
 import type { GlobalUser } from "@/lib/types";
 import { LPR_ROLES } from "@/lib/types";
+import { GUEST_FEEDBACK_ACT_STATUS } from "@/lib/feedback-act-session";
 
 const BOOKING_WINDOW_MS = 30 * 60 * 1000; // ближайшие 30 минут для статуса столов
 const BLINK_IF_LESS_MS = 30 * 60 * 1000; // мерцание если до брони < 30 мин
@@ -53,6 +54,14 @@ interface SessionOnTable {
   tableId: string;
   tableNumber: number;
   guestId?: string;
+}
+
+/** Второй акт визита: отзыв/чаевые, стол при этом может быть свободен под нового гостя. */
+interface FeedbackTailOnTable {
+  sessionId: string;
+  sourceSessionId: string;
+  tableId: string;
+  tableNumber: number;
 }
 
 interface BookingOnTable {
@@ -293,6 +302,7 @@ function AdminDashboardContent() {
   const [staffList, setStaffList] = useState<StaffWithTables[]>([]);
   const [venueStaffOnShift, setVenueStaffOnShift] = useState<Record<string, boolean>>({});
   const [sessionsByTable, setSessionsByTable] = useState<Record<string, SessionOnTable>>({});
+  const [feedbackTailsByTable, setFeedbackTailsByTable] = useState<Record<string, FeedbackTailOnTable>>({});
   const [bookingsByTable, setBookingsByTable] = useState<Record<string, BookingOnTable[]>>({});
   const [assignmentsByTable, setAssignmentsByTable] = useState<Record<string, string>>({});
   // Для отладки: что реально лежит в tables/{tableId}.assignments.waiter (до преобразований/нормализации)
@@ -535,6 +545,34 @@ function AdminDashboardContent() {
           };
         });
         setSessionsByTable(byTable);
+      }
+    );
+    return () => unsub();
+  }, [venueType, venueId]);
+
+  useEffect(() => {
+    if (!venueType || venueType !== "full_service") return;
+    const unsub = onSnapshot(
+      query(
+        collection(db, "activeSessions"),
+        where("venueId", "==", venueId),
+        where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
+      ),
+      (snap) => {
+        const byTable: Record<string, FeedbackTailOnTable> = {};
+        snap.docs.forEach((d) => {
+          const data = d.data() as Record<string, unknown>;
+          const tableId = String(data.tableId ?? "").trim();
+          if (!tableId) return;
+          const src = String(data.sourceSessionId ?? "").trim() || d.id.replace(/^feedback_/, "");
+          byTable[tableId] = {
+            sessionId: d.id,
+            sourceSessionId: src,
+            tableId,
+            tableNumber: typeof data.tableNumber === "number" ? data.tableNumber : 0,
+          };
+        });
+        setFeedbackTailsByTable(byTable);
       }
     );
     return () => unsub();
@@ -1291,6 +1329,7 @@ function AdminDashboardContent() {
     return list;
   }, [safeTables]);
   const safeSessionsByTable = sessionsByTable ?? {};
+  const safeFeedbackTailsByTable = feedbackTailsByTable ?? {};
   const safeAssignmentsByTable = assignmentsByTable ?? {};
   const safeOnShiftWaiters = onShiftWaitersFromVenue;
   const totalTables = safeTables.length || 0;
@@ -1813,6 +1852,7 @@ function AdminDashboardContent() {
                 if (!table?.id) return null;
                 try {
                   const session = safeSessionsByTable[table.id];
+                  const feedbackTail = safeFeedbackTailsByTable[table.id];
                   const isOccupied = Boolean(session);
                   const tableBooking = allBookings.find(
                     (b) =>
@@ -1932,6 +1972,18 @@ function AdminDashboardContent() {
                       <div className={`text-2xl font-bold ${cardText}`}>
                         {table?.number ?? table.id ?? "—"}
                       </div>
+                      {feedbackTail ? (
+                        <div
+                          className={`mt-2 rounded-lg border px-2 py-1.5 text-xs font-semibold leading-snug ${
+                            isOccupied
+                              ? "border-amber-200 bg-amber-500/25 text-amber-50"
+                              : "border-amber-500 bg-amber-50 text-amber-950"
+                          }`}
+                        >
+                          Акт 2 — отзыв / чаевые (прошлый визит). Новый гость может занять стол. Сессия:{" "}
+                          <span className="font-mono opacity-90">{feedbackTail.sessionId}</span>
+                        </div>
+                      ) : null}
                       {isOccupied && (
                         <>
                           {waiterOnShift ? (

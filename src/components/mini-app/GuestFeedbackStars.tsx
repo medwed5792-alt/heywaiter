@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { getIdToken } from "firebase/auth";
 import toast from "react-hot-toast";
 import { auth } from "@/lib/firebase";
+import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 
 const TIP_PRESETS = [100, 200, 500] as const;
 
@@ -22,7 +23,10 @@ type GuestFeedbackStarsProps = {
   venueId: string;
   tableId: string;
   customerUid: string;
+  /** id archived_visits / исходного визита — для `reviews`. */
   activeSessionId: string;
+  /** id activeSessions второго акта (`feedback_*`) — для чаевых; иначе строится из activeSessionId. */
+  tipsSessionId?: string;
   title?: string;
   subtitle?: string;
   /** Завершить визит без чаевых */
@@ -31,7 +35,7 @@ type GuestFeedbackStarsProps = {
 
 /**
  * Экран звёзд + «Спасибо» с привязкой к кошельку официанта (real-time swid из сессии).
- * Отзыв пишется в `reviews` (sessionId + venueId) при выборе звёзд и перед финализацией визита.
+ * Отзыв пишется в `reviews` (sessionId архива + venueId). Чаевые — по сессии второго акта `feedback_*`.
  */
 export function GuestFeedbackStars({
   walletStaffId,
@@ -39,6 +43,7 @@ export function GuestFeedbackStars({
   tableId,
   customerUid,
   activeSessionId,
+  tipsSessionId,
   title = "Спасибо за визит!",
   subtitle = "Оцените обслуживание. Кнопка «Спасибо» отправит чаевые выбранному официанту.",
   onFinalize,
@@ -46,6 +51,7 @@ export function GuestFeedbackStars({
   const [stars, setStars] = useState(0);
   const [amount, setAmount] = useState<number>(TIP_PRESETS[0]);
   const [busy, setBusy] = useState(false);
+  const tipsFirestoreSessionId = (tipsSessionId ?? "").trim() || buildFeedbackActSessionId(activeSessionId.trim());
 
   const persistReview = useCallback(
     async (starCount: number) => {
@@ -107,7 +113,7 @@ export function GuestFeedbackStars({
           amount,
           staffId: walletStaffId.trim(),
           sessionTip: true,
-          activeSessionId: activeSessionId.trim(),
+          activeSessionId: tipsFirestoreSessionId.trim(),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };

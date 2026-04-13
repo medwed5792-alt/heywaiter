@@ -3,13 +3,17 @@
  *
  * Каскадная модель:
  * — Ступень 1 (бой): только документы в activeSessions со статусами обслуживания.
- * — Админ «Закрыть стол»: атомарно перенос (set + delete) в archived_visits, запись из activeSessions удаляется.
- * — Ступень 2 (сервис): гость работает только с archived_visits (guestFeedbackPending), без activeSessions.
+ * — Админ «Закрыть стол»: архив + документ второго акта `feedback_{sessionId}` + удаление боевой сессии; стол освобождён.
+ * — Ступень 2 (сервис): архив + документ activeSessions с id `feedback_{sessionId}` и статусом guest_feedback_act (виден в Дашборде, стол при этом свободен).
  */
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import { buildArchivedVisitPayload } from "@/domain/usecases/session/archiveClosedVisit";
+import {
+  buildFeedbackActSessionId,
+  GUEST_FEEDBACK_ACT_STATUS,
+} from "@/lib/feedback-act-session";
 
 /** В кодовой базе свободный стол = Table.status "free" (аналог «vacant»). */
 export const TABLE_STATUS_VACANT = "free" as const;
@@ -82,8 +86,42 @@ export async function finishServiceAndMoveToArchive(params: {
         : {}),
   };
 
+  const feedbackSessionId = buildFeedbackActSessionId(sessionId);
+  const feedbackSessionRef = fs.collection("activeSessions").doc(feedbackSessionId);
+  const participantUidsRaw = sData.participantUids;
+  const participantUids = Array.isArray(participantUidsRaw)
+    ? participantUidsRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  const tableNumber =
+    typeof sData.tableNumber === "number" && Number.isFinite(sData.tableNumber) ? sData.tableNumber : 0;
+  const assignedFromSession =
+    typeof sData.assignedStaffId === "string" && sData.assignedStaffId.trim()
+      ? sData.assignedStaffId.trim()
+      : typeof sData.waiterId === "string" && sData.waiterId.trim()
+        ? sData.waiterId.trim()
+        : "";
+  const staffForFeedback = waiterSwid || assignedFromSession || null;
+  const feedbackActDoc: Record<string, unknown> = {
+    venueId,
+    tableId,
+    tableNumber,
+    status: GUEST_FEEDBACK_ACT_STATUS,
+    sessionKind: "feedback_act",
+    sourceSessionId: sessionId,
+    guestFeedbackPending: true,
+    masterId: typeof sData.masterId === "string" ? sData.masterId.trim() : null,
+    participantUids,
+    participants: params.participants ?? (Array.isArray(sData.participants) ? sData.participants : []),
+    isPrivate: false,
+    ...(staffForFeedback ? { assignedStaffId: staffForFeedback } : {}),
+    ...(typeof sData.waiterId === "string" && sData.waiterId.trim() ? { waiterId: sData.waiterId.trim() } : {}),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+
   const batch = fs.batch();
   batch.set(archiveRef, archiveDoc, { merge: false });
+  batch.set(feedbackSessionRef, feedbackActDoc, { merge: false });
   batch.delete(sessionRef);
   batch.set(
     tableRef,
@@ -111,7 +149,7 @@ export const closeSessionAwaitingGuestFeedback = finishServiceAndMoveToArchive;
 export type CloseSessionClosedResult = { ok: true } | { ok: false; error: string };
 
 /**
- * Гость завершил отзыв: только archived_visits (activeSessions уже нет).
+ * Гость завершил отзыв: archived_visits + удаление сессии второго акта (`feedback_*`).
  */
 export async function finalizeArchivedVisitAfterGuestFeedback(params: {
   venueId: string;
@@ -139,16 +177,22 @@ export async function finalizeArchivedVisitAfterGuestFeedback(params: {
     return { ok: true };
   }
 
+  const feedbackActRef = fs.collection("activeSessions").doc(buildFeedbackActSessionId(sessionId));
   try {
     await archiveRef.update({
       guestFeedbackPending: false,
       guestFeedbackFinalizedAt: FieldValue.serverTimestamp(),
     });
-    return { ok: true };
   } catch (e) {
     console.error("[finalizeArchivedVisitAfterGuestFeedback]", e);
     return { ok: false, error: e instanceof Error ? e.message : "update_failed" };
   }
+  try {
+    await feedbackActRef.delete();
+  } catch (e) {
+    console.warn("[finalizeArchivedVisitAfterGuestFeedback] delete feedback_act", e);
+  }
+  return { ok: true };
 }
 
 /** @deprecated */
@@ -180,6 +224,7 @@ export async function closeSessionForceClosedAndFreeTable(params: {
     const arch = await archiveRef.get();
     if (arch.exists) {
       const batchFree = fs.batch();
+      batchFree.delete(fs.collection("activeSessions").doc(buildFeedbackActSessionId(sessionId)));
       const existing = tableSnap.exists ? (tableSnap.data() ?? {}) : {};
       batchFree.set(
         tableRef,
@@ -213,6 +258,7 @@ export async function closeSessionForceClosedAndFreeTable(params: {
     archivedPayload = await buildArchivedVisitPayload(fs, sessionId, sData, "force_closed");
   }
 
+  const feedbackActRef = fs.collection("activeSessions").doc(buildFeedbackActSessionId(sessionId));
   const batch = fs.batch();
   if (archivedPayload) {
     batch.set(
@@ -222,6 +268,7 @@ export async function closeSessionForceClosedAndFreeTable(params: {
     );
   }
   batch.delete(sessionRef);
+  batch.delete(feedbackActRef);
   batch.set(
     tableRef,
     {

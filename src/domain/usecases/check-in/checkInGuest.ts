@@ -13,13 +13,14 @@ import {
 } from "@/lib/identity/global-guest-hub";
 import { resolveVenueId } from "@/lib/standards/venue-default";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { isFeedbackActSessionRecord } from "@/lib/feedback-act-session";
 import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
 import { FieldValue } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 /** Активные фазы визита: повторный вход должен подхватывать ту же сессию, без дублей. */
-/** Только «бой» в activeSessions; фаза отзыва живёт в archived_visits. */
+/** Только «бой» в activeSessions; сессии второго акта (`feedback_*` / guest_feedback_act) не блокируют стол. */
 const ACTIVE_VISIT_SESSION_STATUSES = ["check_in_success", "payment_confirmed"] as const;
 
 export type CheckInGuestResult =
@@ -169,7 +170,12 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     .limit(30)
     .get();
 
-  const existing = pickNewestFreshActiveSessionDoc(existingActiveSnap.docs, now.getTime());
+  const battleDocs = existingActiveSnap.docs.filter((d) => {
+    const raw = d.data() as Record<string, unknown>;
+    const st = typeof raw.status === "string" ? raw.status : "";
+    return !isFeedbackActSessionRecord({ id: d.id, status: st });
+  });
+  const existing = pickNewestFreshActiveSessionDoc(battleDocs, now.getTime());
 
   if (existing) {
     const existingData = existing.data() as Record<string, unknown>;

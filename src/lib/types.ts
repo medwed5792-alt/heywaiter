@@ -619,6 +619,7 @@ export interface ActiveSession {
     | "check_in_success"
     | "payment_confirmed"
     | "awaiting_guest_feedback"
+    | "guest_feedback_act"
     | "completed"
     | "table_conflict"
     | "closed";

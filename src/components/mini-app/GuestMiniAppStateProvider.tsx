@@ -46,6 +46,7 @@ import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/iden
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
+import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 import { getClientGuestCookie, setClientGuestCookie } from "@/lib/identity/guest-cookie";
@@ -130,12 +131,15 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
 };
 
 /**
- * Только «боевая» фаза (Ступень 1). Отзыв/чаевые — archived_visits (Ступень 2), не activeSessions.
+ * Только «боевая» фаза (Акт 1). Акт 2 — archived_visits + activeSessions `feedback_*` (см. Дашборд).
  */
 const ACTIVE_SESSION_STATUS_FILTER = ["check_in_success", "payment_confirmed"] as const;
 
 export type PostServiceVisitState = {
+  /** id archived_visits (= исходная боевая сессия). */
   visitId: string;
+  /** id activeSessions второго акта — чаевые и учёт. */
+  feedbackActSessionId: string;
   venueId: string;
   tableId: string;
   tableNumber: number;
@@ -234,6 +238,7 @@ type PoliteStateResponse = {
   working?: { venueId: string; tableId: string; sessionId: string };
   thankYou?: {
     visitId: string;
+    feedbackActSessionId?: string;
     venueId: string;
     tableId: string;
     tableNumber: number;
@@ -279,7 +284,7 @@ type GuestMiniAppContextValue = {
   getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
   /** Только хозяин стола: разрешить/запретить подселение (isPrivate). */
   setTablePrivacyAllowJoin: (allowJoin: boolean) => Promise<{ ok: boolean; error?: string }>;
-  /** Ступень 2: отзыв/чаевые по archived_visits (не по activeSessions). */
+  /** Акт 2: отзыв/чаевые (archived_visits + id `feedback_*` для чаевых и Дашборда). */
   guestAwaitingTableFeedback: boolean;
   /** Архивный визит с guestFeedbackPending — источник для экрана отзыва. */
   postServiceVisit: PostServiceVisitState | null;
@@ -345,7 +350,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     Record<string, VenueMenuVenueBlock | null>
   >({});
   const [showLandingScanner, setShowLandingScanner] = useState(false);
-  /** Ступень 2: сервис после боя — только archived_visits. */
+  /** Акт 2: экран отзыва после переноса в архив. */
   const [postServiceVisit, setPostServiceVisit] = useState<PostServiceVisitState | null>(null);
   /** Счётчик для принудительного пересоздания подписки activeSessions (встроенный сканер = тот же check-in, что и deep link). */
   const [tableListenerEpoch, setTableListenerEpoch] = useState(0);
@@ -749,8 +754,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
         clearPersistedGuestSeat();
         const t = data.thankYou;
+        const vid = t.visitId.trim();
+        const fid =
+          typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
+            ? t.feedbackActSessionId.trim()
+            : buildFeedbackActSessionId(vid);
         setPostServiceVisit({
-          visitId: t.visitId.trim(),
+          visitId: vid,
+          feedbackActSessionId: fid,
           venueId: String(t.venueId ?? "").trim(),
           tableId: String(t.tableId ?? "").trim(),
           tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
@@ -796,8 +807,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       if (data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
         clearPersistedGuestSeat();
         const t = data.thankYou;
+        const vid = t.visitId.trim();
+        const fid =
+          typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
+            ? t.feedbackActSessionId.trim()
+            : buildFeedbackActSessionId(vid);
         setPostServiceVisit({
-          visitId: t.visitId.trim(),
+          visitId: vid,
+          feedbackActSessionId: fid,
           venueId: String(t.venueId ?? "").trim(),
           tableId: String(t.tableId ?? "").trim(),
           tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,

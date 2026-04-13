@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
         globalGuestUid: resolved.globalGuestUid,
         thankYou: {
           visitId: resolved.visitId,
+          feedbackActSessionId: resolved.feedbackActSessionId,
           venueId: resolved.venueId,
           tableId: resolved.tableId,
           tableNumber: resolved.tableNumber,

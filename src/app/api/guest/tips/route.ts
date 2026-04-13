@@ -6,6 +6,7 @@ import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
 import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 import { resolveStaffFirestoreIdToGlobalUser } from "@/lib/identity/global-user-staff-bridge";
+import { GUEST_FEEDBACK_ACT_STATUS, isFeedbackActSessionId } from "@/lib/feedback-act-session";
 
 type Body = {
   venueId?: string;
@@ -17,6 +18,22 @@ type Body = {
   activeSessionId?: string;
 };
 
+function verifyTipParticipant(data: Record<string, unknown>, customerUid: string): boolean {
+  const masterId = typeof data.masterId === "string" ? data.masterId.trim() : "";
+  if (guestCustomerUidsMatch(masterId, customerUid)) return true;
+  const participantUids = Array.isArray(data.participantUids)
+    ? data.participantUids.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  for (const uid of participantUids) {
+    if (guestCustomerUidsMatch(uid, customerUid)) return true;
+  }
+  for (const p of Array.isArray(data.participants) ? data.participants : []) {
+    const uid = typeof (p as { uid?: string })?.uid === "string" ? (p as { uid: string }).uid.trim() : "";
+    if (uid && guestCustomerUidsMatch(uid, customerUid)) return true;
+  }
+  return false;
+}
+
 async function verifySessionTipContext(args: {
   firestore: Firestore;
   sessionId: string;
@@ -24,6 +41,18 @@ async function verifySessionTipContext(args: {
   customerUid: string;
   staffId: string;
 }): Promise<boolean> {
+  if (isFeedbackActSessionId(args.sessionId)) {
+    const snap = await args.firestore.collection("activeSessions").doc(args.sessionId).get();
+    if (!snap.exists) return false;
+    const data = (snap.data() ?? {}) as Record<string, unknown>;
+    if (String(data.status ?? "").trim() !== GUEST_FEEDBACK_ACT_STATUS) return false;
+    if (data.guestFeedbackPending !== true) return false;
+    if (String(data.venueId ?? "").trim() !== args.venueId) return false;
+    const resolved = resolveWaiterStaffIdFromSessionDoc(data);
+    if (!resolved || resolved !== args.staffId) return false;
+    return verifyTipParticipant(data, args.customerUid);
+  }
+
   const snap = await args.firestore.collection("archived_visits").doc(args.sessionId).get();
   if (!snap.exists) return false;
   const data = (snap.data() ?? {}) as Record<string, unknown>;
@@ -31,19 +60,7 @@ async function verifySessionTipContext(args: {
   if (String(data.venueId ?? "").trim() !== args.venueId) return false;
   const resolved = resolveWaiterStaffIdFromSessionDoc(data);
   if (!resolved || resolved !== args.staffId) return false;
-  const masterId = typeof data.masterId === "string" ? data.masterId.trim() : "";
-  if (guestCustomerUidsMatch(masterId, args.customerUid)) return true;
-  const participantUids = Array.isArray(data.participantUids)
-    ? data.participantUids.map((x) => String(x ?? "").trim()).filter(Boolean)
-    : [];
-  for (const uid of participantUids) {
-    if (guestCustomerUidsMatch(uid, args.customerUid)) return true;
-  }
-  for (const p of Array.isArray(data.participants) ? data.participants : []) {
-    const uid = typeof (p as { uid?: string })?.uid === "string" ? (p as { uid: string }).uid.trim() : "";
-    if (uid && guestCustomerUidsMatch(uid, args.customerUid)) return true;
-  }
-  return false;
+  return verifyTipParticipant(data, args.customerUid);
 }
 
 function parseAmount(raw: unknown): number {
@@ -174,6 +191,7 @@ export async function POST(request: NextRequest) {
         staffUnifiedId,
         staffSotaId,
         staffId: candidateStaffId,
+        ...(sessionTip && activeSessionId ? { feedbackActSessionId: activeSessionId } : {}),
         createdAt: FieldValue.serverTimestamp(),
       });
     });

@@ -663,6 +663,7 @@ function MiniAppScreenRouter() {
           tableId={feedbackTableId}
           customerUid={(globalGuestUid?.trim() || guestProfileUid!.trim())}
           activeSessionId={feedbackVisitId}
+          tipsSessionId={postServiceVisit?.feedbackActSessionId}
           title="Отзыв и чаевые"
           subtitle="Спасибо за визит. Оценка и чаевые сохраняются в завершённом визите и не занимают стол."
           onFinalize={() => void completeTableFeedbackSession()}
