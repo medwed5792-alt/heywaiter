@@ -12,3 +12,16 @@ export function setClientGuestCookie(globalGuestUid: string): void {
     // ignore
   }
 }
+
+export function getClientGuestCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const m = document.cookie.match(new RegExp(`(?:^|; )${HEYWAITER_GUEST_COOKIE}=([^;]*)`));
+    const raw = m?.[1];
+    if (!raw) return null;
+    const v = decodeURIComponent(raw).trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}

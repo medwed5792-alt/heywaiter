@@ -14,38 +14,6 @@ export type PersistedGuestSeat = {
   savedAt: number;
 };
 
-function safeParse(raw: string | null): PersistedGuestSeat | null {
-  if (!raw) return null;
-  try {
-    const o = JSON.parse(raw) as Record<string, unknown>;
-    const venueId = typeof o.venueId === "string" ? o.venueId.trim() : "";
-    const tableId = typeof o.tableId === "string" ? o.tableId.trim() : "";
-    const globalGuestUid =
-      typeof o.globalGuestUid === "string" ? o.globalGuestUid.trim() : "";
-    const legacyParticipant =
-      typeof o.participantUid === "string" ? o.participantUid.trim() : "";
-    const uid = globalGuestUid || legacyParticipant;
-    if (!venueId || !tableId || !uid) return null;
-    return {
-      venueId,
-      tableId,
-      globalGuestUid: uid,
-      savedAt: typeof o.savedAt === "number" ? o.savedAt : Date.now(),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function readPersistedGuestSeat(): PersistedGuestSeat | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return safeParse(window.localStorage.getItem(SEAT_KEY));
-  } catch {
-    return null;
-  }
-}
-
 export function writePersistedGuestSeat(venueId: string, tableId: string, globalGuestUid: string): void {
   if (typeof window === "undefined") return;
   try {
