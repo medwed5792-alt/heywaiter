@@ -357,7 +357,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
-  /** Инкремент при смене «фазы стола» / размонтировании bootstrap — отбрасывает поздние ответы /api/check-in. */
+  /**
+   * Счётчик для отбрасывания устаревших ответов POST /api/check-in.
+   * Меняется только при явном сбросе (отзыв, потеря сессии в снимке, закрытый стол) и в начале входа со сканера (forceTableListenerResubscribe).
+   */
   const guestTableBootstrapEpochRef = useRef(0);
 
   const guestIdentity = useMemo(() => {
@@ -720,6 +723,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       knownGlobalGuestUidHint?: string,
       options?: { forceTableListenerResubscribe?: boolean }
     ): Promise<boolean> => {
+      /** Только явный «новый вход со сканера»: инвалидируем параллельный bootstrap из useEffect, не трогая эпоху при обычном deep link / seat. */
+      if (options?.forceTableListenerResubscribe) {
+        guestTableBootstrapEpochRef.current += 1;
+      }
       const epochAtStart = guestTableBootstrapEpochRef.current;
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
@@ -748,9 +755,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          if (epochAtStart !== guestTableBootstrapEpochRef.current) {
+          const epochNow = guestTableBootstrapEpochRef.current;
+          if (epochAtStart !== epochNow) {
+            console.log(
+              `[guest] Ответ отброшен: текущая эпоха ${epochNow}, у ответа ${epochAtStart} (check-in table)`
+            );
             return false;
           }
+          /** Сервер подтвердил стол — сразу переводим UI (currentLocation + onSnapshot подтянется следом). */
           await applySuccessfulTableBootstrap({
             venueId: data.venueId,
             tableId: data.tableId,
@@ -810,7 +822,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          if (epochAtStart !== guestTableBootstrapEpochRef.current) {
+          const epochNow = guestTableBootstrapEpochRef.current;
+          if (epochAtStart !== epochNow) {
+            console.log(
+              `[guest] Ответ отброшен: текущая эпоха ${epochNow}, у ответа ${epochAtStart} (check-in restore by global uid)`
+            );
             return false;
           }
           await applySuccessfulTableBootstrap({
@@ -893,7 +909,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     return () => {
       cancelled = true;
-      guestTableBootstrapEpochRef.current += 1;
     };
   }, [
     isSdkReady,
