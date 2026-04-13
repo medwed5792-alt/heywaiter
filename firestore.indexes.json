@@ -73,6 +73,22 @@
         { "fieldPath": "tgId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "archived_visits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "masterId", "order": "ASCENDING" },
+        { "fieldPath": "guestFeedbackPending", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "archived_visits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participantUids", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "guestFeedbackPending", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

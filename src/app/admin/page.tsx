@@ -1090,7 +1090,7 @@ function AdminDashboardContent() {
       query(
         collection(db, "activeSessions"),
         where("venueId", "==", venueId),
-        where("status", "in", ["check_in_success", "payment_confirmed", "awaiting_guest_feedback", "completed"])
+        where("status", "in", ["check_in_success", "payment_confirmed"])
       )
     );
     await Promise.all(

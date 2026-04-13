@@ -17,17 +17,6 @@ type Body = {
   activeSessionId?: string;
 };
 
-function sessionAllowsFeedbackTip(statusRaw: string): boolean {
-  const s = statusRaw.trim();
-  const u = s.toUpperCase();
-  return (
-    s === "awaiting_guest_feedback" ||
-    u === "AWAITING_FEEDBACK" ||
-    s === "completed" ||
-    u === "COMPLETED"
-  );
-}
-
 async function verifySessionTipContext(args: {
   firestore: Firestore;
   sessionId: string;
@@ -35,16 +24,21 @@ async function verifySessionTipContext(args: {
   customerUid: string;
   staffId: string;
 }): Promise<boolean> {
-  const snap = await args.firestore.collection("activeSessions").doc(args.sessionId).get();
+  const snap = await args.firestore.collection("archived_visits").doc(args.sessionId).get();
   if (!snap.exists) return false;
   const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (data.guestFeedbackPending !== true) return false;
   if (String(data.venueId ?? "").trim() !== args.venueId) return false;
-  const st = String(data.status ?? "");
-  if (!sessionAllowsFeedbackTip(st)) return false;
   const resolved = resolveWaiterStaffIdFromSessionDoc(data);
   if (!resolved || resolved !== args.staffId) return false;
   const masterId = typeof data.masterId === "string" ? data.masterId.trim() : "";
   if (guestCustomerUidsMatch(masterId, args.customerUid)) return true;
+  const participantUids = Array.isArray(data.participantUids)
+    ? data.participantUids.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  for (const uid of participantUids) {
+    if (guestCustomerUidsMatch(uid, args.customerUid)) return true;
+  }
   for (const p of Array.isArray(data.participants) ? data.participants : []) {
     const uid = typeof (p as { uid?: string })?.uid === "string" ? (p as { uid: string }).uid.trim() : "";
     if (uid && guestCustomerUidsMatch(uid, args.customerUid)) return true;

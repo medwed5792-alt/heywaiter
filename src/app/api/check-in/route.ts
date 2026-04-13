@@ -7,12 +7,7 @@ import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization"
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 import { HEYWAITER_GUEST_COOKIE } from "@/lib/identity/guest-cookie";
 
-const ACTIVE_SESSION_STATUS_FILTER = [
-  "check_in_success",
-  "payment_confirmed",
-  "awaiting_guest_feedback",
-  "completed",
-] as const;
+const ACTIVE_SESSION_STATUS_FILTER = ["check_in_success", "payment_confirmed"] as const;
 
 async function resolveCanonicalTableId(venueId: string, tableId: string): Promise<string> {
   const fs = getAdminFirestore();

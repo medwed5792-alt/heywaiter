@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { closeSessionAwaitingGuestFeedback } from "@/domain/usecases/session/closeTableSession";
+import { finishServiceAndMoveToArchive } from "@/domain/usecases/session/closeTableSession";
 
 export const runtime = "nodejs";
 
 /**
  * POST /api/admin/close-table-for-feedback
- * Закрывает визит для гостя: сессия → awaiting_guest_feedback, стол освобождается (activeSessions — единственный источник).
+ * Каскад Ступень 1→2: атомарный перенос в archived_visits + удаление из activeSessions, стол free.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     const tableId = String(body.tableId ?? "").trim();
     const sessionId = String(body.sessionId ?? "").trim();
 
-    const result = await closeSessionAwaitingGuestFeedback({ venueId, tableId, sessionId });
+    const result = await finishServiceAndMoveToArchive({ venueId, tableId, sessionId });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.httpStatus });
     }

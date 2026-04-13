@@ -422,6 +422,18 @@ function GuestTableConnectingLoader() {
   );
 }
 
+/** Ступень 2: стол уже закрыт на сервере, активной сессии нет — только отзыв/чаевые по архиву. */
+function GuestPostServicePlaceholder() {
+  return (
+    <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-6 shadow-sm">
+      <p className="text-center text-base font-semibold text-emerald-950">Визит завершён</p>
+      <p className="max-w-sm text-center text-sm text-emerald-900">
+        Заведение освободило стол. Оцените визит и при желании отправьте чаевые — форма открыта поверх экрана.
+      </p>
+    </div>
+  );
+}
+
 function GuestCabinet() {
   const {
     guestIdentity,
@@ -531,6 +543,7 @@ function MiniAppScreenRouter() {
     activeSession,
     systemConfig,
     guestAwaitingTableFeedback,
+    postServiceVisit,
     completeTableFeedbackSession,
     feedbackTargetStaffId,
     guestIdentity,
@@ -572,6 +585,9 @@ function MiniAppScreenRouter() {
   const guestAtTable = Boolean(currentLocation.venueId?.trim() && currentLocation.tableId?.trim());
   const tableSessionLoading =
     guestAtTable && !activeSession && !guestAwaitingTableFeedback;
+  const feedbackVisitId = postServiceVisit?.visitId ?? activeSession?.id ?? "";
+  const feedbackVenueId = (postServiceVisit?.venueId ?? currentLocation.venueId ?? "").trim();
+  const feedbackTableId = (postServiceVisit?.tableId ?? currentLocation.tableId ?? "").trim();
   /** Решение о fallback-сканере приходит только от server-bootstrap. */
   const showLandingQrScanner = !guestAtTable && showLandingScanner;
   const venueLabel = currentLocation.venueId ? resolveVenueDisplayName(currentLocation.venueId) : "";
@@ -584,7 +600,9 @@ function MiniAppScreenRouter() {
     <>
       <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
         <main className="flex-1 p-4 pb-10 md:p-6">
-          {guestAtTable && activeSession ? <GuestSessionGeoWatch key={activeSession.id} /> : null}
+          {guestAtTable && activeSession && !guestAwaitingTableFeedback ? (
+            <GuestSessionGeoWatch key={activeSession.id} />
+          ) : null}
           <div className="space-y-5">
           {!guestAtTable ? (
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -607,7 +625,13 @@ function MiniAppScreenRouter() {
 
           {guestAtTable ? (
             tab === "service" ? (
-              tableSessionLoading ? <GuestTableConnectingLoader /> : <GuestSession />
+              guestAwaitingTableFeedback ? (
+                <GuestPostServicePlaceholder />
+              ) : tableSessionLoading ? (
+                <GuestTableConnectingLoader />
+              ) : (
+                <GuestSession />
+              )
             ) : tab === "profile" ? (
               <GuestProfileSettings />
             ) : (
@@ -628,20 +652,19 @@ function MiniAppScreenRouter() {
         </main>
       </div>
 
-      {guestAtTable &&
-      guestAwaitingTableFeedback &&
-      activeSession?.id &&
-      currentLocation.venueId?.trim() &&
-      currentLocation.tableId?.trim() &&
+      {guestAwaitingTableFeedback &&
+      feedbackVisitId &&
+      feedbackVenueId &&
+      feedbackTableId &&
       (globalGuestUid?.trim() || guestProfileUid?.trim()) ? (
         <GuestFeedbackStars
           walletStaffId={feedbackTargetStaffId}
-          venueId={currentLocation.venueId.trim()}
-          tableId={currentLocation.tableId.trim()}
+          venueId={feedbackVenueId}
+          tableId={feedbackTableId}
           customerUid={(globalGuestUid?.trim() || guestProfileUid!.trim())}
-          activeSessionId={activeSession.id}
+          activeSessionId={feedbackVisitId}
           title="Отзыв и чаевые"
-          subtitle="Заведение завершило визит. Звёзды и кнопка «Спасибо» привязаны к официанту из сессии (обновляется в реальном времени)."
+          subtitle="Спасибо за визит. Оценка и чаевые сохраняются в завершённом визите и не занимают стол."
           onFinalize={() => void completeTableFeedbackSession()}
         />
       ) : null}

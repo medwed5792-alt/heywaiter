@@ -19,12 +19,8 @@ import { FieldValue } from "firebase-admin/firestore";
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
 /** Активные фазы визита: повторный вход должен подхватывать ту же сессию, без дублей. */
-const ACTIVE_VISIT_SESSION_STATUSES = [
-  "check_in_success",
-  "payment_confirmed",
-  "awaiting_guest_feedback",
-  "completed",
-] as const;
+/** Только «бой» в activeSessions; фаза отзыва живёт в archived_visits. */
+const ACTIVE_VISIT_SESSION_STATUSES = ["check_in_success", "payment_confirmed"] as const;
 
 export type CheckInGuestResult =
   | { status: "check_in_success"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string; onboardingHint?: string }

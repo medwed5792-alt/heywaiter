@@ -2,7 +2,11 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { Firestore } from "firebase-admin/firestore";
 import { extractOrderBillInfo } from "@/lib/orders/order-bill-amount";
 
-export type ArchivedVisitCloseSource = "guest_feedback_finalized" | "force_closed";
+export type ArchivedVisitCloseSource =
+  | "guest_feedback_finalized"
+  | "force_closed"
+  /** Админ «Закрыть стол»: боевая сессия перенесена в архив, стол свободен, гость в фазе отзыва по archived_visits. */
+  | "service_finished";
 
 /**
  * Снимок визита после закрытия сессии: «биография» отдельно от activeSessions.

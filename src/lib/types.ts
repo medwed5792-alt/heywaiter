@@ -268,7 +268,9 @@ export interface ArchivedVisit {
   createdAt: unknown;
   closedAt: unknown;
   archivedAt: unknown;
-  closeSource: "guest_feedback_finalized" | "force_closed";
+  closeSource: "guest_feedback_finalized" | "force_closed" | "service_finished";
+  /** Ступень 2: гость ещё не завершил отзыв/чаевые (только в archived_visits). */
+  guestFeedbackPending?: boolean;
   ordersTotalRub: number;
   guestReviews: { reviewId: string; stars: number; text?: string }[];
   staffRatedGuestAt: unknown;

@@ -9,31 +9,31 @@ import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import { guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
 
-function sessionAllowsFeedbackPhase(statusRaw: string): boolean {
-  const s = statusRaw.trim();
-  const u = s.toUpperCase();
-  return (
-    s === "awaiting_guest_feedback" ||
-    u === "AWAITING_FEEDBACK" ||
-    s === "completed" ||
-    u === "COMPLETED"
-  );
-}
-
 async function verifyGuestSessionReviewContext(
   firestore: Firestore,
   params: { sessionId: string; venueId: string; tableId: string; customerUid: string }
 ): Promise<{ ok: true; staffIds: string[] } | { ok: false }> {
-  const snap = await firestore.collection("activeSessions").doc(params.sessionId).get();
+  const snap = await firestore.collection("archived_visits").doc(params.sessionId).get();
   if (!snap.exists) return { ok: false };
   const data = (snap.data() ?? {}) as Record<string, unknown>;
+  if (data.guestFeedbackPending !== true) return { ok: false };
   if (String(data.venueId ?? "").trim() !== params.venueId) return { ok: false };
   if (String(data.tableId ?? "").trim() !== params.tableId) return { ok: false };
-  if (!sessionAllowsFeedbackPhase(String(data.status ?? ""))) return { ok: false };
 
   const masterId = typeof data.masterId === "string" ? data.masterId.trim() : "";
   let participant = false;
   if (guestCustomerUidsMatch(masterId, params.customerUid)) participant = true;
+  const participantUids = Array.isArray(data.participantUids)
+    ? data.participantUids.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  if (!participant) {
+    for (const uid of participantUids) {
+      if (guestCustomerUidsMatch(uid, params.customerUid)) {
+        participant = true;
+        break;
+      }
+    }
+  }
   if (!participant) {
     for (const p of Array.isArray(data.participants) ? data.participants : []) {
       const uid = typeof (p as { uid?: string })?.uid === "string" ? (p as { uid: string }).uid.trim() : "";

@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { finalizeGuestSessionClosedAfterFeedback } from "@/domain/usecases/session/closeTableSession";
-import { findActiveSessionInGuestFeedbackPhaseForTelegramUser } from "@/lib/active-session-feedback-phase";
+import { finalizeArchivedVisitAfterGuestFeedback } from "@/domain/usecases/session/closeTableSession";
+import { findArchivedVisitPendingFeedbackForTelegramUser } from "@/lib/active-session-feedback-phase";
 
 export const runtime = "nodejs";
 
 /**
  * POST /api/guest/feedback-session-done
  * После экрана отзыва: ищем сессию в activeSessions (masterId / participantUids + фаза отзыва),
- * затем сессия → closed (единый use-case finalizeGuestSessionClosedAfterFeedback).
+ * затем archived_visits.guestFeedbackPending → false (finalizeArchivedVisitAfterGuestFeedback).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -30,22 +30,22 @@ export async function POST(request: NextRequest) {
     }
 
     const fs = getAdminFirestore();
-    const sessionDoc = await findActiveSessionInGuestFeedbackPhaseForTelegramUser(fs, v.userId);
-    if (!sessionDoc) {
+    const archiveDoc = await findArchivedVisitPendingFeedbackForTelegramUser(fs, v.userId);
+    if (!archiveDoc) {
       return NextResponse.json({ ok: true, already: true });
     }
 
-    const s = sessionDoc.data() as Record<string, unknown>;
+    const s = archiveDoc.data() as Record<string, unknown>;
     const venueId = String(s.venueId ?? "").trim();
     const tableId = String(s.tableId ?? "").trim();
     if (!venueId || !tableId) {
       return NextResponse.json({ ok: true, already: true });
     }
 
-    const done = await finalizeGuestSessionClosedAfterFeedback({
+    const done = await finalizeArchivedVisitAfterGuestFeedback({
       venueId,
       tableId,
-      sessionId: sessionDoc.id,
+      sessionId: archiveDoc.id,
     });
     if (!done.ok) {
       return NextResponse.json({ error: done.error }, { status: 500 });

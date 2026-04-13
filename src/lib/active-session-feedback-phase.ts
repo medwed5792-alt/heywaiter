@@ -1,6 +1,6 @@
 /**
- * Поиск сессии гостя в фазе пост-визита (отзыв / чаевые) в коллекции activeSessions.
- * Учитывает global_users id и канонический tg:&lt;id&gt; в masterId / participantUids.
+ * Поиск архивного визита в фазе отзыва (Ступень 2) для Telegram-пользователя.
+ * Данные только в archived_visits; activeSessions не используется.
  */
 
 import type { Firestore, QueryDocumentSnapshot, QuerySnapshot } from "firebase-admin/firestore";
@@ -8,9 +8,8 @@ import { buildTgCustomerUid } from "@/lib/identity/customer-uid";
 import { findGuestByExternalIdentity } from "@/lib/identity/global-guest-hub";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 
-const FEEDBACK_PHASE_STATUSES = ["awaiting_guest_feedback", "completed"] as const;
-
-export async function findActiveSessionInGuestFeedbackPhaseForTelegramUser(
+/** archived_visits: поле guestFeedbackPending + свежий createdAt из снимка сессии */
+export async function findArchivedVisitPendingFeedbackForTelegramUser(
   firestore: Firestore,
   telegramUserId: string
 ): Promise<QueryDocumentSnapshot | null> {
@@ -25,17 +24,17 @@ export async function findActiveSessionInGuestFeedbackPhaseForTelegramUser(
   if (globalUid) {
     queries.push(
       firestore
-        .collection("activeSessions")
+        .collection("archived_visits")
         .where("masterId", "==", globalUid)
-        .where("status", "in", [...FEEDBACK_PHASE_STATUSES])
+        .where("guestFeedbackPending", "==", true)
         .limit(15)
         .get()
     );
     queries.push(
       firestore
-        .collection("activeSessions")
+        .collection("archived_visits")
         .where("participantUids", "array-contains", globalUid)
-        .where("status", "in", [...FEEDBACK_PHASE_STATUSES])
+        .where("guestFeedbackPending", "==", true)
         .limit(15)
         .get()
     );
@@ -43,17 +42,17 @@ export async function findActiveSessionInGuestFeedbackPhaseForTelegramUser(
 
   queries.push(
     firestore
-      .collection("activeSessions")
+      .collection("archived_visits")
       .where("masterId", "==", tgCustomerUid)
-      .where("status", "in", [...FEEDBACK_PHASE_STATUSES])
+      .where("guestFeedbackPending", "==", true)
       .limit(15)
       .get()
   );
   queries.push(
     firestore
-      .collection("activeSessions")
+      .collection("archived_visits")
       .where("participantUids", "array-contains", tgCustomerUid)
-      .where("status", "in", [...FEEDBACK_PHASE_STATUSES])
+      .where("guestFeedbackPending", "==", true)
       .limit(15)
       .get()
   );
@@ -66,4 +65,12 @@ export async function findActiveSessionInGuestFeedbackPhaseForTelegramUser(
     }
   }
   return pickNewestFreshActiveSessionDoc([...byId.values()], Date.now());
+}
+
+/** @deprecated Используйте findArchivedVisitPendingFeedbackForTelegramUser */
+export async function findActiveSessionInGuestFeedbackPhaseForTelegramUser(
+  firestore: Firestore,
+  telegramUserId: string
+): Promise<QueryDocumentSnapshot | null> {
+  return findArchivedVisitPendingFeedbackForTelegramUser(firestore, telegramUserId);
 }

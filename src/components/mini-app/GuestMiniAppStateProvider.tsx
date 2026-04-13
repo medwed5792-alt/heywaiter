@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import {
   mergePreOrderSystemFields,
   resolvePreOrderEnabled,
@@ -134,15 +134,17 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
 };
 
 /**
- * Статусы для live-подписки гостя. Без `closed`: при финализации документ выпадает из запроса → пустой снимок,
- * иначе «закрытая» сессия остаётся в выборке и может конкурировать с новым check-in при гонках.
+ * Только «боевая» фаза (Ступень 1). Отзыв/чаевые — archived_visits (Ступень 2), не activeSessions.
  */
-const ACTIVE_SESSION_STATUS_FILTER = [
-  "check_in_success",
-  "payment_confirmed",
-  "awaiting_guest_feedback",
-  "completed",
-] as const;
+const ACTIVE_SESSION_STATUS_FILTER = ["check_in_success", "payment_confirmed"] as const;
+
+export type PostServiceVisitState = {
+  visitId: string;
+  venueId: string;
+  tableId: string;
+  tableNumber: number;
+  feedbackStaffId: string | null;
+};
 
 /**
  * Шлюз / QR: v|venueId, t|tableId — единая схема для провайдера.
@@ -267,8 +269,10 @@ type GuestMiniAppContextValue = {
   getVenueMenuPdfUrl: (venueFirestoreId: string) => string | null;
   /** Только хозяин стола: разрешить/запретить подселение (isPrivate). */
   setTablePrivacyAllowJoin: (allowJoin: boolean) => Promise<{ ok: boolean; error?: string }>;
-  /** Админ завершил визит: показываем отзыв/чаевые вместо меню. */
+  /** Ступень 2: отзыв/чаевые по archived_visits (не по activeSessions). */
   guestAwaitingTableFeedback: boolean;
+  /** Архивный визит с guestFeedbackPending — источник для экрана отзыва. */
+  postServiceVisit: PostServiceVisitState | null;
   /** После отзыва: закрыть сессию на сервере и выйти со стола в UI. */
   completeTableFeedbackSession: () => Promise<void>;
   /**
@@ -339,8 +343,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     Record<string, VenueMenuVenueBlock | null>
   >({});
   const [showLandingScanner, setShowLandingScanner] = useState(false);
+  /** Ступень 2: сервис после боя — только archived_visits. */
+  const [postServiceVisit, setPostServiceVisit] = useState<PostServiceVisitState | null>(null);
   /** Счётчик для принудительного пересоздания подписки activeSessions (встроенный сканер = тот же check-in, что и deep link). */
   const [tableListenerEpoch, setTableListenerEpoch] = useState(0);
+  useEffect(() => {
+    const id = activeSession?.id?.trim();
+    if (id) lastBattleSessionIdRef.current = id;
+  }, [activeSession?.id]);
+
   const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -362,6 +373,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
    * Меняется только при явном сбросе (отзыв, потеря сессии в снимке, закрытый стол) и в начале входа со сканера (forceTableListenerResubscribe).
    */
   const guestTableBootstrapEpochRef = useRef(0);
+  /** Последний id боевой сессии (до удаления из activeSessions) — для перехода в Ступень 2. */
+  const lastBattleSessionIdRef = useRef<string | null>(null);
 
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
@@ -503,6 +516,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const tg = getTelegramWebApp();
         const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
         if (init) void guestSessionClear(init);
+      }
+      if (!nextFullTable) {
+        setPostServiceVisit(null);
       }
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
       setActiveSession(null);
@@ -683,6 +699,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       globalGuestUid?: string;
       onboardingHint?: string | null;
     }) => {
+      setPostServiceVisit(null);
       setShowLandingScanner(false);
       await switchLocation(data.venueId.trim(), data.tableId.trim());
       const resolvedGlobal = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
@@ -1021,6 +1038,41 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       limit(25)
     );
 
+    const tryPostServiceFromArchiveOrReset = (sid: string | null) => {
+      void (async () => {
+        if (sid) {
+          try {
+            const ar = await getDoc(doc(db, "archived_visits", sid));
+            const raw = ar.exists() ? (ar.data() as Record<string, unknown>) : null;
+            if (raw && raw.guestFeedbackPending === true) {
+              const v = String(raw.venueId ?? "").trim();
+              const t = String(raw.tableId ?? "").trim();
+              const staff =
+                typeof raw.assignedStaffId === "string" && raw.assignedStaffId.trim()
+                  ? raw.assignedStaffId.trim()
+                  : null;
+              const tn = typeof raw.tableNumber === "number" ? raw.tableNumber : 0;
+              setPostServiceVisit({
+                visitId: sid,
+                venueId: v,
+                tableId: t,
+                tableNumber: tn,
+                feedbackStaffId: staff,
+              });
+              clearPersistedGuestSeat();
+              return;
+            }
+          } catch {
+            // fall through to reset
+          }
+        }
+        setShowLandingScanner(true);
+        guestTableBootstrapEpochRef.current += 1;
+        setPostServiceVisit(null);
+        void switchLocation(null, null);
+      })();
+    };
+
     unsub = onSnapshot(
       q,
       (snap) => {
@@ -1029,9 +1081,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            setShowLandingScanner(true);
-            guestTableBootstrapEpochRef.current += 1;
-            void switchLocation(null, null);
+            tryPostServiceFromArchiveOrReset(lastBattleSessionIdRef.current);
           }
           return;
         }
@@ -1042,9 +1092,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            setShowLandingScanner(true);
-            guestTableBootstrapEpochRef.current += 1;
-            void switchLocation(null, null);
+            tryPostServiceFromArchiveOrReset(lastBattleSessionIdRef.current);
           }
           return;
         }
@@ -1064,6 +1112,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   // Live orders data for the table.
   useEffect(() => {
+    if (postServiceVisit) {
+      setCurrentTableOrders([]);
+      return;
+    }
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
 
     const venueId = currentLocation.venueId;
@@ -1118,7 +1170,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       cancelled = true;
       unsubRoot();
     };
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, activeSession?.id]);
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, activeSession?.id, postServiceVisit]);
 
   useEffect(() => {
     if (!isSdkReady || isInitializing || !guestIdentity.currentUid) return;
@@ -1399,22 +1451,18 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [globalGuestUid, guestProfileUid, guestBlockedReason, isGuestBlocked]
   );
 
-  const guestAwaitingTableFeedback = useMemo(
-    () =>
-      activeSession?.status === "awaiting_guest_feedback" || activeSession?.status === "completed",
-    [activeSession?.status]
-  );
+  const guestAwaitingTableFeedback = useMemo(() => Boolean(postServiceVisit), [postServiceVisit]);
 
   const feedbackTargetStaffId = useMemo(() => {
-    if (!guestAwaitingTableFeedback) return null;
-    const fromSession = activeSession?.resolvedWaiterStaffId?.trim();
-    if (fromSession) return fromSession;
-    return assignedStaffId?.trim() || null;
-  }, [guestAwaitingTableFeedback, activeSession?.resolvedWaiterStaffId, assignedStaffId]);
+    if (!postServiceVisit) return null;
+    return postServiceVisit.feedbackStaffId?.trim() || assignedStaffId?.trim() || null;
+  }, [postServiceVisit, assignedStaffId]);
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
     guestTableBootstrapEpochRef.current += 1;
+    setPostServiceVisit(null);
+    lastBattleSessionIdRef.current = null;
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();
     const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
@@ -1464,6 +1512,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       getVenueMenuPdfUrl,
       setTablePrivacyAllowJoin,
       guestAwaitingTableFeedback,
+      postServiceVisit,
       completeTableFeedbackSession,
       feedbackTargetStaffId,
       showLandingScanner,
@@ -1475,6 +1524,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       currentLocation,
       visitHistory,
       activeSession,
+      postServiceVisit,
       participants,
       currentTableOrders,
       systemConfig,
