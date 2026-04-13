@@ -1,10 +1,12 @@
+import { Timestamp, type QuerySnapshot } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
-import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { activeSessionCreatedAtMillis, pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 
 const ACTIVE_SESSION_STATUS = ["check_in_success", "payment_confirmed"] as const;
 
-export type GuestPolitePhase = "working" | "thank_you" | "free";
+/** Окно «только что закрыли стол»: без активной сессии архив за этот интервал → обязательно thank_you. */
+const ARCHIVE_RECENT_MS = 5 * 60 * 1000;
 
 export type ResolveGuestPoliteStateResult =
   | {
@@ -25,9 +27,84 @@ export type ResolveGuestPoliteStateResult =
     }
   | { phase: "free"; globalGuestUid: string };
 
+function fieldAsMillis(raw: Record<string, unknown>, key: string): number | null {
+  const v = raw[key];
+  if (v == null) return null;
+  return activeSessionCreatedAtMillis({ createdAt: v } as Record<string, unknown>);
+}
+
+function archivedEventTimeMs(raw: Record<string, unknown>): number {
+  return (
+    fieldAsMillis(raw, "archivedAt") ??
+    fieldAsMillis(raw, "closedAt") ??
+    fieldAsMillis(raw, "createdAt") ??
+    0
+  );
+}
+
+function archivedQualifiesForThankYou(raw: Record<string, unknown>, nowMs: number): boolean {
+  if (raw.guestFeedbackPending === true) return true;
+  const ev = archivedEventTimeMs(raw);
+  if (ev <= 0) return false;
+  return nowMs - ev <= ARCHIVE_RECENT_MS;
+}
+
+function pickBestArchivedThankYouDoc(
+  docs: Array<{ id: string; data: () => Record<string, unknown> }>,
+  nowMs: number
+): (typeof docs)[number] | null {
+  let best: (typeof docs)[number] | null = null;
+  let bestT = -Infinity;
+  for (const d of docs) {
+    const raw = d.data() as Record<string, unknown>;
+    if (!archivedQualifiesForThankYou(raw, nowMs)) continue;
+    const t = archivedEventTimeMs(raw);
+    if (t >= bestT) {
+      bestT = t;
+      best = d;
+    }
+  }
+  return best;
+}
+
+async function fetchRecentArchivedByTime(
+  fs: ReturnType<typeof getAdminFirestore>,
+  uid: string,
+  sinceTs: Timestamp
+): Promise<Array<{ id: string; data: () => Record<string, unknown> }>> {
+  const out: Array<{ id: string; data: () => Record<string, unknown> }> = [];
+  const tryPush = (snap: QuerySnapshot) => {
+    for (const d of snap.docs) {
+      out.push(d as { id: string; data: () => Record<string, unknown> });
+    }
+  };
+  try {
+    const [m, p] = await Promise.all([
+      fs
+        .collection("archived_visits")
+        .where("masterId", "==", uid)
+        .where("archivedAt", ">=", sinceTs)
+        .orderBy("archivedAt", "desc")
+        .limit(15)
+        .get(),
+      fs
+        .collection("archived_visits")
+        .where("participantUids", "array-contains", uid)
+        .where("archivedAt", ">=", sinceTs)
+        .orderBy("archivedAt", "desc")
+        .limit(15)
+        .get(),
+    ]);
+    tryPush(m);
+    tryPush(p);
+  } catch {
+    // нет индекса / поля archivedAt — опираемся на выборку по guestFeedbackPending ниже
+  }
+  return out;
+}
+
 /**
- * Единый серверный «автомат»: активная сессия → архив с отзывом → свободны.
- * Телефон не читает archived_visits и не восстанавливает стол из localStorage.
+ * Единый серверный «автомат»: активная сессия → архив (ожидание отзыва или недавнее закрытие) → свободны.
  */
 export async function resolveGuestPoliteState(globalGuestUid: string): Promise<ResolveGuestPoliteStateResult> {
   const uid = String(globalGuestUid ?? "").trim();
@@ -76,7 +153,9 @@ export async function resolveGuestPoliteState(globalGuestUid: string): Promise<R
     }
   }
 
-  const [archMaster, archParticipant] = await Promise.all([
+  const sinceTs = Timestamp.fromMillis(nowMs - ARCHIVE_RECENT_MS);
+
+  const [archPendingMaster, archPendingParticipant, recentTimeDocs] = await Promise.all([
     fs
       .collection("archived_visits")
       .where("masterId", "==", uid)
@@ -89,13 +168,22 @@ export async function resolveGuestPoliteState(globalGuestUid: string): Promise<R
       .where("guestFeedbackPending", "==", true)
       .limit(15)
       .get(),
+    fetchRecentArchivedByTime(fs, uid, sinceTs),
   ]);
 
-  const archById = new Map<string, (typeof archMaster.docs)[number]>();
-  for (const d of archMaster.docs) archById.set(d.id, d);
-  for (const d of archParticipant.docs) archById.set(d.id, d);
+  const archById = new Map<string, { id: string; data: () => Record<string, unknown> }>();
+  const add = (snap: typeof archPendingMaster) => {
+    for (const d of snap.docs) {
+      archById.set(d.id, d as { id: string; data: () => Record<string, unknown> });
+    }
+  };
+  add(archPendingMaster);
+  add(archPendingParticipant);
+  for (const d of recentTimeDocs) {
+    archById.set(d.id, d);
+  }
 
-  const archPick = pickNewestFreshActiveSessionDoc([...archById.values()], nowMs);
+  const archPick = pickBestArchivedThankYouDoc([...archById.values()], nowMs);
   if (archPick) {
     const raw = archPick.data() as Record<string, unknown>;
     const staff =

@@ -45,7 +45,7 @@ import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
-import { clearPersistedGuestSeat, writePersistedGuestSeat } from "@/lib/guest-table-persistence";
+import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 import { getClientGuestCookie, setClientGuestCookie } from "@/lib/identity/guest-cookie";
@@ -375,7 +375,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
    * Счётчик для отбрасывания устаревших ответов POST /api/check-in.
    * Меняется только при явном сбросе (отзыв, потеря сессии в снимке, закрытый стол) и в начале входа со сканера (forceTableListenerResubscribe).
    */
-  const guestTableBootstrapEpochRef = useRef(0);
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
     const currentUid = resolveUnifiedCustomerUid({
@@ -729,12 +728,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation]
   );
 
-  /** Серверный «автомат» polite-state: без чтения архива и без localStorage-стола. */
+  /** Серверный «автомат» polite-state при холодном старте (включая working). */
   const applyPoliteStatePayload = useCallback(
-    async (data: PoliteStateResponse, epochAtStart?: number) => {
-      if (epochAtStart !== undefined && epochAtStart !== guestTableBootstrapEpochRef.current) {
-        return false;
-      }
+    async (data: PoliteStateResponse) => {
       if (data.ok !== true || !data.phase) return false;
 
       const gg = (data.globalGuestUid ?? "").trim();
@@ -781,7 +777,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         clearPersistedGuestSeat();
         setPostServiceVisit(null);
         setShowLandingScanner(true);
-        guestTableBootstrapEpochRef.current += 1;
         await switchLocation(null, null);
         return true;
       }
@@ -789,6 +784,48 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       return false;
     },
     [applySuccessfulTableBootstrap, switchLocation]
+  );
+
+  /**
+   * После исчезновения activeSessions в снимке: один ответ сервера — только отзыв или сканер.
+   * Никакого «working» / повторной посадки.
+   */
+  const applyFinalPoliteThankYouOrScanner = useCallback(
+    async (data: PoliteStateResponse) => {
+      const gg = (data.globalGuestUid ?? "").trim();
+      if (data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
+        clearPersistedGuestSeat();
+        const t = data.thankYou;
+        setPostServiceVisit({
+          visitId: t.visitId.trim(),
+          venueId: String(t.venueId ?? "").trim(),
+          tableId: String(t.tableId ?? "").trim(),
+          tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
+          feedbackStaffId:
+            typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
+              ? t.feedbackStaffId.trim()
+              : null,
+        });
+        setShowLandingScanner(false);
+        await switchLocation(null, null);
+        const u = gg || globalGuestUidRef.current?.trim() || "";
+        if (u) {
+          setGlobalGuestUid(u);
+          try {
+            sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, u);
+          } catch {
+            // ignore
+          }
+          setClientGuestCookie(u);
+        }
+        return;
+      }
+      clearPersistedGuestSeat();
+      setPostServiceVisit(null);
+      setShowLandingScanner(true);
+      await switchLocation(null, null);
+    },
+    [switchLocation]
   );
 
   const bootstrapTableByServer = useCallback(
@@ -799,11 +836,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       knownGlobalGuestUidHint?: string,
       options?: { forceTableListenerResubscribe?: boolean }
     ): Promise<boolean> => {
-      /** Только явный «новый вход со сканера»: инвалидируем параллельный bootstrap из useEffect, не трогая эпоху при обычном deep link / seat. */
-      if (options?.forceTableListenerResubscribe) {
-        guestTableBootstrapEpochRef.current += 1;
-      }
-      const epochAtStart = guestTableBootstrapEpochRef.current;
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
         const participantUid =
@@ -831,13 +863,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          const epochNow = guestTableBootstrapEpochRef.current;
-          if (epochAtStart !== epochNow) {
-            console.log(
-              `[guest] Ответ отброшен: текущая эпоха ${epochNow}, у ответа ${epochAtStart} (check-in table)`
-            );
-            return false;
-          }
           /** Сервер подтвердил стол — сразу переводим UI (currentLocation + onSnapshot подтянется следом). */
           await applySuccessfulTableBootstrap({
             venueId: data.venueId,
@@ -898,7 +923,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const entryTable = fromUrl ?? (fromStartParam ? { venueId: fromStartParam.venueId, tableId: fromStartParam.tableId } : null);
 
       if (!entryTable) {
-        const epochAtStart = guestTableBootstrapEpochRef.current;
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
           clearPersistedGuestSeat();
@@ -915,17 +939,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               body: JSON.stringify({ globalGuestUid: uid }),
             });
             const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
-            if (cancelled || epochAtStart !== guestTableBootstrapEpochRef.current) {
-              if (!cancelled) setIsInitializing(false);
-              return;
-            }
+            if (cancelled) return;
             if (!res.ok || data.ok !== true) {
               clearPersistedGuestSeat();
               setShowLandingScanner(true);
               await switchLocation(null, null);
               await refreshVisitHistory();
             } else {
-              await applyPoliteStatePayload(data, epochAtStart);
+              await applyPoliteStatePayload(data);
               if (data.phase === "free") {
                 await refreshVisitHistory();
               }
@@ -964,15 +985,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     applyPoliteStatePayload,
   ]);
 
-  // Запоминаем стол + global UID для бесшовного входа из любой соцсети / после перезапуска Mini App.
-  useEffect(() => {
-    const gg = globalGuestUid?.trim();
-    const v = currentLocation.venueId?.trim();
-    const t = currentLocation.tableId?.trim();
-    if (!gg || !v || !t || !activeSession) return;
-    writePersistedGuestSeat(v, t, gg);
-  }, [activeSession, globalGuestUid, currentLocation.venueId, currentLocation.tableId]);
-
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
   useEffect(() => {
     if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
@@ -992,7 +1004,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         setParticipants([]);
         sawSessionDoc = false;
         setShowLandingScanner(true);
-        guestTableBootstrapEpochRef.current += 1;
         void switchLocation(null, null);
         return;
       }
@@ -1002,7 +1013,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         setParticipants([]);
         sawSessionDoc = false;
         setShowLandingScanner(true);
-        guestTableBootstrapEpochRef.current += 1;
         void switchLocation(null, null);
         return;
       }
@@ -1064,16 +1074,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       limit(25)
     );
 
-    const recoverSessionEndViaPoliteState = () => {
+    const finalizeAfterActiveSessionVanished = () => {
       void (async () => {
-        const epochAtStart = guestTableBootstrapEpochRef.current;
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
-          clearPersistedGuestSeat();
-          setPostServiceVisit(null);
-          setShowLandingScanner(true);
-          guestTableBootstrapEpochRef.current += 1;
-          await switchLocation(null, null);
+          await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: "" });
           return;
         }
         try {
@@ -1083,34 +1088,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             body: JSON.stringify({ globalGuestUid: uid }),
           });
           const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
-          if (cancelled || epochAtStart !== guestTableBootstrapEpochRef.current) return;
+          if (cancelled) return;
           if (!res.ok || data.ok !== true) {
-            clearPersistedGuestSeat();
-            setPostServiceVisit(null);
-            setShowLandingScanner(true);
-            guestTableBootstrapEpochRef.current += 1;
-            await switchLocation(null, null);
-            return;
-          }
-          const applied = await applyPoliteStatePayload(data, epochAtStart);
-          if (!applied) {
-            clearPersistedGuestSeat();
-            setPostServiceVisit(null);
-            setShowLandingScanner(true);
-            guestTableBootstrapEpochRef.current += 1;
-            await switchLocation(null, null);
+            await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
             return;
           }
           if (data.phase === "working") {
-            setTableListenerEpoch((n) => n + 1);
+            await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
+            return;
           }
+          await applyFinalPoliteThankYouOrScanner(data);
         } catch {
           if (cancelled) return;
-          clearPersistedGuestSeat();
-          setPostServiceVisit(null);
-          setShowLandingScanner(true);
-          guestTableBootstrapEpochRef.current += 1;
-          await switchLocation(null, null);
+          await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
         }
       })();
     };
@@ -1123,7 +1113,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            recoverSessionEndViaPoliteState();
+            finalizeAfterActiveSessionVanished();
           }
           return;
         }
@@ -1134,7 +1124,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           setParticipants([]);
           if (sawSessionDoc) {
             sawSessionDoc = false;
-            recoverSessionEndViaPoliteState();
+            finalizeAfterActiveSessionVanished();
           }
           return;
         }
@@ -1156,8 +1146,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     currentLocation.tableId,
     switchLocation,
     tableListenerEpoch,
-    applyPoliteStatePayload,
-    applySuccessfulTableBootstrap,
+    applyFinalPoliteThankYouOrScanner,
   ]);
 
   // Live orders data for the table.
@@ -1510,7 +1499,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
-    guestTableBootstrapEpochRef.current += 1;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();
