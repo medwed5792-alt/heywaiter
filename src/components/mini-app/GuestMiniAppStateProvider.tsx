@@ -265,7 +265,11 @@ type GuestMiniAppContextValue = {
   assignedStaffId: string | null;
   /** Имя официанта по документу стола (для подсказок / чаевых). */
   assignedStaffDisplayName: string | null;
-  switchLocation: (venueId: string | null, tableId: string | null) => Promise<void>;
+  switchLocation: (
+    venueId: string | null,
+    tableId: string | null,
+    opts?: { preservePostServiceVisit?: boolean }
+  ) => Promise<void>;
   openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
   refreshVisitHistory: () => Promise<void>;
@@ -376,10 +380,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
-  /**
-   * Счётчик для отбрасывания устаревших ответов POST /api/check-in.
-   * Меняется только при явном сбросе (отзыв, потеря сессии в снимке, закрытый стол) и в начале входа со сканера (forceTableListenerResubscribe).
-   */
+  /** Один POST /api/check-in на пару venue|table из URL/start_param — без повторов при смене identity. */
+  const urlCheckInGateKeyRef = useRef<string | null>(null);
+
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
     const currentUid = resolveUnifiedCustomerUid({
@@ -499,7 +502,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [globalGuestUid, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
 
   const switchLocation = useCallback(
-    async (venueId: string | null, tableId: string | null) => {
+    async (
+      venueId: string | null,
+      tableId: string | null,
+      opts?: { preservePostServiceVisit?: boolean }
+    ) => {
       const prev = currentLocationRef.current;
       const hadTable = Boolean(prev.venueId?.trim() && prev.tableId?.trim());
       const nextVenueId = venueId?.trim() || null;
@@ -518,7 +525,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const init = typeof tg?.initData === "string" ? tg.initData.trim() : "";
         if (init) void guestSessionClear(init);
       }
-      if (!nextFullTable) {
+      if (!nextFullTable && !opts?.preservePostServiceVisit) {
         setPostServiceVisit(null);
       }
       setCurrentLocation({ venueId: nextVenueId, tableId: nextTableId });
@@ -733,21 +740,21 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation]
   );
 
-  /** Серверный «автомат» polite-state при холодном старте (включая working). */
+  /**
+   * polite-state без QR в URL: только thank_you / free.
+   * «working» без явного check-in не обрабатываем — не вызываем POST /api/check-in и не сажаем за стол сами.
+   */
   const applyPoliteStatePayload = useCallback(
     async (data: PoliteStateResponse) => {
       if (data.ok !== true || !data.phase) return false;
 
       const gg = (data.globalGuestUid ?? "").trim();
 
-      if (data.phase === "working" && data.working?.venueId?.trim() && data.working?.tableId?.trim()) {
-        const resolvedGlobal = gg || globalGuestUidRef.current?.trim() || "";
-        await applySuccessfulTableBootstrap({
-          venueId: data.working.venueId.trim(),
-          tableId: data.working.tableId.trim(),
-          globalGuestUid: resolvedGlobal || undefined,
-          onboardingHint: null,
-        });
+      if (data.phase === "working") {
+        clearPersistedGuestSeat();
+        setPostServiceVisit(null);
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
         return true;
       }
 
@@ -759,6 +766,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
             ? t.feedbackActSessionId.trim()
             : buildFeedbackActSessionId(vid);
+        setShowLandingScanner(false);
+        await switchLocation(null, null, { preservePostServiceVisit: true });
         setPostServiceVisit({
           visitId: vid,
           feedbackActSessionId: fid,
@@ -770,8 +779,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               ? t.feedbackStaffId.trim()
               : null,
         });
-        setShowLandingScanner(false);
-        await switchLocation(null, null);
         if (gg) {
           setGlobalGuestUid(gg);
           try {
@@ -794,7 +801,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       return false;
     },
-    [applySuccessfulTableBootstrap, switchLocation]
+    [switchLocation]
   );
 
   /**
@@ -812,6 +819,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
             ? t.feedbackActSessionId.trim()
             : buildFeedbackActSessionId(vid);
+        setShowLandingScanner(false);
+        await switchLocation(null, null, { preservePostServiceVisit: true });
         setPostServiceVisit({
           visitId: vid,
           feedbackActSessionId: fid,
@@ -823,8 +832,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               ? t.feedbackStaffId.trim()
               : null,
         });
-        setShowLandingScanner(false);
-        await switchLocation(null, null);
         const u = gg || globalGuestUidRef.current?.trim() || "";
         if (u) {
           setGlobalGuestUid(u);
@@ -940,6 +947,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const entryTable = fromUrl ?? (fromStartParam ? { venueId: fromStartParam.venueId, tableId: fromStartParam.tableId } : null);
 
       if (!entryTable) {
+        urlCheckInGateKeyRef.current = null;
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
           clearPersistedGuestSeat();
@@ -964,7 +972,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               await refreshVisitHistory();
             } else {
               await applyPoliteStatePayload(data);
-              if (data.phase === "free") {
+              if (data.phase === "free" || data.phase === "working") {
                 await refreshVisitHistory();
               }
             }
@@ -982,7 +990,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
 
       try {
-        await enterGuestTableThroughGateway(entryTable.venueId, entryTable.tableId);
+        const gateKey = `${entryTable.venueId.trim()}|${entryTable.tableId.trim()}`;
+        if (urlCheckInGateKeyRef.current === gateKey) {
+          if (!cancelled) setIsInitializing(false);
+          return;
+        }
+        const ok = await enterGuestTableThroughGateway(entryTable.venueId, entryTable.tableId);
+        if (ok) urlCheckInGateKeyRef.current = gateKey;
         if (cancelled) return;
       } finally {
         if (!cancelled) setIsInitializing(false);
@@ -1390,7 +1404,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
 
-          await enterGuestTableThroughGateway(venueId, tableId, { forceTableListenerResubscribe: true });
+          const entered = await enterGuestTableThroughGateway(venueId, tableId, {
+            forceTableListenerResubscribe: true,
+          });
+          if (entered) urlCheckInGateKeyRef.current = `${venueId}|${tableId}`;
           tg.closeScanQrPopup?.();
         })();
       });
