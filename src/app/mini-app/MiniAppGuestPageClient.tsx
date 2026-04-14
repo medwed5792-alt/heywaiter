@@ -132,20 +132,12 @@ function GuestNearbyEstablishments() {
 }
 
 function GuestServiceTabContent() {
-  const { openTableScanner } = useGuestContext();
-
   return (
     <div className="space-y-5">
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <button
-          type="button"
-          onClick={openTableScanner}
-          className="w-full rounded-xl bg-slate-900 py-4 text-base font-semibold text-white hover:bg-slate-800"
-        >
-          Сканер QR
-        </button>
+        <p className="text-center text-base font-semibold text-slate-900">Сканируйте внешний QR стола</p>
         <p className="mt-2 text-center text-xs text-slate-500">
-          Сканер открывает стол и переключает в режим управления. Если у заведения настроена геозона — нужны GPS и нахождение в радиусе (как у персонала).
+          Вход в Mini-App только через ссылку с параметрами `v` и `t`. Камера внутри приложения отключена.
         </p>
       </section>
     </div>

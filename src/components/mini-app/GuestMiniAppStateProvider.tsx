@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import {
   mergePreOrderSystemFields,
@@ -37,9 +37,7 @@ import {
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
-import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
-import { resolveGuestTableFromQrText } from "@/lib/guest-qr-table-resolve";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
@@ -47,6 +45,7 @@ import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
 import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
+import { FEEDBACK_SESSION_ID_PREFIX, GUEST_FEEDBACK_ACT_STATUS } from "@/lib/feedback-act-session";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 import {
@@ -66,9 +65,6 @@ type TelegramWebAppInit = {
   };
   ready?: () => void;
   addToAttachmentMenu?: () => Promise<boolean> | boolean;
-  showScanQrPopup?: (params: { text?: string }, callback: (text: string) => void) => void;
-  /** Закрывает только оверлей сканера QR (не путать с close — закрытием всего Mini App). */
-  closeScanQrPopup?: () => void;
   close?: () => void;
 };
 
@@ -267,7 +263,6 @@ type GuestMiniAppContextValue = {
     tableId: string | null,
     opts?: { preservePostServiceVisit?: boolean }
   ) => Promise<void>;
-  openTableScanner: () => void;
   openVenueMenu: (venueId: string) => void;
   refreshVisitHistory: () => Promise<void>;
   callWaiter: () => Promise<void>;
@@ -303,7 +298,6 @@ type GuestMiniAppContextValue = {
 const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null);
 
 export function GuestMiniAppStateProvider({ children }: { children: ReactNode }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { visitorId } = useVisitor();
   const { checkGuestQrVenueAccess } = useSotaLocation();
@@ -353,8 +347,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [showLandingScanner, setShowLandingScanner] = useState(false);
   /** Акт 2: экран отзыва после переноса в архив. */
   const [postServiceVisit, setPostServiceVisit] = useState<PostServiceVisitState | null>(null);
-  /** Счётчик для принудительного пересоздания подписки activeSessions (встроенный сканер = тот же check-in, что и deep link). */
-  const [tableListenerEpoch, setTableListenerEpoch] = useState(0);
   const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(null);
   const globalGuestUidRef = useRef<string | null>(globalGuestUid);
   useEffect(() => {
@@ -368,9 +360,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
-  /** Один POST /api/check-in на пару venue|table из URL/start_param — без повторов при смене identity. */
-  const urlCheckInGateKeyRef = useRef<string | null>(null);
-
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
     const currentUid = resolveUnifiedCustomerUid({
@@ -561,7 +550,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
   }, [isSdkReady]);
 
-  // Telegram Mini App UX: suggest pinning app in attachment menu once per device.
+  // Optional Telegram UX: try pinning app in attachment menu without storage dependencies.
   useEffect(() => {
     if (!isSdkReady || typeof window === "undefined") return;
     if (attachmentMenuInitRef.current) return;
@@ -569,26 +558,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     const inTg = isTelegramContext();
     if (!tg || !inTg || typeof tg.addToAttachmentMenu !== "function") return;
     attachmentMenuInitRef.current = true;
-
-    let alreadyDone = false;
-    try {
-      alreadyDone = localStorage.getItem("sota_guest_attachment_menu_added") === "1";
-    } catch {
-      // ignore storage errors
-    }
-    if (alreadyDone) return;
-
-    Promise.resolve(tg.addToAttachmentMenu())
-      .then(() => {
-        try {
-          localStorage.setItem("sota_guest_attachment_menu_added", "1");
-        } catch {
-          // ignore
-        }
-      })
-      .catch(() => {
-        // optional API; ignore unsupported clients
-      });
+    Promise.resolve(tg.addToAttachmentMenu()).catch(() => {
+      // optional API; ignore unsupported clients
+    });
   }, [isSdkReady]);
 
   // Global runtime config from system_configs/global_settings with safe defaults.
@@ -706,94 +678,73 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation]
   );
 
-  /**
-   * polite-state без QR в URL: только thank_you / free.
-   * «working» без явного check-in не обрабатываем — не вызываем POST /api/check-in и не сажаем за стол сами.
-   */
-  const applyPoliteStatePayload = useCallback(
-    async (data: PoliteStateResponse) => {
-      if (data.ok !== true || !data.phase) return false;
-
-      if (data.phase === "working") {
-        clearPersistedGuestSeat();
-        setPostServiceVisit(null);
-        setShowLandingScanner(true);
-        await switchLocation(null, null);
-        return true;
-      }
-
-      if (data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
-        clearPersistedGuestSeat();
-        const t = data.thankYou;
-        const vid = t.visitId.trim();
-        const fid =
-          typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
-            ? t.feedbackActSessionId.trim()
-            : buildFeedbackActSessionId(vid);
-        setShowLandingScanner(false);
-        await switchLocation(null, null, { preservePostServiceVisit: true });
-        setPostServiceVisit({
-          visitId: vid,
-          feedbackActSessionId: fid,
-          venueId: String(t.venueId ?? "").trim(),
-          tableId: String(t.tableId ?? "").trim(),
-          tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
-          feedbackStaffId:
-            typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
-              ? t.feedbackStaffId.trim()
-              : null,
-        });
-        return true;
-      }
-
-      if (data.phase === "free") {
-        clearPersistedGuestSeat();
-        setPostServiceVisit(null);
-        setShowLandingScanner(true);
-        await switchLocation(null, null);
-        return true;
-      }
-
-      return false;
+  const switchToFeedbackVisit = useCallback(
+    async (visit: PostServiceVisitState) => {
+      clearPersistedGuestSeat();
+      setShowLandingScanner(false);
+      await switchLocation(null, null, { preservePostServiceVisit: true });
+      setPostServiceVisit(visit);
     },
     [switchLocation]
   );
 
-  /**
-   * После исчезновения activeSessions в снимке: один ответ сервера — только отзыв или сканер.
-   * Никакого «working» / повторной посадки.
-   */
-  const applyFinalPoliteThankYouOrScanner = useCallback(
-    async (data: PoliteStateResponse) => {
-      if (data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
-        clearPersistedGuestSeat();
-        const t = data.thankYou;
-        const vid = t.visitId.trim();
-        const fid =
-          typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
-            ? t.feedbackActSessionId.trim()
-            : buildFeedbackActSessionId(vid);
-        setShowLandingScanner(false);
-        await switchLocation(null, null, { preservePostServiceVisit: true });
-        setPostServiceVisit({
-          visitId: vid,
-          feedbackActSessionId: fid,
-          venueId: String(t.venueId ?? "").trim(),
-          tableId: String(t.tableId ?? "").trim(),
-          tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
-          feedbackStaffId:
-            typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
-              ? t.feedbackStaffId.trim()
-              : null,
-        });
-        return;
-      }
-      clearPersistedGuestSeat();
-      setPostServiceVisit(null);
-      setShowLandingScanner(true);
-      await switchLocation(null, null);
+  const switchToScanQrScreen = useCallback(async () => {
+    clearPersistedGuestSeat();
+    setPostServiceVisit(null);
+    setShowLandingScanner(true);
+    await switchLocation(null, null);
+  }, [switchLocation]);
+
+  const resolveFeedbackActVisitByGlobalUid = useCallback(
+    async (globalUid: string): Promise<PostServiceVisitState | null> => {
+      const uid = globalUid.trim();
+      if (!uid) return null;
+      const [byMaster, byParticipant] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, "activeSessions"),
+            where("masterId", "==", uid),
+            where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+            limit(10)
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, "activeSessions"),
+            where("participantUids", "array-contains", uid),
+            where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+            limit(10)
+          )
+        ),
+      ]);
+      const docs = [...byMaster.docs, ...byParticipant.docs].filter((d) =>
+        d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX)
+      );
+      if (docs.length === 0) return null;
+      const picked = docs.sort((a, b) => {
+        const ta = visitTimestampMillis((a.data() as Record<string, unknown>).createdAt);
+        const tb = visitTimestampMillis((b.data() as Record<string, unknown>).createdAt);
+        return tb - ta;
+      })[0];
+      const raw = (picked.data() ?? {}) as Record<string, unknown>;
+      const visitId =
+        typeof raw.sourceSessionId === "string" && raw.sourceSessionId.trim()
+          ? raw.sourceSessionId.trim()
+          : picked.id.replace(FEEDBACK_SESSION_ID_PREFIX, "").trim();
+      if (!visitId) return null;
+      return {
+        visitId,
+        feedbackActSessionId: picked.id,
+        venueId: String(raw.venueId ?? "").trim(),
+        tableId: String(raw.tableId ?? "").trim(),
+        tableNumber: typeof raw.tableNumber === "number" ? raw.tableNumber : 0,
+        feedbackStaffId:
+          typeof raw.assignedStaffId === "string" && raw.assignedStaffId.trim()
+            ? raw.assignedStaffId.trim()
+            : null,
+      };
     },
-    [switchLocation]
+    []
   );
 
   const waitForActiveSessionConfirmation = useCallback(
@@ -840,11 +791,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   /** Диктатура сервера: единая точка входа (QR/URL) + geo-check + подтверждение через onSnapshot. */
   const processEntry = useCallback(
-    async (
-      venueId: string,
-      tableId: string,
-      options?: { forceTableListenerResubscribe?: boolean }
-    ): Promise<boolean> => {
+    async (venueId: string, tableId: string): Promise<boolean> => {
       const v = venueId.trim();
       const t = tableId.trim();
       if (!v || !t) return false;
@@ -894,9 +841,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             tableId: data.tableId,
             onboardingHint: data.onboardingHint ?? null,
           });
-          if (options?.forceTableListenerResubscribe) {
-            setTableListenerEpoch((n) => n + 1);
-          }
           return true;
         }
 
@@ -929,23 +873,25 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     let cancelled = false;
     void (async () => {
-      const fromUrl = readVenueTableFromSearchParams(searchParams);
-      const startParamRaw = getTelegramWebApp()?.initDataUnsafe?.start_param?.trim() ?? "";
-      const fromStartParam = startParamRaw ? parseStartParamPayload(startParamRaw) : null;
-      const entryTable = fromUrl ?? (fromStartParam ? { venueId: fromStartParam.venueId, tableId: fromStartParam.tableId } : null);
+      const entryTable = readVenueTableFromSearchParams(searchParams);
 
       if (!entryTable) {
-        urlCheckInGateKeyRef.current = null;
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
-          clearPersistedGuestSeat();
           if (!cancelled) {
-            setShowLandingScanner(true);
-            await switchLocation(null, null);
+            await switchToScanQrScreen();
             await refreshVisitHistory();
           }
         } else {
           try {
+            const feedbackAct = await resolveFeedbackActVisitByGlobalUid(uid);
+            if (feedbackAct) {
+              if (!cancelled) {
+                await switchToFeedbackVisit(feedbackAct);
+              }
+              if (!cancelled) setIsInitializing(false);
+              return;
+            }
             const res = await fetch("/api/guest/polite-state", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -953,22 +899,31 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             });
             const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
             if (cancelled) return;
-            if (!res.ok || data.ok !== true) {
-              clearPersistedGuestSeat();
-              setShowLandingScanner(true);
-              await switchLocation(null, null);
-              await refreshVisitHistory();
-            } else {
-              await applyPoliteStatePayload(data);
-              if (data.phase === "free" || data.phase === "working") {
-                await refreshVisitHistory();
-              }
+            if (res.ok && data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
+              const t = data.thankYou;
+              const vid = t.visitId.trim();
+              const fid =
+                typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
+                  ? t.feedbackActSessionId.trim()
+                  : buildFeedbackActSessionId(vid);
+              await switchToFeedbackVisit({
+                visitId: vid,
+                feedbackActSessionId: fid,
+                venueId: String(t.venueId ?? "").trim(),
+                tableId: String(t.tableId ?? "").trim(),
+                tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
+                feedbackStaffId:
+                  typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
+                    ? t.feedbackStaffId.trim()
+                    : null,
+              });
+              return;
             }
+            await switchToScanQrScreen();
+            await refreshVisitHistory();
           } catch {
-            clearPersistedGuestSeat();
             if (!cancelled) {
-              setShowLandingScanner(true);
-              await switchLocation(null, null);
+              await switchToScanQrScreen();
               await refreshVisitHistory();
             }
           }
@@ -978,13 +933,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
 
       try {
-        const gateKey = `${entryTable.venueId.trim()}|${entryTable.tableId.trim()}`;
-        if (urlCheckInGateKeyRef.current === gateKey) {
-          if (!cancelled) setIsInitializing(false);
-          return;
-        }
-        const ok = await processEntry(entryTable.venueId, entryTable.tableId);
-        if (ok) urlCheckInGateKeyRef.current = gateKey;
+        await processEntry(entryTable.venueId, entryTable.tableId);
         if (cancelled) return;
       } finally {
         if (!cancelled) setIsInitializing(false);
@@ -1001,7 +950,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     switchLocation,
     refreshVisitHistory,
     processEntry,
-    applyPoliteStatePayload,
+    resolveFeedbackActVisitByGlobalUid,
+    switchToFeedbackVisit,
+    switchToScanQrScreen,
   ]);
 
   // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
@@ -1097,10 +1048,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       void (async () => {
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
-          await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: "" });
+          await switchToScanQrScreen();
           return;
         }
         try {
+          const feedbackAct = await resolveFeedbackActVisitByGlobalUid(uid);
+          if (feedbackAct) {
+            if (!cancelled) await switchToFeedbackVisit(feedbackAct);
+            return;
+          }
           const res = await fetch("/api/guest/polite-state", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1108,18 +1064,30 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           });
           const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
           if (cancelled) return;
-          if (!res.ok || data.ok !== true) {
-            await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
+          if (res.ok && data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
+            const t = data.thankYou;
+            const vid = t.visitId.trim();
+            const fid =
+              typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
+                ? t.feedbackActSessionId.trim()
+                : buildFeedbackActSessionId(vid);
+            await switchToFeedbackVisit({
+              visitId: vid,
+              feedbackActSessionId: fid,
+              venueId: String(t.venueId ?? "").trim(),
+              tableId: String(t.tableId ?? "").trim(),
+              tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
+              feedbackStaffId:
+                typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
+                  ? t.feedbackStaffId.trim()
+                  : null,
+            });
             return;
           }
-          if (data.phase === "working") {
-            await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
-            return;
-          }
-          await applyFinalPoliteThankYouOrScanner(data);
+          await switchToScanQrScreen();
         } catch {
           if (cancelled) return;
-          await applyFinalPoliteThankYouOrScanner({ ok: true, phase: "free", globalGuestUid: uid });
+          await switchToScanQrScreen();
         }
       })();
     };
@@ -1164,8 +1132,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     currentLocation.venueId,
     currentLocation.tableId,
     switchLocation,
-    tableListenerEpoch,
-    applyFinalPoliteThankYouOrScanner,
+    resolveFeedbackActVisitByGlobalUid,
+    switchToFeedbackVisit,
+    switchToScanQrScreen,
   ]);
 
   // Live orders data for the table.
@@ -1363,47 +1332,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation]
   );
 
-  const openTableScanner = useCallback(() => {
-    const inTg = isTelegramContext();
-    const tg = getTelegramWebApp();
-    if (inTg && tg?.showScanQrPopup) {
-      tg.showScanQrPopup({ text: "Наведите на QR стола" }, (qrText) => {
-        void (async () => {
-          const raw = String(qrText ?? "").trim();
-          if (!raw) {
-            toast.error("Неверный QR");
-            return;
-          }
-
-          const resolved = await resolveGuestTableFromQrText(raw, db);
-          if (!resolved?.venueId?.trim()) {
-            toast.error("Неверный QR");
-            return;
-          }
-          const venueId = resolved.venueId.trim();
-          const tableId = (resolved.tableId || "").trim();
-          if (!tableId) {
-            toast.error("В QR не указан стол");
-            return;
-          }
-
-          const entered = await processEntry(venueId, tableId, {
-            forceTableListenerResubscribe: true,
-          });
-          if (entered) urlCheckInGateKeyRef.current = `${venueId}|${tableId}`;
-          tg.closeScanQrPopup?.();
-        })();
-      });
-      return;
-    }
-    if (inTg) {
-      toast.error("Сканер QR недоступен в этой версии клиента. Обновите Telegram до последней версии.");
-      return;
-    }
-    toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
-    router.push("/");
-  }, [router, processEntry]);
-
   const callWaiter = useCallback(async () => {
       if (isGuestBlocked) {
         toast.error(guestBlockedReason ?? "Гостевой режим заблокирован");
@@ -1551,7 +1479,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       assignedStaffId,
       assignedStaffDisplayName,
       switchLocation,
-      openTableScanner,
       openVenueMenu,
       refreshVisitHistory,
       callWaiter,
@@ -1588,7 +1515,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       assignedStaffId,
       assignedStaffDisplayName,
       switchLocation,
-      openTableScanner,
       openVenueMenu,
       refreshVisitHistory,
       callWaiter,
