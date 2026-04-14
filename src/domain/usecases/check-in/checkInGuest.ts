@@ -40,7 +40,8 @@ function collectGuestActiveSessionLookupKeys(currentUid: string, rawUidCandidate
   return [...set];
 }
 
-async function findGuestExistingBattleSessionDoc(
+/** Экспорт: универсальный статус гостя / восстановление без QR по всем ключам профиля. */
+export async function findGuestExistingBattleSessionDoc(
   firestore: ReturnType<typeof getAdminFirestore>,
   lookupKeys: string[],
   nowMs: number

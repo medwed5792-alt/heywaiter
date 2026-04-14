@@ -22,6 +22,9 @@ const PLATFORM_TO_KEY: Record<string, keyof UnifiedIdentities> = {
   line: "line",
   phone: "phone",
   email: "email",
+  anon: "anon",
+  anonymous: "anon",
+  visitor: "anon",
 };
 
 /**

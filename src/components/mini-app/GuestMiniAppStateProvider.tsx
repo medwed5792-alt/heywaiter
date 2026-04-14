@@ -496,7 +496,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [postServiceVisit]);
   /** «Эфир»: последний принятый feedback_act id — без повторных switch при повторных снимках. */
   const feedbackEarAppliedIdRef = useRef<string | null>(null);
+  /** После /api/guest/get-current-status: не даём bootstrap сбросить стол в «сканер». */
+  const guestAppServerRestoreRef = useRef(false);
   const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(null);
+  /** id global_users с сервера (приоритет над tg:… из SDK для матчинга сессий). */
+  const [serverPinnedGuestUid, setServerPinnedGuestUid] = useState<string | null>(null);
+  /** В Telegram ждём универсальный статус до основного bootstrap (без гонок со сбросом UI). */
+  const [guestUniversalStatusGateOpen, setGuestUniversalStatusGateOpen] = useState(false);
   const globalGuestUidRef = useRef<string | null>(globalGuestUid);
   useEffect(() => {
     globalGuestUidRef.current = globalGuestUid;
@@ -530,9 +536,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [telegramUid, visitorId]);
 
   useEffect(() => {
-    const uid = guestIdentity.currentUid?.trim() || null;
-    setGlobalGuestUid(uid);
-  }, [guestIdentity.currentUid]);
+    const channel = guestIdentity.currentUid?.trim() || null;
+    const next = serverPinnedGuestUid?.trim() || channel;
+    setGlobalGuestUid(next || null);
+  }, [guestIdentity.currentUid, serverPinnedGuestUid]);
 
   const guestProfileUid = useMemo(
     () => globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || null,
@@ -822,6 +829,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       onboardingHint?: string | null;
     }) => {
       feedbackEarAppliedIdRef.current = null;
+      guestAppServerRestoreRef.current = false;
       setPostServiceVisit(null);
       setShowLandingScanner(false);
       await switchLocation(data.venueId.trim(), data.tableId.trim());
@@ -845,10 +853,102 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const switchToScanQrScreen = useCallback(async () => {
     clearPersistedGuestSeat();
     feedbackEarAppliedIdRef.current = null;
+    guestAppServerRestoreRef.current = false;
+    setServerPinnedGuestUid(null);
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     await switchLocation(null, null);
   }, [switchLocation]);
+
+  /**
+   * Универсальное опознание (SuperAdmin / мультибот): сервер по identities → ACT_1 | ACT_2 | WELCOME.
+   * Telegram: подпись initData; остальные провайдеры — расширить credentials в API.
+   */
+  useEffect(() => {
+    if (!isSdkReady || typeof window === "undefined") return;
+    const tg = getTelegramWebApp();
+    if (!tg || !isTelegramContext()) {
+      setGuestUniversalStatusGateOpen(true);
+      return;
+    }
+    const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+    if (!initData) {
+      setGuestUniversalStatusGateOpen(true);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/guest/get-current-status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provider: "telegram",
+            credentials: { initData },
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          recognized?: boolean;
+          staffProfile?: boolean;
+          status?: string;
+          globalUserFirestoreId?: string | null;
+          sessionParticipantUid?: string | null;
+          act1?: { venueId: string; tableId: string; sessionId: string };
+          act2?: {
+            visitId: string;
+            feedbackActSessionId: string;
+            venueId: string;
+            tableId: string;
+            tableNumber: number;
+            feedbackStaffId: string | null;
+          };
+        };
+        if (cancelled || !res.ok || !data.ok) return;
+        if (data.staffProfile) return;
+
+        if (data.recognized) {
+          const pin = data.globalUserFirestoreId?.trim() || data.sessionParticipantUid?.trim() || "";
+          if (pin) setServerPinnedGuestUid(pin);
+        }
+
+        if (data.recognized && data.status === "ACT_1" && data.act1?.venueId && data.act1?.tableId) {
+          guestAppServerRestoreRef.current = true;
+          feedbackEarAppliedIdRef.current = null;
+          setPostServiceVisit(null);
+          setShowLandingScanner(false);
+          await switchLocation(data.act1.venueId, data.act1.tableId);
+        } else if (
+          data.recognized &&
+          data.status === "ACT_2" &&
+          data.act2?.visitId &&
+          data.act2.venueId &&
+          data.act2.tableId
+        ) {
+          guestAppServerRestoreRef.current = true;
+          const a = data.act2;
+          await switchToFeedbackVisit({
+            visitId: a.visitId,
+            feedbackActSessionId: a.feedbackActSessionId,
+            venueId: a.venueId,
+            tableId: a.tableId,
+            tableNumber: typeof a.tableNumber === "number" ? a.tableNumber : 0,
+            feedbackStaffId:
+              typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim()
+                ? a.feedbackStaffId.trim()
+                : null,
+          });
+        }
+      } catch {
+        /* сеть */
+      } finally {
+        if (!cancelled) setGuestUniversalStatusGateOpen(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSdkReady, switchLocation, switchToFeedbackVisit]);
 
   /**
    * Рация: постоянный эфир `feedback_act` по всем алиасам UID. Без Telegram, без ролей, без polite-state.
@@ -1189,6 +1289,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   // Единый bootstrap: при наличии v/t стартуем table flow сразу, без ожидания identity.
   useEffect(() => {
     if (!isSdkReady) return;
+    if (!guestUniversalStatusGateOpen) return;
     const entryTableNow = readVenueTableFromUrlRuntime(searchParams);
     if (!entryTableNow && !bootstrapIdentityReady) return;
     const tgGate = getTelegramWebApp();
@@ -1206,6 +1307,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const entryTable = readVenueTableFromUrlRuntime(searchParams);
 
       if (!entryTable) {
+        if (guestAppServerRestoreRef.current) {
+          if (!cancelled) setIsInitializing(false);
+          return;
+        }
         const uid = globalGuestUidRef.current?.trim() || "";
         if (!uid) {
           if (!cancelled) {
@@ -1282,6 +1387,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [
     isSdkReady,
+    guestUniversalStatusGateOpen,
     bootstrapIdentityReady,
     searchParams,
     urlTableFromParams,
@@ -1783,6 +1889,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
     feedbackEarAppliedIdRef.current = null;
+    setServerPinnedGuestUid(null);
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();

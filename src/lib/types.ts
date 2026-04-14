@@ -369,11 +369,13 @@ export interface UnifiedIdentities {
   line?: string;
   phone?: string;
   email?: string;
+  /** Браузерный / device anchor (как в global-guest-hub). */
+  anon?: string;
 }
 
 /** Ключи identities для поиска (используются в where(`identities.${key}`, "==", value)). */
 export const UNIFIED_IDENTITY_KEYS: (keyof UnifiedIdentities)[] = [
-  "tg", "wa", "vk", "viber", "wechat", "inst", "fb", "line", "phone", "email",
+  "tg", "wa", "vk", "viber", "wechat", "inst", "fb", "line", "phone", "email", "anon",
 ];
 
 /** Связь сотрудника с заведением (коллекция global_users). */
