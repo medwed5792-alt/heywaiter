@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -159,6 +160,41 @@ function readVenueTableFromUrlRuntime(searchParams: {
 }): { venueId: string; tableId: string } | null {
   const direct = readVenueTableFromSearchParams(searchParams);
   if (direct) return direct;
+  if (typeof window === "undefined") return null;
+
+  const fromQuery = (qs: URLSearchParams): { venueId: string; tableId: string } | null => {
+    const venueId = (qs.get("v") ?? qs.get("venueId") ?? "").trim();
+    const tableId = (qs.get("t") ?? qs.get("tableId") ?? "").trim();
+    if (!venueId || !tableId) return null;
+    return { venueId, tableId };
+  };
+
+  const fromWindowQuery = fromQuery(new URLSearchParams(window.location.search));
+  if (fromWindowQuery) return fromWindowQuery;
+
+  const hash = window.location.hash ?? "";
+  const hashQueryRaw = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+  if (hashQueryRaw) {
+    const fromHash = fromQuery(new URLSearchParams(hashQueryRaw));
+    if (fromHash) return fromHash;
+  }
+
+  const tgStartApp = new URLSearchParams(window.location.search).get("tgWebAppStartParam")?.trim() ?? "";
+  if (tgStartApp) {
+    const parsed = parseStartParamPayload(tgStartApp);
+    if (parsed?.venueId?.trim() && parsed?.tableId?.trim()) {
+      return { venueId: parsed.venueId.trim(), tableId: parsed.tableId.trim() };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Только window.location / hash / tgWebAppStartParam — без useSearchParams и без ожидания Telegram.
+ * Для «прямого пуска» check-in сразу после открытия Mini-App.
+ */
+function readVenueTableFromWindowOnly(): { venueId: string; tableId: string } | null {
   if (typeof window === "undefined") return null;
 
   const fromQuery = (qs: URLSearchParams): { venueId: string; tableId: string } | null => {
@@ -396,6 +432,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
   const rootOrdersLoadedRef = useRef(false);
+  /** Успешный check-in для пары venue|table — чтобы основной bootstrap не вызывал processEntry повторно. */
+  const tableDirectCheckInSucceededKeyRef = useRef<string | null>(null);
+  const tableDirectLaunchInFlightRef = useRef(false);
+  const processEntryRef = useRef<(venueId: string, tableId: string) => Promise<boolean>>(async () => false);
   const guestIdentity = useMemo(() => {
     const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
     const currentUid = resolveUnifiedCustomerUid({
@@ -921,6 +961,57 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, guestIdentity.currentUid, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
   );
 
+  processEntryRef.current = processEntry;
+
+  /**
+   * Прямой пуск: только window.location (и tgWebAppStartParam в query), без searchParams и без ожидания Telegram identity.
+   * Короткий poll ловит позднюю подстановку URL в WebView.
+   */
+  const tryDirectWindowTableLaunch = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const tg = getTelegramWebApp();
+    const recvGate = normalizeBotUsername(tg?.initDataUnsafe?.receiver?.username);
+    const staffGate = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
+    if (recvGate && staffGate && recvGate === staffGate) {
+      setIsGuestBlocked(true);
+      setGuestBlockedReason("Откройте гостевое приложение из меню бота заведения");
+      setIsInitializing(false);
+      return;
+    }
+
+    const entry = readVenueTableFromWindowOnly();
+    if (!entry) return;
+
+    const gateKey = `${entry.venueId.trim()}|${entry.tableId.trim()}`;
+    if (tableDirectCheckInSucceededKeyRef.current === gateKey) return;
+    if (tableDirectLaunchInFlightRef.current) return;
+
+    tableDirectLaunchInFlightRef.current = true;
+    try {
+      const ok = await processEntryRef.current(entry.venueId, entry.tableId);
+      if (ok) tableDirectCheckInSucceededKeyRef.current = gateKey;
+    } finally {
+      tableDirectLaunchInFlightRef.current = false;
+      setIsInitializing(false);
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (typeof window === "undefined") return;
+    void tryDirectWindowTableLaunch();
+  }, [tryDirectWindowTableLaunch]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const delays = [0, 50, 150, 400];
+    const ids = delays.map((ms) =>
+      window.setTimeout(() => {
+        void tryDirectWindowTableLaunch();
+      }, ms)
+    );
+    return () => ids.forEach((id) => window.clearTimeout(id));
+  }, [tryDirectWindowTableLaunch]);
+
   // Единый bootstrap: при наличии v/t стартуем table flow сразу, без ожидания identity.
   useEffect(() => {
     if (!isSdkReady) return;
@@ -997,8 +1088,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return;
       }
 
+      const entryKey = `${entryTable.venueId.trim()}|${entryTable.tableId.trim()}`;
+      if (tableDirectCheckInSucceededKeyRef.current === entryKey) {
+        if (!cancelled) setIsInitializing(false);
+        return;
+      }
+
       try {
-        await processEntry(entryTable.venueId, entryTable.tableId);
+        const ok = await processEntry(entryTable.venueId, entryTable.tableId);
+        if (ok) tableDirectCheckInSucceededKeyRef.current = entryKey;
         if (cancelled) return;
       } finally {
         if (!cancelled) setIsInitializing(false);
