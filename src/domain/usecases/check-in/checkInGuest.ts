@@ -5,7 +5,11 @@ import type {
 } from "@/lib/types";
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { buildTelegramCustomerUid, guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
+import {
+  buildTelegramCustomerUid,
+  guestCustomerUidsMatch,
+  visitHistoryUidCandidates,
+} from "@/lib/identity/customer-uid";
 import {
   guestIdentityFromCustomerUid,
   resolveGlobalGuestUidForCheckIn,
@@ -15,7 +19,7 @@ import { resolveVenueId } from "@/lib/standards/venue-default";
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 import { isFeedbackActSessionRecord } from "@/lib/feedback-act-session";
 import { syncGuestGlobalProfileOnVisit } from "@/lib/identity/guest-global-profile";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 
 const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 
@@ -23,10 +27,70 @@ const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 /** Только «бой» в activeSessions; сессии второго акта (`feedback_*` / guest_feedback_act) не блокируют стол. */
 const ACTIVE_VISIT_SESSION_STATUSES = ["check_in_success", "payment_confirmed"] as const;
 
+function collectGuestActiveSessionLookupKeys(currentUid: string, rawUidCandidate: string): string[] {
+  const set = new Set<string>();
+  for (const u of [currentUid, rawUidCandidate]) {
+    const t = String(u ?? "").trim();
+    if (!t) continue;
+    set.add(t);
+    for (const c of visitHistoryUidCandidates(t)) {
+      if (c.trim()) set.add(c.trim());
+    }
+  }
+  return [...set];
+}
+
+async function findGuestExistingBattleSessionDoc(
+  firestore: ReturnType<typeof getAdminFirestore>,
+  lookupKeys: string[],
+  nowMs: number
+): Promise<QueryDocumentSnapshot | null> {
+  if (lookupKeys.length === 0) return null;
+  const docsById = new Map<string, QueryDocumentSnapshot>();
+
+  for (let i = 0; i < lookupKeys.length; i += 10) {
+    const chunk = lookupKeys.slice(i, i + 10);
+    const snap = await firestore
+      .collection("activeSessions")
+      .where("masterId", "in", chunk)
+      .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
+      .limit(50)
+      .get();
+    for (const d of snap.docs) docsById.set(d.id, d);
+  }
+
+  for (const key of lookupKeys) {
+    const snap = await firestore
+      .collection("activeSessions")
+      .where("participantUids", "array-contains", key)
+      .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
+      .limit(50)
+      .get();
+    for (const d of snap.docs) docsById.set(d.id, d);
+  }
+
+  const battleDocs = [...docsById.values()].filter((d) => {
+    const raw = d.data() as Record<string, unknown>;
+    const st = typeof raw.status === "string" ? raw.status : "";
+    return !isFeedbackActSessionRecord({ id: d.id, status: st });
+  });
+
+  return pickNewestFreshActiveSessionDoc(battleDocs, nowMs);
+}
+
 export type CheckInGuestResult =
   | { status: "check_in_success"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string; onboardingHint?: string }
   | { status: "table_private"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string }
-  | { status: "table_conflict"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string };
+  | { status: "table_conflict"; sessionId: string; tableId: string; globalGuestUid: string; messageGuest: string }
+  | {
+      status: "already_seated_elsewhere";
+      sessionId: string;
+      venueId: string;
+      tableId: string;
+      tableNumber: number;
+      globalGuestUid: string;
+      messageGuest: string;
+    };
 
 export interface CheckInGuestInput {
   venueId: string;
@@ -89,6 +153,44 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
     identityInputs,
   });
 
+  const isSameGuestUid = (existingUid: string): boolean => {
+    if (guestCustomerUidsMatch(existingUid, currentUid)) return true;
+    if (rawUidCandidate && guestCustomerUidsMatch(existingUid, rawUidCandidate)) return true;
+    return false;
+  };
+
+  /** Один гость — один стол: пока «бой» в activeSessions, другой стол недоступен (Акт 2 / архив снимает блок). */
+  const guestLockLookupKeys = collectGuestActiveSessionLookupKeys(currentUid, rawUidCandidate);
+  if (guestLockLookupKeys.length > 0) {
+    const existingBattleElsewhere = await findGuestExistingBattleSessionDoc(
+      firestore,
+      guestLockLookupKeys,
+      now.getTime()
+    );
+    if (existingBattleElsewhere) {
+      const exData = existingBattleElsewhere.data() as Record<string, unknown>;
+      const exVenue = String(exData.venueId ?? "").trim();
+      const exTable = String(exData.tableId ?? "").trim();
+      const requestVenue = venueId.trim();
+      const requestTable = tableId.trim();
+      const sameSeating = exVenue === requestVenue && exTable === requestTable;
+      if (!sameSeating) {
+        const exTableNumber =
+          typeof exData.tableNumber === "number" && Number.isFinite(exData.tableNumber) ? exData.tableNumber : 0;
+        const label = exTableNumber > 0 ? String(exTableNumber) : exTable || "—";
+        return {
+          status: "already_seated_elsewhere",
+          sessionId: existingBattleElsewhere.id,
+          venueId: exVenue,
+          tableId: exTable,
+          tableNumber: exTableNumber,
+          globalGuestUid: currentUid,
+          messageGuest: `У вас есть открытый заказ за столом №${label}. Пожалуйста, завершите его.`,
+        };
+      }
+    }
+  }
+
   if (currentUid) {
     await syncGuestGlobalProfileOnVisit(firestore, {
       globalUid: currentUid,
@@ -98,12 +200,6 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
       timezone,
     });
   }
-
-  const isSameGuestUid = (existingUid: string): boolean => {
-    if (guestCustomerUidsMatch(existingUid, currentUid)) return true;
-    if (rawUidCandidate && guestCustomerUidsMatch(existingUid, rawUidCandidate)) return true;
-    return false;
-  };
 
   // API route historically routes "events" through a resolved default venue id.
   const VENUE_EVENTS_ID = resolveVenueId(venueId);

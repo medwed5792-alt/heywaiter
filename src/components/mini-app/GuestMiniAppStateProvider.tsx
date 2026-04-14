@@ -822,6 +822,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     if (typeof apiMessage === "string" && apiMessage.trim()) return apiMessage.trim();
     if (status === "table_private") return "Стол занят другим гостем. Подселение запрещено хозяином.";
     if (status === "table_conflict") return "Стол занят или забронирован. Отсканируйте другой QR.";
+    if (status === "guest_already_seated_elsewhere") {
+      return "У вас есть открытый заказ за другим столом. Завершите его, затем отсканируйте новый QR.";
+    }
     return "Сессия недоступна. Отсканируйте QR стола снова.";
   }, []);
 
@@ -860,6 +863,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           mode?: "table" | "scanner";
           venueId?: string;
           tableId?: string;
+          tableNumber?: number;
           onboardingHint?: string | null;
           messageGuest?: string;
           sessionStatus?: string;
@@ -877,6 +881,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             tableId: data.tableId,
             onboardingHint: data.onboardingHint ?? null,
           });
+          if (data.sessionStatus === "guest_already_seated_elsewhere" && data.messageGuest?.trim()) {
+            toast(data.messageGuest.trim());
+          }
           return true;
         }
 

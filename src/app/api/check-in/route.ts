@@ -147,6 +147,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (result.status === "already_seated_elsewhere") {
+      return NextResponse.json({
+        ok: true,
+        mode: "table",
+        venueId: result.venueId,
+        tableId: result.tableId,
+        tableNumber: result.tableNumber,
+        globalGuestUid: result.globalGuestUid,
+        sessionId: result.sessionId,
+        sessionStatus: "guest_already_seated_elsewhere",
+        messageGuest: result.messageGuest,
+        onboardingHint: null,
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       mode: "scanner",
