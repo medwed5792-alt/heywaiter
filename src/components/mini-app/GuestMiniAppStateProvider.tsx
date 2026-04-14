@@ -155,6 +155,21 @@ function readVenueTableFromSearchParams(searchParams: {
   return { venueId, tableId };
 }
 
+/** Стол из Telegram Mini App: initDataUnsafe.start_param (часто без v/t в location.search). */
+function readVenueTableFromTelegramWebAppStartParam(): { venueId: string; tableId: string } | null {
+  if (typeof window === "undefined") return null;
+  const sp = String(
+    (window as unknown as { Telegram?: { WebApp?: { initDataUnsafe?: { start_param?: unknown } } } })
+      .Telegram?.WebApp?.initDataUnsafe?.start_param ?? ""
+  ).trim();
+  if (!sp) return null;
+  const parsed = parseStartParamPayload(sp);
+  if (parsed?.venueId?.trim() && parsed?.tableId?.trim()) {
+    return { venueId: parsed.venueId.trim(), tableId: parsed.tableId.trim() };
+  }
+  return null;
+}
+
 function readVenueTableFromUrlRuntime(searchParams: {
   get: (key: string) => string | null;
 }): { venueId: string; tableId: string } | null {
@@ -187,11 +202,14 @@ function readVenueTableFromUrlRuntime(searchParams: {
     }
   }
 
+  const fromTgUnsafeRuntime = readVenueTableFromTelegramWebAppStartParam();
+  if (fromTgUnsafeRuntime) return fromTgUnsafeRuntime;
+
   return null;
 }
 
 /**
- * Только window.location / hash / tgWebAppStartParam — без useSearchParams и без ожидания Telegram.
+ * Только window.location / hash / tgWebAppStartParam / initDataUnsafe.start_param — без useSearchParams.
  * Для «прямого пуска» check-in сразу после открытия Mini-App.
  */
 function readVenueTableFromWindowOnly(): { venueId: string; tableId: string } | null {
@@ -221,6 +239,9 @@ function readVenueTableFromWindowOnly(): { venueId: string; tableId: string } | 
       return { venueId: parsed.venueId.trim(), tableId: parsed.tableId.trim() };
     }
   }
+
+  const fromTgUnsafe = readVenueTableFromTelegramWebAppStartParam();
+  if (fromTgUnsafe) return fromTgUnsafe;
 
   return null;
 }
@@ -871,23 +892,18 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     return "Сессия недоступна. Отсканируйте QR стола снова.";
   }, []);
 
-  /** Диктатура сервера: единая точка входа (QR/URL) + geo-check + подтверждение через onSnapshot. */
+  /** Диктатура сервера: check-in уходит сразу; геозона догоняет параллельно. */
   const processEntry = useCallback(
     async (venueId: string, tableId: string): Promise<boolean> => {
       const v = venueId.trim();
       const t = tableId.trim();
       if (!v || !t) return false;
 
-      const access = await checkGuestQrVenueAccess(v);
-      if (!access.ok) {
-        toast.error(access.message);
-        setShowLandingScanner(true);
-        await switchLocation(null, null);
-        return false;
-      }
-
       setShowLandingScanner(false);
       await switchLocation(null, null);
+
+      const geoPromise = checkGuestQrVenueAccess(v);
+
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
         const participantUid = guestIdentity.currentUid?.trim() || undefined;
@@ -919,6 +935,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
           sessionStatus?: string;
         };
+
+        const access = await geoPromise;
+        if (!access.ok) {
+          toast.error(access.message);
+          setShowLandingScanner(true);
+          await switchLocation(null, null);
+          return false;
+        }
+
         if (!res.ok || data.ok === false) {
           setShowLandingScanner(true);
           await switchLocation(null, null);
@@ -964,7 +989,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   processEntryRef.current = processEntry;
 
   /**
-   * Прямой пуск: только window.location (и tgWebAppStartParam в query), без searchParams и без ожидания Telegram identity.
+   * Прямой пуск: window.location + initDataUnsafe.start_param, без searchParams и без ожидания Telegram identity.
    * Короткий poll ловит позднюю подстановку URL в WebView.
    */
   const tryDirectWindowTableLaunch = useCallback(async () => {

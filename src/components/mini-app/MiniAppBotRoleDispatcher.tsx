@@ -10,6 +10,7 @@ import {
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { HEYWAITER_STAFF_LS_SOTA_ID } from "@/components/providers/StaffProvider";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 
 function normalizeBotUsername(raw: string | undefined | null): string {
   return (raw ?? "").trim().replace(/^@/, "").toLowerCase();
@@ -278,15 +279,15 @@ export function MiniAppBotRoleDispatcher({ children }: { children: React.ReactNo
       return;
     }
 
+    if (!pathStaff && hasGuestTableParams(searchParams)) {
+      applyRole("guest");
+      return;
+    }
+
     const { receiverUsername: recvNow } = readTelegramWebAppState();
     const fromRecvNow = roleFromReceiver(recvNow, staffBot, guestBot);
     if (fromRecvNow) {
       applyRole(fromRecvNow);
-      return;
-    }
-
-    if (!pathStaff && hasGuestTableParams(searchParams)) {
-      applyRole("guest");
       return;
     }
 
