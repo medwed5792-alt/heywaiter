@@ -6,6 +6,10 @@ import { findUserByIdentity, toIdentityKey } from "@/lib/auth/unifiedSearch";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import { resolveGuestCurrentStatusFromProfile } from "@/domain/usecases/guest/resolveGuestCurrentStatus";
+import {
+  buildGuestMiniAppCommandPayload,
+  loadGuestMiniAppSystemBundle,
+} from "@/domain/usecases/guest/buildGuestMiniAppCommandPayload";
 
 /**
  * POST /api/guest/get-current-status
@@ -59,36 +63,60 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "unsupported_provider" }, { status: 400 });
     }
 
+    const fs = getAdminFirestore();
+
     const globalUserId = await findUserByIdentity(providerRaw, providerId);
     if (!globalUserId) {
+      const bundle = await loadGuestMiniAppSystemBundle(fs);
       return NextResponse.json({
         ok: true,
         recognized: false,
         status: "WELCOME",
         globalUserFirestoreId: null,
+        staffProfile: false,
+        activeSession: null,
+        tableOrders: [],
+        venueDoc: null,
+        venueMenuShowcase: null,
+        assignedStaffDisplayName: null,
+        ...bundle,
       });
     }
 
-    const fs = getAdminFirestore();
     const snap = await fs.collection("global_users").doc(globalUserId).get();
     if (!snap.exists) {
+      const bundle = await loadGuestMiniAppSystemBundle(fs);
       return NextResponse.json({
         ok: true,
         recognized: false,
         status: "WELCOME",
         globalUserFirestoreId: null,
+        staffProfile: false,
+        activeSession: null,
+        tableOrders: [],
+        venueDoc: null,
+        venueMenuShowcase: null,
+        assignedStaffDisplayName: null,
+        ...bundle,
       });
     }
 
     const data = (snap.data() ?? {}) as Record<string, unknown>;
     const role = typeof data.systemRole === "string" ? data.systemRole.trim().toUpperCase() : "";
     if (role === "STAFF" || role === "ADMIN") {
+      const bundle = await loadGuestMiniAppSystemBundle(fs);
       return NextResponse.json({
         ok: true,
         recognized: true,
         staffProfile: true,
         status: "WELCOME",
         globalUserFirestoreId: globalUserId,
+        activeSession: null,
+        tableOrders: [],
+        venueDoc: null,
+        venueMenuShowcase: null,
+        assignedStaffDisplayName: null,
+        ...bundle,
       });
     }
 
@@ -100,11 +128,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "resolve_failed" }, { status: 500 });
     }
 
+    const command = await buildGuestMiniAppCommandPayload(fs, resolved);
+
     return NextResponse.json({
       ok: true,
       recognized: true,
       staffProfile: false,
       ...resolved,
+      ...command,
     });
   } catch (e) {
     console.error("[api/guest/get-current-status]", e);

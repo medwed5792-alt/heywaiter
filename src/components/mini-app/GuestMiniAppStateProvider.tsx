@@ -12,17 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { useSearchParams } from "next/navigation";
-import {
-  collection,
-  doc,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  where,
-  type QueryDocumentSnapshot,
-} from "firebase/firestore";
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
 import {
   mergePreOrderSystemFields,
   resolvePreOrderEnabled,
@@ -31,21 +21,8 @@ import {
   resolvePreorderSubmissionGate,
 } from "@/lib/pre-order";
 import { readVenueTimezone } from "@/lib/venue-timezone";
-import {
-  GLOBAL_SETTINGS_DOC_ID,
-  SYSTEM_CONFIGS_COLLECTION,
-} from "@/lib/system-configs/collection";
-import {
-  parsePreorderModuleConfig,
-  PREORDER_SYSTEM_CONFIG_DOC_ID,
-  type PreorderModuleConfig,
-} from "@/lib/system-configs/preorder-module-config";
-import {
-  buildGuestPreorderShowcase,
-  parseVenueMenuVenueBlock,
-  type VenueMenuVenueBlock,
-} from "@/lib/system-configs/venue-menu-config";
-import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
+import type { PreorderModuleConfig } from "@/lib/system-configs/preorder-module-config";
+import type { VenueMenuVenueBlock } from "@/lib/system-configs/venue-menu-config";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
@@ -54,14 +31,9 @@ import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
-import { FEEDBACK_SESSION_ID_PREFIX, GUEST_FEEDBACK_ACT_STATUS } from "@/lib/feedback-act-session";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
-import {
-  normalizeActiveSessionStatus,
-  resolveWaiterStaffIdFromSessionDoc,
-} from "@/lib/active-session-waiter";
-import { isActiveSessionWithinMaxAge, pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
+import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
 
@@ -100,19 +72,12 @@ type GuestVisitEntry = {
   totalVisits?: number;
 };
 
-type GuestOrderLine = {
-  name: string;
-  qty: number;
-  unitPrice: number;
-  totalAmount: number;
-};
-
 type GuestTableOrder = {
   id: string;
   orderNumber: number;
   status: OrderStatus | string;
   customerUid?: string;
-  items: GuestOrderLine[];
+  items: Array<{ name: string; qty: number; unitPrice: number; totalAmount: number }>;
 };
 
 export type SotaSystemConfig = {
@@ -134,10 +99,26 @@ const DEFAULT_SYSTEM_CONFIG: SotaSystemConfig = {
   preOrderByVenueDocId: {},
 };
 
-/**
- * Только «боевая» фаза (Акт 1). Акт 2 — archived_visits + activeSessions `feedback_*` (см. Дашборд).
- */
-const ACTIVE_SESSION_STATUS_FILTER = ["check_in_success", "payment_confirmed"] as const;
+function mergeServerSystemConfig(raw: unknown): SotaSystemConfig {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_SYSTEM_CONFIG };
+  const r = raw as Record<string, unknown>;
+  const preOrderFields = mergePreOrderSystemFields(r);
+  return {
+    ...DEFAULT_SYSTEM_CONFIG,
+    ...r,
+    ...preOrderFields,
+    adsNetworkEnabled:
+      typeof r.adsNetworkEnabled === "boolean" ? r.adsNetworkEnabled : DEFAULT_SYSTEM_CONFIG.adsNetworkEnabled,
+    geoRadiusLimit:
+      typeof r.geoRadiusLimit === "number" && Number.isFinite(r.geoRadiusLimit)
+        ? r.geoRadiusLimit
+        : DEFAULT_SYSTEM_CONFIG.geoRadiusLimit,
+    globalMaintenanceMode:
+      typeof r.globalMaintenanceMode === "boolean"
+        ? r.globalMaintenanceMode
+        : DEFAULT_SYSTEM_CONFIG.globalMaintenanceMode,
+  };
+}
 
 export type PostServiceVisitState = {
   /** id archived_visits (= исходная боевая сессия). */
@@ -253,110 +234,6 @@ function readVenueTableFromWindowOnly(): { venueId: string; tableId: string } | 
   return null;
 }
 
-function parseNumber(raw: unknown): number {
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  if (typeof raw === "string") {
-    const n = Number(raw.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
-function extractOrderItemsForUI(data: Record<string, unknown>): GuestOrderLine[] {
-  const rawItems = Array.isArray(data.items) ? data.items : [];
-  const items: GuestOrderLine[] = [];
-
-  for (const i of rawItems) {
-    const x = (i ?? {}) as Record<string, unknown>;
-    const name =
-      String(x.name ?? x.title ?? x.dishName ?? x.itemName ?? "").trim() ||
-      "Позиция";
-    const qty = Math.max(parseNumber(x.qty ?? x.quantity), 1);
-    const unitPriceRaw = parseNumber(x.price ?? x.unitPrice);
-    const totalRaw = parseNumber(x.amount ?? x.total);
-
-    const totalAmount = totalRaw > 0 ? totalRaw : unitPriceRaw > 0 ? unitPriceRaw * qty : 0;
-    const unitPrice = unitPriceRaw > 0 ? unitPriceRaw : qty > 0 ? totalAmount / qty : 0;
-
-    items.push({ name, qty, unitPrice, totalAmount });
-  }
-
-  if (items.length > 0) return items;
-
-  // Fallback: order without `items` array — try numeric fields.
-  const total =
-    parseNumber(data.amount) ||
-    parseNumber(data.total) ||
-    parseNumber(data.sum) ||
-    parseNumber(data.price);
-
-  if (total > 0) {
-    items.push({ name: "Заказ", qty: 1, unitPrice: total, totalAmount: total });
-  }
-
-  return items;
-}
-
-function visitTimestampMillis(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const t = Date.parse(v);
-    return Number.isFinite(t) ? t : 0;
-  }
-  if (v && typeof v === "object" && "seconds" in v && typeof (v as { seconds: number }).seconds === "number") {
-    return (v as { seconds: number }).seconds * 1000;
-  }
-  return 0;
-}
-
-function pickNewestFeedbackActSnap(docs: QueryDocumentSnapshot[]): QueryDocumentSnapshot | null {
-  const filtered = docs.filter((d) => d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX));
-  if (filtered.length === 0) return null;
-  return filtered.sort((a, b) => {
-    const ta = visitTimestampMillis((a.data() as Record<string, unknown>).createdAt);
-    const tb = visitTimestampMillis((b.data() as Record<string, unknown>).createdAt);
-    return tb - ta;
-  })[0];
-}
-
-function postServiceVisitFromFeedbackActSnap(picked: QueryDocumentSnapshot): PostServiceVisitState | null {
-  const raw = (picked.data() ?? {}) as Record<string, unknown>;
-  const visitId =
-    typeof raw.sourceSessionId === "string" && raw.sourceSessionId.trim()
-      ? raw.sourceSessionId.trim()
-      : picked.id.replace(FEEDBACK_SESSION_ID_PREFIX, "").trim();
-  if (!visitId) return null;
-  const venueId = String(raw.venueId ?? "").trim();
-  const tableId = String(raw.tableId ?? "").trim();
-  if (!venueId || !tableId) return null;
-  return {
-    visitId,
-    feedbackActSessionId: picked.id,
-    venueId,
-    tableId,
-    tableNumber: typeof raw.tableNumber === "number" ? raw.tableNumber : 0,
-    feedbackStaffId:
-      typeof raw.assignedStaffId === "string" && raw.assignedStaffId.trim()
-        ? raw.assignedStaffId.trim()
-        : null,
-  };
-}
-
-function parseGuestTableOrder(docId: string, data: Record<string, unknown>): GuestTableOrder {
-  const orderNumber = Math.max(1, Math.floor(parseNumber(data.orderNumber)));
-  const status = typeof data.status === "string" ? data.status : "pending";
-  const customerUid = typeof data.customerUid === "string" ? data.customerUid.trim() : undefined;
-  const items = extractOrderItemsForUI(data);
-
-  return {
-    id: docId,
-    orderNumber,
-    status,
-    customerUid,
-    items,
-  };
-}
-
 type GuestMiniAppContextValue = {
   /** Канал (SDK): только отображение и initData, не id сессии. */
   guestChannel: { sotaId: string | null; telegramUid: string | null };
@@ -382,6 +259,8 @@ type GuestMiniAppContextValue = {
   ) => Promise<void>;
   openVenueMenu: (venueId: string) => void;
   refreshVisitHistory: () => Promise<void>;
+  /** Опрос сервера: /api/get-current-status (команда для UI). */
+  refreshGuestStatus: () => Promise<void>;
   callWaiter: () => Promise<void>;
   requestBill: (type: "full" | "split") => Promise<void>;
   isVenuePreOrderEnabled: (venueFirestoreId: string) => boolean;
@@ -403,10 +282,7 @@ type GuestMiniAppContextValue = {
   postServiceVisit: PostServiceVisitState | null;
   /** После отзыва: закрыть сессию на сервере и выйти со стола в UI. */
   completeTableFeedbackSession: () => Promise<void>;
-  /**
-   * swid для чаевых в фазе отзыва: из последнего снимка activeSessions (onSnapshot),
-   * иначе fallback — currentWaiterId с документа стола.
-   */
+  /** swid для чаевых в фазе отзыва: с серверной команды FEEDBACK (act2). */
   feedbackTargetStaffId: string | null;
   /** Разрешён ли fallback-экран со сканером после server-bootstrap. */
   showLandingScanner: boolean;
@@ -467,9 +343,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   useEffect(() => {
     postServiceVisitRef.current = postServiceVisit;
   }, [postServiceVisit]);
-  /** «Эфир»: последний принятый feedback_act id — без повторных switch при повторных снимках. */
-  const feedbackEarAppliedIdRef = useRef<string | null>(null);
-  /** После /api/guest/get-current-status: не даём bootstrap сбросить стол в «сканер». */
+  /** После команды сервера со столом: не даём bootstrap сбросить стол в «сканер». */
   const guestAppServerRestoreRef = useRef(false);
   /** Единственный id global_users (только с сервера / ответа check-in). */
   const [canonicalGuestUid, setCanonicalGuestUid] = useState<string | null>(null);
@@ -489,7 +363,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     assignedStaffId: string | null;
   }>({ venueId: null, tableId: null, assignedStaffId: null });
   const attachmentMenuInitRef = useRef(false);
-  const rootOrdersLoadedRef = useRef(false);
   /** Успешный check-in для пары venue|table — чтобы основной bootstrap не вызывал processEntry повторно. */
   const tableDirectCheckInSucceededKeyRef = useRef<string | null>(null);
   const tableDirectLaunchInFlightRef = useRef(false);
@@ -525,7 +398,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setTelegramIdentityReady(true);
       return;
     }
-    /** Ожидание user id из Telegram WebApp — без setInterval; сессия стола только через onSnapshot ниже. */
+    /** Ожидание user id из Telegram WebApp — без setInterval. */
     let cancelled = false;
     void (async () => {
       for (let n = 0; n < 17 && !cancelled; n++) {
@@ -654,97 +527,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     });
   }, [isSdkReady]);
 
-  // Global runtime config from system_configs/global_settings with safe defaults.
-  useEffect(() => {
-    const ref = doc(db, SYSTEM_CONFIGS_COLLECTION, GLOBAL_SETTINGS_DOC_ID);
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const raw = (snap.data() ?? {}) as Record<string, unknown>;
-        const preOrderFields = mergePreOrderSystemFields(raw);
-        const next: SotaSystemConfig = {
-          ...DEFAULT_SYSTEM_CONFIG,
-          ...raw,
-          ...preOrderFields,
-          adsNetworkEnabled:
-            typeof raw.adsNetworkEnabled === "boolean"
-              ? raw.adsNetworkEnabled
-              : DEFAULT_SYSTEM_CONFIG.adsNetworkEnabled,
-          geoRadiusLimit:
-            typeof raw.geoRadiusLimit === "number" && Number.isFinite(raw.geoRadiusLimit)
-              ? raw.geoRadiusLimit
-              : DEFAULT_SYSTEM_CONFIG.geoRadiusLimit,
-          globalMaintenanceMode:
-            typeof raw.globalMaintenanceMode === "boolean"
-              ? raw.globalMaintenanceMode
-              : DEFAULT_SYSTEM_CONFIG.globalMaintenanceMode,
-        };
-        setSystemConfig(next);
-      },
-      () => {
-        setSystemConfig(DEFAULT_SYSTEM_CONFIG);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  // ЦУП: system_configs/preorder — VR, окна времени, лимиты корзины.
-  useEffect(() => {
-    const ref = doc(db, "system_configs", PREORDER_SYSTEM_CONFIG_DOC_ID);
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const raw = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
-        setPreorderModuleConfig(parsePreorderModuleConfig(raw));
-      },
-      () => setPreorderModuleConfig({})
-    );
-    return () => unsub();
-  }, []);
-
-  // Тот же currentWaiterId, что и на бэкенде при pushCallWaiterNotification.
-  useEffect(() => {
-    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) {
-      setAssignedStaffId(null);
-      return;
-    }
-    const venueId = currentLocation.venueId;
-    const tableId = currentLocation.tableId;
-    const tableRef = doc(db, "venues", venueId, "tables", tableId);
-    const unsub = onSnapshot(tableRef, (snap) => {
-      if (!snap.exists()) {
-        setAssignedStaffId(null);
-        return;
-      }
-      const data = (snap.data() ?? {}) as Record<string, unknown>;
-      setAssignedStaffId(getWaiterIdFromTablePayload(data));
-    });
-    return () => unsub();
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId]);
-
-  useEffect(() => {
-    if (!assignedStaffId) {
-      setAssignedStaffDisplayName(null);
-      return;
-    }
-    const staffRef = doc(db, "staff", assignedStaffId);
-    const unsub = onSnapshot(staffRef, (snap) => {
-      if (!snap.exists()) {
-        setAssignedStaffDisplayName(null);
-        return;
-      }
-      const data = (snap.data() ?? {}) as Record<string, unknown>;
-      const dn =
-        typeof data.displayName === "string" && data.displayName.trim()
-          ? data.displayName.trim()
-          : typeof data.name === "string" && data.name.trim()
-            ? data.name.trim()
-            : null;
-      setAssignedStaffDisplayName(dn);
-    });
-    return () => unsub();
-  }, [assignedStaffId]);
-
   useEffect(() => {
     serviceHandshakeRef.current = {
       venueId: currentLocation.venueId?.trim() || null,
@@ -759,7 +541,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       tableId: string;
       onboardingHint?: string | null;
     }) => {
-      feedbackEarAppliedIdRef.current = null;
       guestAppServerRestoreRef.current = false;
       setPostServiceVisit(null);
       setShowLandingScanner(false);
@@ -783,7 +564,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const switchToScanQrScreen = useCallback(async () => {
     clearPersistedGuestSeat();
-    feedbackEarAppliedIdRef.current = null;
     guestAppServerRestoreRef.current = false;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
@@ -805,17 +585,22 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       tableNumber: number;
       feedbackStaffId: string | null;
     };
+    systemConfig?: unknown;
+    preorderModuleConfig?: PreorderModuleConfig;
+    activeSession?: ActiveSession | null;
+    tableOrders?: GuestTableOrder[];
+    venueDoc?: Record<string, unknown> | null;
+    venueMenuShowcase?: VenueMenuVenueBlock | null;
+    assignedStaffDisplayName?: string | null;
   };
 
-  /** Единственный источник фазы: POST /api/guest/get-current-status (Telegram initData). */
-  const fetchAndApplyGuestStatus = useCallback(async () => {
-    if (typeof window === "undefined") return;
+  const pullGuestCommandPayload = useCallback(async (): Promise<GuestCurrentStatusPayload | null> => {
+    if (typeof window === "undefined") return null;
     const tg = getTelegramWebApp();
-    if (!tg || !isTelegramContext()) return;
+    if (!tg || !isTelegramContext()) return null;
     const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
-    if (!initData) return;
-
-    const res = await fetch("/api/guest/get-current-status", {
+    if (!initData) return null;
+    const res = await fetch("/api/get-current-status", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -824,57 +609,116 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }),
     });
     const data = (await res.json().catch(() => ({}))) as GuestCurrentStatusPayload;
-    if (!res.ok || !data.ok) return;
-    if (data.staffProfile) return;
+    if (!res.ok || !data.ok) return null;
+    return data;
+  }, []);
 
-    const gid = typeof data.globalUserFirestoreId === "string" ? data.globalUserFirestoreId.trim() : "";
-    if (data.recognized && gid) {
-      setCanonicalGuestUid(gid);
-    } else {
-      setCanonicalGuestUid(null);
-    }
+  const applyGuestCommandPayload = useCallback(
+    async (data: GuestCurrentStatusPayload) => {
+      if (data.systemConfig !== undefined) {
+        setSystemConfig(mergeServerSystemConfig(data.systemConfig));
+      }
+      if (data.preorderModuleConfig !== undefined) {
+        setPreorderModuleConfig(data.preorderModuleConfig ?? {});
+      }
 
-    if (data.recognized && data.status === "WORKING" && data.act1?.venueId && data.act1?.tableId) {
-      guestAppServerRestoreRef.current = true;
-      feedbackEarAppliedIdRef.current = null;
+      if (data.staffProfile) return;
+
+      const gid = typeof data.globalUserFirestoreId === "string" ? data.globalUserFirestoreId.trim() : "";
+      if (data.recognized && gid) {
+        setCanonicalGuestUid(gid);
+      } else {
+        setCanonicalGuestUid(null);
+      }
+
+      if (data.recognized && data.status === "WORKING" && data.act1?.venueId && data.act1?.tableId) {
+        guestAppServerRestoreRef.current = true;
+        const v = data.act1.venueId.trim();
+        const t = data.act1.tableId.trim();
+        const prev = currentLocationRef.current;
+        const sameTable = prev.venueId?.trim() === v && prev.tableId?.trim() === t;
+        setPostServiceVisit(null);
+        setShowLandingScanner(false);
+        if (!sameTable) {
+          await switchLocation(v, t);
+        }
+        const sess = data.activeSession ?? null;
+        setActiveSession(sess);
+        setParticipants(sess?.participants ?? []);
+        setCurrentTableOrders(Array.isArray(data.tableOrders) ? data.tableOrders : []);
+        if (data.venueDoc && typeof data.venueDoc === "object") {
+          setVenueDocById((p) => ({ ...p, [v]: { ...data.venueDoc } as Record<string, unknown> }));
+        }
+        setGuestVenueMenuShowcaseByVenueId((p) => ({
+          ...p,
+          [v]: data.venueMenuShowcase ?? null,
+        }));
+        const docForWaiter = sess ? ({ ...sess } as unknown as Record<string, unknown>) : {};
+        const sw =
+          (sess ? resolveWaiterStaffIdFromSessionDoc(docForWaiter) : null)?.trim() ||
+          sess?.assignedStaffId?.trim() ||
+          null;
+        setAssignedStaffId(sw);
+        setAssignedStaffDisplayName(
+          typeof data.assignedStaffDisplayName === "string" ? data.assignedStaffDisplayName : null
+        );
+        return;
+      }
+
+      if (
+        data.recognized &&
+        data.status === "FEEDBACK" &&
+        data.act2?.visitId &&
+        data.act2.venueId &&
+        data.act2.tableId
+      ) {
+        guestAppServerRestoreRef.current = true;
+        setActiveSession(null);
+        setParticipants([]);
+        setCurrentTableOrders([]);
+        const a = data.act2;
+        await switchToFeedbackVisit({
+          visitId: a.visitId,
+          feedbackActSessionId: a.feedbackActSessionId,
+          venueId: a.venueId,
+          tableId: a.tableId,
+          tableNumber: typeof a.tableNumber === "number" ? a.tableNumber : 0,
+          feedbackStaffId:
+            typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim()
+              ? a.feedbackStaffId.trim()
+              : null,
+        });
+        const fsid =
+          typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim() ? a.feedbackStaffId.trim() : null;
+        setAssignedStaffId(fsid);
+        setAssignedStaffDisplayName(
+          typeof data.assignedStaffDisplayName === "string" ? data.assignedStaffDisplayName : null
+        );
+        return;
+      }
+
+      guestAppServerRestoreRef.current = false;
       setPostServiceVisit(null);
-      setShowLandingScanner(false);
-      await switchLocation(data.act1.venueId, data.act1.tableId);
-      return;
-    }
+      setShowLandingScanner(true);
+      setActiveSession(null);
+      setParticipants([]);
+      setCurrentTableOrders([]);
+      setAssignedStaffId(null);
+      setAssignedStaffDisplayName(null);
+      await switchLocation(null, null);
+    },
+    [switchLocation, switchToFeedbackVisit]
+  );
 
-    if (
-      data.recognized &&
-      data.status === "FEEDBACK" &&
-      data.act2?.visitId &&
-      data.act2.venueId &&
-      data.act2.tableId
-    ) {
-      guestAppServerRestoreRef.current = true;
-      const a = data.act2;
-      await switchToFeedbackVisit({
-        visitId: a.visitId,
-        feedbackActSessionId: a.feedbackActSessionId,
-        venueId: a.venueId,
-        tableId: a.tableId,
-        tableNumber: typeof a.tableNumber === "number" ? a.tableNumber : 0,
-        feedbackStaffId:
-          typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim()
-            ? a.feedbackStaffId.trim()
-            : null,
-      });
-      return;
-    }
+  /** Единственный источник команд UI: POST /api/get-current-status (алиас /api/get-current-status). */
+  const fetchAndApplyGuestStatus = useCallback(async () => {
+    const data = await pullGuestCommandPayload();
+    if (!data) return;
+    await applyGuestCommandPayload(data);
+  }, [pullGuestCommandPayload, applyGuestCommandPayload]);
 
-    guestAppServerRestoreRef.current = false;
-    feedbackEarAppliedIdRef.current = null;
-    setPostServiceVisit(null);
-    setShowLandingScanner(true);
-    await switchLocation(null, null);
-  }, [switchLocation, switchToFeedbackVisit]);
-
-  useEffect(() => {
-    fetchAndApplyGuestStatusRef.current = fetchAndApplyGuestStatus;
+  const refreshGuestStatus = useCallback(async () => {
+    await fetchAndApplyGuestStatus();
   }, [fetchAndApplyGuestStatus]);
 
   /**
@@ -907,112 +751,48 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [isSdkReady, fetchAndApplyGuestStatus]);
 
-  /**
-   * Эфир feedback_act только по canonical global_users id (без списков алиасов).
-   */
+  /** Опрос сервера каждые ~4 с + при возврате на вкладку. */
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const uid = (canonicalGuestUid?.trim() || "").trim();
-    if (!uid) return;
-
-    let cancelled = false;
-    const masterPool: QueryDocumentSnapshot[] = [];
-    const participantPool: QueryDocumentSnapshot[] = [];
-
-    const reconcile = () => {
-      if (cancelled) return;
-      const byId = new Map<string, QueryDocumentSnapshot>();
-      for (const d of masterPool) byId.set(d.id, d);
-      for (const d of participantPool) byId.set(d.id, d);
-      const picked = pickNewestFeedbackActSnap([...byId.values()]);
-      if (!picked) return;
-      const visit = postServiceVisitFromFeedbackActSnap(picked);
-      if (!visit) return;
-      if (postServiceVisitRef.current?.feedbackActSessionId === visit.feedbackActSessionId) return;
-      if (feedbackEarAppliedIdRef.current === visit.feedbackActSessionId) return;
-      feedbackEarAppliedIdRef.current = visit.feedbackActSessionId;
-      void switchToFeedbackVisit(visit).catch(() => {
-        if (feedbackEarAppliedIdRef.current === visit.feedbackActSessionId) {
-          feedbackEarAppliedIdRef.current = null;
-        }
-      });
+    if (!isSdkReady || typeof window === "undefined") return;
+    if (!isTelegramContext()) return;
+    const id = window.setInterval(() => {
+      void fetchAndApplyGuestStatus();
+    }, 4000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void fetchAndApplyGuestStatus();
     };
-
-    const qMaster = query(
-      collection(db, "activeSessions"),
-      where("sessionKind", "==", "feedback_act"),
-      where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-      where("masterId", "==", uid),
-      limit(25)
-    );
-    const qParticipant = query(
-      collection(db, "activeSessions"),
-      where("sessionKind", "==", "feedback_act"),
-      where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-      where("participantUids", "array-contains", uid),
-      limit(25)
-    );
-
-    const unsubs: Array<() => void> = [
-      onSnapshot(
-        qMaster,
-        (snap) => {
-          masterPool.length = 0;
-          masterPool.push(...snap.docs);
-          reconcile();
-        },
-        (err) => console.error("[guest] feedback ear (masterId) failed:", err)
-      ),
-      onSnapshot(
-        qParticipant,
-        (snap) => {
-          participantPool.length = 0;
-          participantPool.push(...snap.docs);
-          reconcile();
-        },
-        (err) => console.error("[guest] feedback ear (participantUids) failed:", err)
-      ),
-    ];
-
+    document.addEventListener("visibilitychange", onVis);
     return () => {
-      cancelled = true;
-      for (const u of unsubs) u();
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
-  }, [canonicalGuestUid, switchToFeedbackVisit]);
+  }, [isSdkReady, fetchAndApplyGuestStatus]);
 
   const waitForActiveSessionConfirmation = useCallback(
     async (venueId: string, tableId: string, timeoutMs = 12000): Promise<boolean> => {
       const v = String(venueId ?? "").trim();
       const t = String(tableId ?? "").trim();
       if (!v || !t) return false;
-      return await new Promise<boolean>((resolve) => {
-        let done = false;
-        const finish = (ok: boolean) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          unsub();
-          resolve(ok);
-        };
-        const q = query(
-          collection(db, "activeSessions"),
-          where("venueId", "==", v),
-          where("tableId", "==", t),
-          where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-          limit(25)
-        );
-        const unsub = onSnapshot(
-          q,
-          (snap) => {
-            const picked = pickNewestFreshActiveSessionDoc(snap.docs);
-            finish(Boolean(picked));
-          },
-          () => finish(false)
-        );
-        const timer = setTimeout(() => finish(false), timeoutMs);
-      });
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const data = await pullGuestCommandPayload();
+        if (
+          data &&
+          !data.staffProfile &&
+          data.recognized &&
+          data.status === "WORKING" &&
+          data.act1?.venueId?.trim() === v &&
+          data.act1?.tableId?.trim() === t &&
+          data.activeSession
+        ) {
+          await applyGuestCommandPayload(data);
+          return true;
+        }
+        await new Promise<void>((r) => setTimeout(r, 400));
+      }
+      return false;
     },
-    []
+    [pullGuestCommandPayload, applyGuestCommandPayload]
   );
 
   const resolveCheckInFailureMessage = useCallback((status: string | undefined, apiMessage?: string): string => {
@@ -1103,6 +883,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             tableId: respTable,
             onboardingHint: data.onboardingHint ?? null,
           });
+          void refreshGuestStatus();
           if (data.sessionStatus === "guest_already_seated_elsewhere" && data.messageGuest?.trim()) {
             toast(data.messageGuest.trim());
           }
@@ -1121,7 +902,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return false;
       }
     },
-    [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
+    [
+      applySuccessfulTableBootstrap,
+      checkGuestQrVenueAccess,
+      resolveCheckInFailureMessage,
+      switchLocation,
+      waitForActiveSessionConfirmation,
+      refreshGuestStatus,
+    ]
   );
 
   processEntryRef.current = processEntry;
@@ -1243,271 +1031,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     switchToScanQrScreen,
   ]);
 
-  // Live session data: masterId, isPrivate and participants. Закрытие стола — только из снимка (без polling getDocs).
-  useEffect(() => {
-    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
-    const venueId = currentLocation.venueId.trim();
-    const tableId = currentLocation.tableId.trim();
-
-    let sawSessionDoc = false;
-    let cancelled = false;
-    let unsub: (() => void) | undefined;
-
-    const applySessionDoc = (docId: string, d: Record<string, unknown>) => {
-      const rawStatus = typeof d.status === "string" ? d.status.trim() : "";
-      const sessionStatus = normalizeActiveSessionStatus(rawStatus);
-
-      if (sessionStatus === "closed") {
-        setActiveSession(null);
-        setParticipants([]);
-        sawSessionDoc = false;
-        setShowLandingScanner(true);
-        void switchLocation(null, null);
-        return;
-      }
-
-      if (!isActiveSessionWithinMaxAge(d, Date.now())) {
-        setActiveSession(null);
-        setParticipants([]);
-        sawSessionDoc = false;
-        setShowLandingScanner(true);
-        void switchLocation(null, null);
-        return;
-      }
-
-      const masterId = typeof d.masterId === "string" ? d.masterId.trim() : "";
-      const isPrivate = typeof d.isPrivate === "boolean" ? d.isPrivate : true;
-
-      const participantsRaw = Array.isArray(d.participants) ? d.participants : [];
-      const parsedParticipants: ActiveSessionParticipant[] = participantsRaw
-        .map((p) => {
-          const x = (p ?? {}) as Record<string, unknown>;
-          const uid = typeof x.uid === "string" ? x.uid.trim() : "";
-          const statusRaw = x.status;
-          const status: ActiveSessionParticipantStatus =
-            statusRaw === "paid" || statusRaw === "exited" ? (statusRaw as ActiveSessionParticipantStatus) : "active";
-          if (!uid) return null;
-          return {
-            uid,
-            status,
-            joinedAt: x.joinedAt ?? null,
-            updatedAt: x.updatedAt ?? null,
-          };
-        })
-        .filter(Boolean) as ActiveSessionParticipant[];
-
-      const tableNumber = typeof d.tableNumber === "number" ? d.tableNumber : 0;
-      const sessionAssigned =
-        typeof d.assignedStaffId === "string" && d.assignedStaffId.trim() ? d.assignedStaffId.trim() : undefined;
-      const resolvedWaiter = resolveWaiterStaffIdFromSessionDoc(d) ?? undefined;
-      const sessionTableId = typeof d.tableId === "string" ? d.tableId.trim() : tableId;
-
-      const session: ActiveSession = {
-        id: docId,
-        venueId,
-        tableId: sessionTableId,
-        tableNumber,
-        masterId: masterId || undefined,
-        isPrivate,
-        participants: parsedParticipants,
-        status: sessionStatus,
-        assignedStaffId: sessionAssigned,
-        resolvedWaiterStaffId: resolvedWaiter,
-        waiterId: typeof d.waiterId === "string" && d.waiterId.trim() ? d.waiterId.trim() : undefined,
-        createdAt: d.createdAt ?? null,
-        updatedAt: d.updatedAt ?? null,
-      };
-
-      sawSessionDoc = true;
-      setActiveSession(session);
-      setParticipants(parsedParticipants);
-    };
-
-    /** Без orderBy по createdAt: иначе нужен отдельный составной индекс; при его отсутствии onSnapshot падает и UI «вечно грузится». Свежесть — через pickNewestFreshActiveSessionDoc. */
-    const q = query(
-      collection(db, "activeSessions"),
-      where("venueId", "==", venueId),
-      where("tableId", "==", tableId),
-      where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
-      limit(25)
-    );
-
-    const finalizeAfterActiveSessionVanished = () => {
-      void (async () => {
-        if (cancelled) return;
-        try {
-          await fetchAndApplyGuestStatusRef.current();
-        } catch {
-          if (!cancelled) await switchToScanQrScreen();
-        }
-      })();
-    };
-
-    unsub = onSnapshot(
-      q,
-      (snap) => {
-        if (snap.empty) {
-          setActiveSession(null);
-          setParticipants([]);
-          if (sawSessionDoc) {
-            sawSessionDoc = false;
-            finalizeAfterActiveSessionVanished();
-          }
-          return;
-        }
-
-        const picked = pickNewestFreshActiveSessionDoc(snap.docs);
-        if (!picked) {
-          setActiveSession(null);
-          setParticipants([]);
-          if (sawSessionDoc) {
-            sawSessionDoc = false;
-            finalizeAfterActiveSessionVanished();
-          }
-          return;
-        }
-
-        applySessionDoc(picked.id, (picked.data() ?? {}) as Record<string, unknown>);
-      },
-      (err) => {
-        console.error("[guest] activeSessions listener failed (проверьте индексы Firestore и правила):", err);
-      }
-    );
-
-    return () => {
-      cancelled = true;
-      unsub?.();
-    };
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation, switchToScanQrScreen]);
-
-  // Live orders data for the table.
-  useEffect(() => {
-    if (postServiceVisit) {
-      setCurrentTableOrders([]);
-      return;
-    }
-    if (!isSdkReady || !currentLocation.venueId || !currentLocation.tableId) return;
-
-    const venueId = currentLocation.venueId;
-    const tableId = currentLocation.tableId;
-    const sessionId = activeSession?.id?.trim() ?? "";
-    let cancelled = false;
-
-    let rootOrders: GuestTableOrder[] = [];
-
-    rootOrdersLoadedRef.current = false;
-
-    const parseOrdersSnap = (snap: any): GuestTableOrder[] => {
-      return snap.docs.map((d: any) => parseGuestTableOrder(d.id, d.data() as Record<string, unknown>));
-    };
-    const applyOrdersSnap = (snap: any) => {
-      rootOrders = parseOrdersSnap(snap);
-      rootOrdersLoadedRef.current = true;
-      setCurrentTableOrders(rootOrders);
-    };
-
-    // Холодный старт заказов: один снимок по sessionId до live-listener.
-    if (sessionId) {
-      void (async () => {
-        try {
-          const qBoot = query(
-            collection(db, "orders"),
-            where("sessionId", "==", sessionId),
-            where("status", "in", ["pending", "ready"]),
-            limit(200)
-          );
-          const bootSnap = await getDocs(qBoot);
-          if (cancelled || rootOrdersLoadedRef.current) return;
-          applyOrdersSnap(bootSnap);
-        } catch {
-          // best-effort: fallback остаётся за onSnapshot по столу
-        }
-      })();
-    }
-
-    // Root orders (current schema in this repo)
-    const qRoot = query(
-      collection(db, "orders"),
-      where("venueId", "==", venueId),
-      where("tableId", "==", tableId),
-      where("status", "in", ["pending", "ready"])
-    );
-    const unsubRoot = onSnapshot(qRoot, (snap) => {
-      applyOrdersSnap(snap);
-    });
-
-    return () => {
-      cancelled = true;
-      unsubRoot();
-    };
-  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, activeSession?.id, postServiceVisit]);
-
   useEffect(() => {
     if (!isSdkReady || isInitializing) return;
     if (!canonicalGuestUid?.trim()) return;
     void refreshVisitHistory();
   }, [isSdkReady, isInitializing, canonicalGuestUid, refreshVisitHistory]);
-
-  const visitVenueIdsKey = useMemo(() => {
-    const s = new Set<string>();
-    for (const v of visitHistory) {
-      const id = v.venueId?.trim();
-      if (id) s.add(id);
-    }
-    const cur = currentLocation.venueId?.trim();
-    if (cur) s.add(cur);
-    return [...s].sort().join("|");
-  }, [visitHistory, currentLocation.venueId]);
-
-  useEffect(() => {
-    if (!isSdkReady) return;
-    const ids = visitVenueIdsKey ? visitVenueIdsKey.split("|").filter(Boolean) : [];
-    const unsubs: Array<() => void> = [];
-    for (const id of ids) {
-      const ref = doc(db, "venues", id);
-      const unsub = onSnapshot(
-        ref,
-        (snap) => {
-          setVenueDocById((prev) => ({
-            ...prev,
-            [id]: snap.exists() ? { ...(snap.data() as Record<string, unknown>) } : {},
-          }));
-        },
-        () => {
-          setVenueDocById((prev) => ({ ...prev, [id]: {} }));
-        }
-      );
-      unsubs.push(unsub);
-    }
-    return () => unsubs.forEach((u) => u());
-  }, [isSdkReady, visitVenueIdsKey]);
-
-  /** Локальный каталог заведения для витрины предзаказа (Live). */
-  useEffect(() => {
-    if (!isSdkReady) return;
-    const ids = visitVenueIdsKey ? visitVenueIdsKey.split("|").filter(Boolean) : [];
-    const unsubs: Array<() => void> = [];
-    for (const id of ids) {
-      const menuRef = doc(db, "venues", id, "configs", "menu");
-      const unsub = onSnapshot(
-        menuRef,
-        (snap) => {
-          if (!snap.exists()) {
-            setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: null }));
-            return;
-          }
-          const block = parseVenueMenuVenueBlock(snap.data() as Record<string, unknown>);
-          const showcase = buildGuestPreorderShowcase(block);
-          setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: showcase }));
-        },
-        () => {
-          setGuestVenueMenuShowcaseByVenueId((prev) => ({ ...prev, [id]: null }));
-        }
-      );
-      unsubs.push(unsub);
-    }
-    return () => unsubs.forEach((u) => u());
-  }, [isSdkReady, visitVenueIdsKey]);
 
   const isVenuePreOrderEnabled = useCallback(
     (venueFirestoreId: string) => {
@@ -1604,11 +1132,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || data.ok === false) throw new Error(data.error ?? "call-waiter failed");
         toast.success("Запрос отправлен персоналу");
+        void refreshGuestStatus();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [guestBlockedReason, isGuestBlocked, canonicalGuestUid]
+    [guestBlockedReason, isGuestBlocked, canonicalGuestUid, refreshGuestStatus]
   );
 
   const setTablePrivacyAllowJoin = useCallback(
@@ -1631,6 +1160,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           return { ok: false, error: typeof data.error === "string" ? data.error : "Ошибка" };
         }
         toast.success(allowJoin ? "Подселение без кода разрешено" : "Стол закрыт для подселения");
+        void refreshGuestStatus();
         return { ok: true };
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Ошибка сети";
@@ -1638,7 +1168,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return { ok: false, error: msg };
       }
     },
-    [currentLocation.venueId, currentLocation.tableId, canonicalGuestUid]
+    [currentLocation.venueId, currentLocation.tableId, canonicalGuestUid, refreshGuestStatus]
   );
 
   const requestBill = useCallback(
@@ -1688,7 +1218,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
-    feedbackEarAppliedIdRef.current = null;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();
@@ -1705,7 +1234,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
     }
     await switchLocation(null, null);
-  }, [switchLocation]);
+    void refreshGuestStatus();
+  }, [switchLocation, refreshGuestStatus]);
 
   const value = useMemo<GuestMiniAppContextValue>(
     () => ({
@@ -1725,6 +1255,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       switchLocation,
       openVenueMenu,
       refreshVisitHistory,
+      refreshGuestStatus,
       callWaiter,
       requestBill,
       isVenuePreOrderEnabled,
@@ -1760,6 +1291,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       switchLocation,
       openVenueMenu,
       refreshVisitHistory,
+      refreshGuestStatus,
       callWaiter,
       requestBill,
       isVenuePreOrderEnabled,
