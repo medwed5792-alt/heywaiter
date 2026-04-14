@@ -37,6 +37,7 @@ import {
 import { getWaiterIdFromTablePayload } from "@/lib/standards/table-waiter";
 import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
+import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
@@ -151,6 +152,41 @@ function readVenueTableFromSearchParams(searchParams: {
   const tableId = (searchParams.get("t") ?? searchParams.get("tableId") ?? "").trim();
   if (!venueId || !tableId) return null;
   return { venueId, tableId };
+}
+
+function readVenueTableFromUrlRuntime(searchParams: {
+  get: (key: string) => string | null;
+}): { venueId: string; tableId: string } | null {
+  const direct = readVenueTableFromSearchParams(searchParams);
+  if (direct) return direct;
+  if (typeof window === "undefined") return null;
+
+  const fromQuery = (qs: URLSearchParams): { venueId: string; tableId: string } | null => {
+    const venueId = (qs.get("v") ?? qs.get("venueId") ?? "").trim();
+    const tableId = (qs.get("t") ?? qs.get("tableId") ?? "").trim();
+    if (!venueId || !tableId) return null;
+    return { venueId, tableId };
+  };
+
+  const fromWindowQuery = fromQuery(new URLSearchParams(window.location.search));
+  if (fromWindowQuery) return fromWindowQuery;
+
+  const hash = window.location.hash ?? "";
+  const hashQueryRaw = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+  if (hashQueryRaw) {
+    const fromHash = fromQuery(new URLSearchParams(hashQueryRaw));
+    if (fromHash) return fromHash;
+  }
+
+  const tgStartApp = new URLSearchParams(window.location.search).get("tgWebAppStartParam")?.trim() ?? "";
+  if (tgStartApp) {
+    const parsed = parseStartParamPayload(tgStartApp);
+    if (parsed?.venueId?.trim() && parsed?.tableId?.trim()) {
+      return { venueId: parsed.venueId.trim(), tableId: parsed.tableId.trim() };
+    }
+  }
+
+  return null;
 }
 
 function parseNumber(raw: unknown): number {
@@ -303,7 +339,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const { checkGuestQrVenueAccess } = useSotaLocation();
 
   const urlTableFromParams = useMemo(
-    () => readVenueTableFromSearchParams(searchParams),
+    () => readVenueTableFromUrlRuntime(searchParams),
     [searchParams]
   );
 
@@ -858,9 +894,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, guestIdentity.currentUid, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
   );
 
-  // Единый server-side bootstrap: один запрос за итоговым состоянием.
+  // Единый bootstrap: при наличии v/t стартуем table flow сразу, без ожидания identity.
   useEffect(() => {
-    if (!isSdkReady || !bootstrapIdentityReady) return;
+    if (!isSdkReady) return;
+    const entryTableNow = readVenueTableFromUrlRuntime(searchParams);
+    if (!entryTableNow && !bootstrapIdentityReady) return;
     const tgGate = getTelegramWebApp();
     const recvGate = normalizeBotUsername(tgGate?.initDataUnsafe?.receiver?.username);
     const staffGate = normalizeBotUsername(process.env.NEXT_PUBLIC_STAFF_BOT_USERNAME);
@@ -873,7 +911,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     let cancelled = false;
     void (async () => {
-      const entryTable = readVenueTableFromSearchParams(searchParams);
+      const entryTable = readVenueTableFromUrlRuntime(searchParams);
 
       if (!entryTable) {
         const uid = globalGuestUidRef.current?.trim() || "";
@@ -947,6 +985,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     isSdkReady,
     bootstrapIdentityReady,
     searchParams,
+    urlTableFromParams,
     switchLocation,
     refreshVisitHistory,
     processEntry,

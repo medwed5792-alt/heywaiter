@@ -135,10 +135,7 @@ function GuestServiceTabContent() {
   return (
     <div className="space-y-5">
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <p className="text-center text-base font-semibold text-slate-900">Сканируйте внешний QR стола</p>
-        <p className="mt-2 text-center text-xs text-slate-500">
-          Вход в Mini-App только через ссылку с параметрами `v` и `t`. Камера внутри приложения отключена.
-        </p>
+        <p className="text-center text-base font-semibold text-slate-900">Добро пожаловать</p>
       </section>
     </div>
   );
@@ -599,9 +596,7 @@ function MiniAppScreenRouter() {
           {!guestAtTable ? (
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-center text-lg font-bold text-slate-900">Вас приветствует сервис HeyWaiter</p>
-              <p className="mt-2 text-center text-sm text-slate-600">
-                Откройте стол по QR‑коду или зайдите в кабинет и выберите заведение рядом.
-              </p>
+              <p className="mt-2 text-center text-sm text-slate-600">Добро пожаловать</p>
             </header>
           ) : (
             <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
