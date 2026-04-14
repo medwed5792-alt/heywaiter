@@ -50,6 +50,24 @@
       ]
     },
     {
+      "collectionGroup": "activeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sessionKind", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "masterId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "activeSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sessionKind", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "participantUids", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
       "collectionGroup": "orders",
       "queryScope": "COLLECTION",
       "fields": [

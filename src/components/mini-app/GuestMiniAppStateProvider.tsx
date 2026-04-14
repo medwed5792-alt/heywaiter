@@ -12,7 +12,17 @@ import {
   type ReactNode,
 } from "react";
 import { useSearchParams } from "next/navigation";
-import { collection, doc, getDocs, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  where,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import {
   mergePreOrderSystemFields,
   resolvePreOrderEnabled,
@@ -302,6 +312,46 @@ function visitTimestampMillis(v: unknown): number {
   return 0;
 }
 
+function chunkCandidateUids<T>(arr: T[], size: number): T[][] {
+  if (arr.length === 0) return [];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function pickNewestFeedbackActSnap(docs: QueryDocumentSnapshot[]): QueryDocumentSnapshot | null {
+  const filtered = docs.filter((d) => d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX));
+  if (filtered.length === 0) return null;
+  return filtered.sort((a, b) => {
+    const ta = visitTimestampMillis((a.data() as Record<string, unknown>).createdAt);
+    const tb = visitTimestampMillis((b.data() as Record<string, unknown>).createdAt);
+    return tb - ta;
+  })[0];
+}
+
+function postServiceVisitFromFeedbackActSnap(picked: QueryDocumentSnapshot): PostServiceVisitState | null {
+  const raw = (picked.data() ?? {}) as Record<string, unknown>;
+  const visitId =
+    typeof raw.sourceSessionId === "string" && raw.sourceSessionId.trim()
+      ? raw.sourceSessionId.trim()
+      : picked.id.replace(FEEDBACK_SESSION_ID_PREFIX, "").trim();
+  if (!visitId) return null;
+  const venueId = String(raw.venueId ?? "").trim();
+  const tableId = String(raw.tableId ?? "").trim();
+  if (!venueId || !tableId) return null;
+  return {
+    visitId,
+    feedbackActSessionId: picked.id,
+    venueId,
+    tableId,
+    tableNumber: typeof raw.tableNumber === "number" ? raw.tableNumber : 0,
+    feedbackStaffId:
+      typeof raw.assignedStaffId === "string" && raw.assignedStaffId.trim()
+        ? raw.assignedStaffId.trim()
+        : null,
+  };
+}
+
 function parseGuestTableOrder(docId: string, data: Record<string, unknown>): GuestTableOrder {
   const orderNumber = Math.max(1, Math.floor(parseNumber(data.orderNumber)));
   const status = typeof data.status === "string" ? data.status : "pending";
@@ -440,6 +490,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [showLandingScanner, setShowLandingScanner] = useState(false);
   /** Акт 2: экран отзыва после переноса в архив. */
   const [postServiceVisit, setPostServiceVisit] = useState<PostServiceVisitState | null>(null);
+  const postServiceVisitRef = useRef<PostServiceVisitState | null>(null);
+  useEffect(() => {
+    postServiceVisitRef.current = postServiceVisit;
+  }, [postServiceVisit]);
+  /** «Эфир»: последний принятый feedback_act id — без повторных switch при повторных снимках. */
+  const feedbackEarAppliedIdRef = useRef<string | null>(null);
   const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(null);
   const globalGuestUidRef = useRef<string | null>(globalGuestUid);
   useEffect(() => {
@@ -765,6 +821,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       tableId: string;
       onboardingHint?: string | null;
     }) => {
+      feedbackEarAppliedIdRef.current = null;
       setPostServiceVisit(null);
       setShowLandingScanner(false);
       await switchLocation(data.venueId.trim(), data.tableId.trim());
@@ -787,10 +844,102 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const switchToScanQrScreen = useCallback(async () => {
     clearPersistedGuestSeat();
+    feedbackEarAppliedIdRef.current = null;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     await switchLocation(null, null);
   }, [switchLocation]);
+
+  /**
+   * Рация: постоянный эфир `feedback_act` по всем алиасам UID. Без Telegram, без ролей, без polite-state.
+   * Сигнал есть → сразу Акт 2 (звёзды).
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const base = (globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || "").trim();
+    if (!base) return;
+
+    const candidates = [...new Set(visitHistoryUidCandidates(base).map((x) => x.trim()).filter(Boolean))];
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    const masterChunks = chunkCandidateUids(candidates, 10);
+    const participantChunks = chunkCandidateUids(candidates, 10);
+    const masterPool = new Map<number, QueryDocumentSnapshot[]>();
+    const participantPool = new Map<number, QueryDocumentSnapshot[]>();
+
+    const reconcile = () => {
+      if (cancelled) return;
+      const byId = new Map<string, QueryDocumentSnapshot>();
+      for (const docs of masterPool.values()) {
+        for (const d of docs) byId.set(d.id, d);
+      }
+      for (const docs of participantPool.values()) {
+        for (const d of docs) byId.set(d.id, d);
+      }
+      const picked = pickNewestFeedbackActSnap([...byId.values()]);
+      if (!picked) return;
+      const visit = postServiceVisitFromFeedbackActSnap(picked);
+      if (!visit) return;
+      if (postServiceVisitRef.current?.feedbackActSessionId === visit.feedbackActSessionId) return;
+      if (feedbackEarAppliedIdRef.current === visit.feedbackActSessionId) return;
+      feedbackEarAppliedIdRef.current = visit.feedbackActSessionId;
+      void switchToFeedbackVisit(visit).catch(() => {
+        if (feedbackEarAppliedIdRef.current === visit.feedbackActSessionId) {
+          feedbackEarAppliedIdRef.current = null;
+        }
+      });
+    };
+
+    const unsubs: Array<() => void> = [];
+    const pushMaster = (idx: number, docs: QueryDocumentSnapshot[]) => {
+      masterPool.set(idx, docs);
+      reconcile();
+    };
+    const pushParticipant = (idx: number, docs: QueryDocumentSnapshot[]) => {
+      participantPool.set(idx, docs);
+      reconcile();
+    };
+
+    masterChunks.forEach((chunk, idx) => {
+      const q = query(
+        collection(db, "activeSessions"),
+        where("sessionKind", "==", "feedback_act"),
+        where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+        where("masterId", "in", chunk),
+        limit(25)
+      );
+      unsubs.push(
+        onSnapshot(
+          q,
+          (snap) => pushMaster(idx, [...snap.docs]),
+          (err) => console.error("[guest] feedback ear (masterId) failed:", err)
+        )
+      );
+    });
+
+    participantChunks.forEach((chunk, idx) => {
+      const q = query(
+        collection(db, "activeSessions"),
+        where("sessionKind", "==", "feedback_act"),
+        where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+        where("participantUids", "array-contains-any", chunk),
+        limit(25)
+      );
+      unsubs.push(
+        onSnapshot(
+          q,
+          (snap) => pushParticipant(idx, [...snap.docs]),
+          (err) => console.error("[guest] feedback ear (participantUids) failed:", err)
+        )
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      for (const u of unsubs) u();
+    };
+  }, [globalGuestUid, guestIdentity.currentUid, switchToFeedbackVisit]);
 
   const resolveFeedbackActVisitByGlobalUid = useCallback(
     async (globalUid: string): Promise<PostServiceVisitState | null> => {
@@ -1633,6 +1782,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
+    feedbackEarAppliedIdRef.current = null;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();

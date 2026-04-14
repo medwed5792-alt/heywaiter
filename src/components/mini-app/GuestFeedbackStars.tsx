@@ -1,12 +1,44 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { getIdToken } from "firebase/auth";
 import toast from "react-hot-toast";
 import { auth } from "@/lib/firebase";
 import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 
 const TIP_PRESETS = [100, 200, 500] as const;
+
+const SESSION_REVIEW_MAX_ATTEMPTS = 48;
+
+async function postSessionReviewUntilAccepted(
+  payload: {
+    initData: string;
+    venueId: string;
+    tableId: string;
+    sessionId: string;
+    customerUid: string;
+    stars: number;
+  },
+  isStale: () => boolean
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= SESSION_REVIEW_MAX_ATTEMPTS; attempt++) {
+    if (isStale()) return false;
+    try {
+      const res = await fetch("/api/guest/session-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (res.ok && data.ok === true) return true;
+    } catch {
+      /* сеть — повтор */
+    }
+    const delayMs = Math.min(280 + attempt * 150, 10_000);
+    await new Promise<void>((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
 
 type TelegramWebAppInit = {
   initData?: string;
@@ -52,37 +84,34 @@ export function GuestFeedbackStars({
   const [amount, setAmount] = useState<number>(TIP_PRESETS[0]);
   const [busy, setBusy] = useState(false);
   const tipsFirestoreSessionId = (tipsSessionId ?? "").trim() || buildFeedbackActSessionId(activeSessionId.trim());
+  const reviewAttemptGenRef = useRef(0);
 
   const persistReview = useCallback(
-    async (starCount: number) => {
+    async (starCount: number): Promise<boolean> => {
       const tg = getTelegramWebApp();
       const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-      if (!initData) return;
+      if (!initData) return false;
       const v = venueId.trim();
       const t = tableId.trim();
       const sid = activeSessionId.trim();
       const uid = customerUid.trim();
-      if (!v || !t || !sid || !uid) return;
-      try {
-        const res = await fetch("/api/guest/session-review", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            initData,
-            venueId: v,
-            tableId: t,
-            sessionId: sid,
-            customerUid: uid,
-            stars: starCount,
-          }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          console.warn("[GuestFeedbackStars] session-review", data.error ?? res.status);
-        }
-      } catch (e) {
-        console.warn("[GuestFeedbackStars] session-review", e);
+      if (!v || !t || !sid || !uid) return false;
+      const gen = ++reviewAttemptGenRef.current;
+      const ok = await postSessionReviewUntilAccepted(
+        {
+          initData,
+          venueId: v,
+          tableId: t,
+          sessionId: sid,
+          customerUid: uid,
+          stars: starCount,
+        },
+        () => gen !== reviewAttemptGenRef.current
+      );
+      if (!ok && gen === reviewAttemptGenRef.current) {
+        console.warn("[GuestFeedbackStars] session-review: не подтверждено после повторов");
       }
+      return ok;
     },
     [venueId, tableId, activeSessionId, customerUid]
   );
@@ -99,7 +128,11 @@ export function GuestFeedbackStars({
     }
     setBusy(true);
     try {
-      await persistReview(stars);
+      const reviewOk = await persistReview(stars);
+      if (!reviewOk) {
+        toast.error("Оценка не дошла до сервера. Проверьте сеть и нажмите снова.");
+        return;
+      }
       const token = await getIdToken(user);
       const res = await fetch("/api/guest/tips", {
         method: "POST",
@@ -132,7 +165,11 @@ export function GuestFeedbackStars({
   const skipTips = async () => {
     setBusy(true);
     try {
-      await persistReview(stars);
+      const reviewOk = await persistReview(stars);
+      if (!reviewOk) {
+        toast.error("Оценка не дошла до сервера. Проверьте сеть и нажмите снова.");
+        return;
+      }
       await onFinalize();
     } finally {
       setBusy(false);
@@ -153,7 +190,9 @@ export function GuestFeedbackStars({
                 type="button"
                 onClick={() => {
                   setStars(n);
-                  void persistReview(n);
+                  void persistReview(n).then((ok) => {
+                    if (!ok) toast.error("Оценка не сохранена. Нажмите звезду ещё раз.");
+                  });
                 }}
                 className={`text-3xl leading-none ${n <= stars ? "text-amber-400" : "text-slate-300"}`}
                 aria-label={`Поставить ${n} звезд`}
