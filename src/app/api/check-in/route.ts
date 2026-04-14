@@ -4,6 +4,9 @@ import { checkInGuest } from "@/domain/usecases/check-in/checkInGuest";
 import { restoreGuestSessionByGlobalUid } from "@/domain/usecases/check-in/restoreGuestSessionByGlobalUid";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { normalizeTableId, tableIdVariants } from "@/lib/table-id-normalization";
+import type { CheckInGuestResult } from "@/domain/usecases/check-in/checkInGuest";
+
+const CHECK_IN_USECASE_TIMEOUT_MS = 25_000;
 import { pickNewestFreshActiveSessionDoc } from "@/lib/session-freshness";
 
 const ACTIVE_SESSION_STATUS_FILTER = ["check_in_success", "payment_confirmed"] as const;
@@ -45,8 +48,15 @@ async function resolveCanonicalTableId(venueId: string, tableId: string): Promis
 }
 
 export async function POST(request: NextRequest) {
+  console.log("[api/check-in] POST inbound", new Date().toISOString());
   try {
-    const body = await request.json();
+    let body: Record<string, unknown>;
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch (parseErr) {
+      console.error("[api/check-in] invalid JSON body:", parseErr);
+      return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+    }
     const {
       venueId: rawVenue,
       tableId: rawTable,
@@ -58,7 +68,7 @@ export async function POST(request: NextRequest) {
       globalGuestUid: rawGlobalGuestUid,
       locale: rawLocale,
       timezone: rawTimezone,
-    } = body as {
+    } = body as unknown as {
       venueId?: string;
       tableId?: string;
       tableNumber?: number;
@@ -116,29 +126,67 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const canonicalTableId = await resolveCanonicalTableId(venueId, tableId);
+    let canonicalTableId: string;
+    try {
+      canonicalTableId = await resolveCanonicalTableId(venueId, tableId);
+    } catch (canonErr) {
+      console.error("[api/check-in] resolveCanonicalTableId failed:", canonErr);
+      canonicalTableId = normalizeTableId(tableId);
+    }
 
     const knownGlobalForTable = globalGuestUidForRestore || "";
 
-    const result = await checkInGuest({
-      venueId,
-      tableId: canonicalTableId,
-      tableNumber,
-      guestId,
-      participantUid,
-      guestIdentity,
-      deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
-      knownGlobalGuestUid: knownGlobalForTable || undefined,
-      locale: typeof rawLocale === "string" ? rawLocale : undefined,
-      timezone: typeof rawTimezone === "string" ? rawTimezone : undefined,
-    });
+    let tableNumberParsed: number | undefined;
+    if (typeof tableNumber === "number" && Number.isFinite(tableNumber)) {
+      tableNumberParsed = tableNumber;
+    } else if (typeof tableNumber === "string" && tableNumber.trim()) {
+      const n = Number.parseInt(tableNumber.trim(), 10);
+      if (Number.isFinite(n)) tableNumberParsed = n;
+    }
+
+    let result: CheckInGuestResult;
+    try {
+      result = await Promise.race([
+        checkInGuest({
+          venueId,
+          tableId: canonicalTableId,
+          tableNumber: tableNumberParsed,
+          guestId: typeof guestId === "string" ? guestId : guestId != null ? String(guestId) : undefined,
+          participantUid: typeof participantUid === "string" ? participantUid : undefined,
+          guestIdentity,
+          deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
+          knownGlobalGuestUid: knownGlobalForTable || undefined,
+          locale: typeof rawLocale === "string" ? rawLocale : undefined,
+          timezone: typeof rawTimezone === "string" ? rawTimezone : undefined,
+        }),
+        new Promise<CheckInGuestResult>((_, reject) =>
+          setTimeout(() => reject(new Error("check_in_usecase_timeout")), CHECK_IN_USECASE_TIMEOUT_MS)
+        ),
+      ]);
+    } catch (raceErr) {
+      console.error("[api/check-in] checkInGuest failed or timed out:", raceErr);
+      return NextResponse.json(
+        {
+          ok: false,
+          mode: "scanner",
+          venueId: venueId.trim(),
+          tableId: canonicalTableId,
+          globalGuestUid: null,
+          sessionId: null,
+          sessionStatus: "check_in_timeout",
+          messageGuest: "Сервер не успел завершить посадку. Повторите сканирование QR.",
+          onboardingHint: null,
+        },
+        { status: 503 }
+      );
+    }
 
     if (result.status === "check_in_success") {
       return NextResponse.json({
         ok: true,
         mode: "table",
         venueId: venueId.trim(),
-        tableId: result.tableId,
+        tableId: String(result.tableId ?? "").trim(),
         globalGuestUid: result.globalGuestUid,
         sessionId: result.sessionId,
         sessionStatus: result.status,
@@ -151,8 +199,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: true,
         mode: "table",
-        venueId: result.venueId,
-        tableId: result.tableId,
+        venueId: String(result.venueId ?? "").trim(),
+        tableId: String(result.tableId ?? "").trim(),
         tableNumber: result.tableNumber,
         globalGuestUid: result.globalGuestUid,
         sessionId: result.sessionId,
@@ -166,7 +214,7 @@ export async function POST(request: NextRequest) {
       ok: true,
       mode: "scanner",
       venueId: venueId.trim(),
-      tableId: result.tableId,
+      tableId: String(result.tableId ?? "").trim(),
       globalGuestUid: result.globalGuestUid,
       sessionId: result.sessionId,
       sessionStatus: result.status,
@@ -175,7 +223,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("check-in API error:", err);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { ok: false, error: "Internal server error", messageGuest: "Ошибка сервера при посадке. Повторите попытку." },
       { status: 500 }
     );
   }

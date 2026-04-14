@@ -784,9 +784,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   );
 
   const waitForActiveSessionConfirmation = useCallback(
-    async (venueId: string, tableId: string, timeoutMs = 8000): Promise<boolean> => {
-      const v = venueId.trim();
-      const t = tableId.trim();
+    async (venueId: string, tableId: string, timeoutMs = 12000): Promise<boolean> => {
+      const v = String(venueId ?? "").trim();
+      const t = String(tableId ?? "").trim();
       if (!v || !t) return false;
       return await new Promise<boolean>((resolve) => {
         let done = false;
@@ -825,6 +825,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     if (status === "guest_already_seated_elsewhere") {
       return "У вас есть открытый заказ за другим столом. Завершите его, затем отсканируйте новый QR.";
     }
+    if (status === "check_in_timeout") {
+      return "Сервер не успел ответить. Повторите сканирование QR.";
+    }
     return "Сессия недоступна. Отсканируйте QR стола снова.";
   }, []);
 
@@ -848,16 +851,24 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
         const participantUid = guestIdentity.currentUid?.trim() || undefined;
-        const res = await fetch("/api/check-in", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            venueId: v,
-            tableId: t,
-            participantUid,
-            deviceAnchor: deviceAnchor || undefined,
-          }),
-        });
+        const controller = new AbortController();
+        const abortTimer = window.setTimeout(() => controller.abort(), 35_000);
+        let res: Response;
+        try {
+          res = await fetch("/api/check-in", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              venueId: v,
+              tableId: t,
+              participantUid,
+              deviceAnchor: deviceAnchor || undefined,
+            }),
+            signal: controller.signal,
+          });
+        } finally {
+          window.clearTimeout(abortTimer);
+        }
         const data = (await res.json().catch(() => ({}))) as {
           ok?: boolean;
           mode?: "table" | "scanner";
@@ -868,8 +879,16 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           messageGuest?: string;
           sessionStatus?: string;
         };
-        if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          const confirmed = await waitForActiveSessionConfirmation(data.venueId, data.tableId);
+        if (!res.ok || data.ok === false) {
+          setShowLandingScanner(true);
+          await switchLocation(null, null);
+          toast.error(resolveCheckInFailureMessage(data.sessionStatus, data.messageGuest));
+          return false;
+        }
+        const respVenue = String(data.venueId ?? "").trim();
+        const respTable = String(data.tableId ?? "").trim();
+        if (res.ok && data.ok === true && data.mode === "table" && respVenue && respTable) {
+          const confirmed = await waitForActiveSessionConfirmation(respVenue, respTable);
           if (!confirmed) {
             setShowLandingScanner(true);
             await switchLocation(null, null);
@@ -877,8 +896,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return false;
           }
           await applySuccessfulTableBootstrap({
-            venueId: data.venueId,
-            tableId: data.tableId,
+            venueId: respVenue,
+            tableId: respTable,
             onboardingHint: data.onboardingHint ?? null,
           });
           if (data.sessionStatus === "guest_already_seated_elsewhere" && data.messageGuest?.trim()) {
@@ -891,10 +910,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         await switchLocation(null, null);
         toast.error(resolveCheckInFailureMessage(data.sessionStatus, data.messageGuest));
         return false;
-      } catch {
+      } catch (e) {
         setShowLandingScanner(true);
         await switchLocation(null, null);
-        toast.error("Ошибка check-in. Повторите сканирование.");
+        const aborted = e instanceof Error && e.name === "AbortError";
+        toast.error(aborted ? "Превышено время ожидания сервера. Повторите сканирование." : "Ошибка check-in. Повторите сканирование.");
         return false;
       }
     },

@@ -48,34 +48,53 @@ async function findGuestExistingBattleSessionDoc(
   if (lookupKeys.length === 0) return null;
   const docsById = new Map<string, QueryDocumentSnapshot>();
 
+  const statusIn = [...ACTIVE_VISIT_SESSION_STATUSES];
+
   for (let i = 0; i < lookupKeys.length; i += 10) {
-    const chunk = lookupKeys.slice(i, i + 10);
-    const snap = await firestore
-      .collection("activeSessions")
-      .where("masterId", "in", chunk)
-      .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
-      .limit(50)
-      .get();
-    for (const d of snap.docs) docsById.set(d.id, d);
+    const chunk = [...new Set(lookupKeys.slice(i, i + 10).map((x) => String(x ?? "").trim()).filter(Boolean))];
+    if (chunk.length === 0) continue;
+    try {
+      const snap = await firestore
+        .collection("activeSessions")
+        .where("masterId", "in", chunk)
+        .where("status", "in", statusIn)
+        .limit(50)
+        .get();
+      for (const d of snap.docs) docsById.set(d.id, d);
+    } catch (e) {
+      console.error("[checkInGuest] activeSessions masterId probe failed:", e);
+    }
   }
 
+  const seenParticipantKeys = new Set<string>();
   for (const key of lookupKeys) {
-    const snap = await firestore
-      .collection("activeSessions")
-      .where("participantUids", "array-contains", key)
-      .where("status", "in", [...ACTIVE_VISIT_SESSION_STATUSES])
-      .limit(50)
-      .get();
-    for (const d of snap.docs) docsById.set(d.id, d);
+    const k = String(key ?? "").trim();
+    if (!k || seenParticipantKeys.has(k)) continue;
+    seenParticipantKeys.add(k);
+    try {
+      const snap = await firestore
+        .collection("activeSessions")
+        .where("participantUids", "array-contains", k)
+        .where("status", "in", statusIn)
+        .limit(50)
+        .get();
+      for (const d of snap.docs) docsById.set(d.id, d);
+    } catch (e) {
+      console.error("[checkInGuest] activeSessions participantUids probe failed:", e);
+    }
   }
 
-  const battleDocs = [...docsById.values()].filter((d) => {
-    const raw = d.data() as Record<string, unknown>;
-    const st = typeof raw.status === "string" ? raw.status : "";
-    return !isFeedbackActSessionRecord({ id: d.id, status: st });
-  });
-
-  return pickNewestFreshActiveSessionDoc(battleDocs, nowMs);
+  try {
+    const battleDocs = [...docsById.values()].filter((d) => {
+      const raw = d.data() as Record<string, unknown>;
+      const st = typeof raw.status === "string" ? raw.status : "";
+      return !isFeedbackActSessionRecord({ id: d.id, status: st });
+    });
+    return pickNewestFreshActiveSessionDoc(battleDocs, nowMs);
+  } catch (e) {
+    console.error("[checkInGuest] pickNewestFreshActiveSessionDoc failed:", e);
+    return null;
+  }
 }
 
 export type CheckInGuestResult =
@@ -162,32 +181,36 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   /** Один гость — один стол: пока «бой» в activeSessions, другой стол недоступен (Акт 2 / архив снимает блок). */
   const guestLockLookupKeys = collectGuestActiveSessionLookupKeys(currentUid, rawUidCandidate);
   if (guestLockLookupKeys.length > 0) {
-    const existingBattleElsewhere = await findGuestExistingBattleSessionDoc(
-      firestore,
-      guestLockLookupKeys,
-      now.getTime()
-    );
-    if (existingBattleElsewhere) {
-      const exData = existingBattleElsewhere.data() as Record<string, unknown>;
-      const exVenue = String(exData.venueId ?? "").trim();
-      const exTable = String(exData.tableId ?? "").trim();
-      const requestVenue = venueId.trim();
-      const requestTable = tableId.trim();
-      const sameSeating = exVenue === requestVenue && exTable === requestTable;
-      if (!sameSeating) {
-        const exTableNumber =
-          typeof exData.tableNumber === "number" && Number.isFinite(exData.tableNumber) ? exData.tableNumber : 0;
-        const label = exTableNumber > 0 ? String(exTableNumber) : exTable || "—";
-        return {
-          status: "already_seated_elsewhere",
-          sessionId: existingBattleElsewhere.id,
-          venueId: exVenue,
-          tableId: exTable,
-          tableNumber: exTableNumber,
-          globalGuestUid: currentUid,
-          messageGuest: `У вас есть открытый заказ за столом №${label}. Пожалуйста, завершите его.`,
-        };
+    try {
+      const existingBattleElsewhere = await findGuestExistingBattleSessionDoc(
+        firestore,
+        guestLockLookupKeys,
+        now.getTime()
+      );
+      if (existingBattleElsewhere) {
+        const exData = existingBattleElsewhere.data() as Record<string, unknown>;
+        const exVenue = String(exData.venueId ?? "").trim();
+        const exTable = String(exData.tableId ?? "").trim();
+        const requestVenue = venueId.trim();
+        const requestTable = tableId.trim();
+        const sameSeating = exVenue === requestVenue && exTable === requestTable;
+        if (!sameSeating) {
+          const exTableNumber =
+            typeof exData.tableNumber === "number" && Number.isFinite(exData.tableNumber) ? exData.tableNumber : 0;
+          const label = exTableNumber > 0 ? String(exTableNumber) : exTable || "—";
+          return {
+            status: "already_seated_elsewhere",
+            sessionId: existingBattleElsewhere.id,
+            venueId: exVenue,
+            tableId: exTable,
+            tableNumber: exTableNumber,
+            globalGuestUid: currentUid,
+            messageGuest: `У вас есть открытый заказ за столом №${label}. Пожалуйста, завершите его.`,
+          };
+        }
       }
+    } catch (lockErr) {
+      console.error("[checkInGuest] guest lock probe failed (continuing check-in):", lockErr);
     }
   }
 
