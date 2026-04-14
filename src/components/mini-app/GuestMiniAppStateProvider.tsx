@@ -49,7 +49,6 @@ import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
 import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
-import { getClientGuestCookie, setClientGuestCookie } from "@/lib/identity/guest-cookie";
 import {
   normalizeActiveSessionStatus,
   resolveWaiterStaffIdFromSessionDoc,
@@ -229,8 +228,6 @@ function parseGuestTableOrder(docId: string, data: Record<string, unknown>): Gue
   };
 }
 
-const SESSION_GLOBAL_GUEST_UID_KEY = "heywaiter_global_guest_uid";
-
 type PoliteStateResponse = {
   ok?: boolean;
   phase?: "working" | "thank_you" | "free";
@@ -358,16 +355,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [postServiceVisit, setPostServiceVisit] = useState<PostServiceVisitState | null>(null);
   /** Счётчик для принудительного пересоздания подписки activeSessions (встроенный сканер = тот же check-in, что и deep link). */
   const [tableListenerEpoch, setTableListenerEpoch] = useState(0);
-  const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const ss = sessionStorage.getItem(SESSION_GLOBAL_GUEST_UID_KEY)?.trim();
-      if (ss) return ss;
-    } catch {
-      // ignore
-    }
-    return getClientGuestCookie();
-  });
+  const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(null);
   const globalGuestUidRef = useRef<string | null>(globalGuestUid);
   useEffect(() => {
     globalGuestUidRef.current = globalGuestUid;
@@ -399,16 +387,18 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [telegramUid, visitorId]);
 
+  useEffect(() => {
+    const uid = guestIdentity.currentUid?.trim() || null;
+    setGlobalGuestUid(uid);
+  }, [guestIdentity.currentUid]);
+
   const guestProfileUid = useMemo(
     () => globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || null,
     [globalGuestUid, guestIdentity.currentUid]
   );
 
-  /** Ранний старт: есть global UID в session/cookie — не ждём опроса Telegram user id. */
-  const bootstrapIdentityReady = useMemo(
-    () => telegramIdentityReady || Boolean(globalGuestUid?.trim()),
-    [telegramIdentityReady, globalGuestUid]
-  );
+  /** Bootstrap only after identity channel is resolved (or timed out). */
+  const bootstrapIdentityReady = useMemo(() => telegramIdentityReady, [telegramIdentityReady]);
 
   // До isSdkReady initData может быть пустым; после ready() — опрос user id; затем один конвейер bootstrap.
   useEffect(() => {
@@ -704,35 +694,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     async (data: {
       venueId: string;
       tableId: string;
-      globalGuestUid?: string;
       onboardingHint?: string | null;
     }) => {
       setPostServiceVisit(null);
       setShowLandingScanner(false);
       await switchLocation(data.venueId.trim(), data.tableId.trim());
-      const resolvedGlobal = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
-      if (resolvedGlobal) {
-        setGlobalGuestUid(resolvedGlobal);
-        try {
-          sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, resolvedGlobal);
-        } catch {
-          // ignore
-        }
-        setClientGuestCookie(resolvedGlobal);
-      }
-      const tg = getTelegramWebApp();
-      const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-      if (resolvedGlobal && initData) {
-        void fetch("/api/guest/session-context", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "link_identity",
-            initData,
-            globalGuestUid: resolvedGlobal,
-          }),
-        }).catch(() => undefined);
-      }
       if (typeof data.onboardingHint === "string" && data.onboardingHint.trim()) {
         toast(data.onboardingHint.trim(), { icon: "📌" });
       }
@@ -747,8 +713,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const applyPoliteStatePayload = useCallback(
     async (data: PoliteStateResponse) => {
       if (data.ok !== true || !data.phase) return false;
-
-      const gg = (data.globalGuestUid ?? "").trim();
 
       if (data.phase === "working") {
         clearPersistedGuestSeat();
@@ -779,15 +743,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               ? t.feedbackStaffId.trim()
               : null,
         });
-        if (gg) {
-          setGlobalGuestUid(gg);
-          try {
-            sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, gg);
-          } catch {
-            // ignore
-          }
-          setClientGuestCookie(gg);
-        }
         return true;
       }
 
@@ -810,7 +765,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
    */
   const applyFinalPoliteThankYouOrScanner = useCallback(
     async (data: PoliteStateResponse) => {
-      const gg = (data.globalGuestUid ?? "").trim();
       if (data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
         clearPersistedGuestSeat();
         const t = data.thankYou;
@@ -832,16 +786,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               ? t.feedbackStaffId.trim()
               : null,
         });
-        const u = gg || globalGuestUidRef.current?.trim() || "";
-        if (u) {
-          setGlobalGuestUid(u);
-          try {
-            sessionStorage.setItem(SESSION_GLOBAL_GUEST_UID_KEY, u);
-          } catch {
-            // ignore
-          }
-          setClientGuestCookie(u);
-        }
         return;
       }
       clearPersistedGuestSeat();
@@ -852,29 +796,80 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation]
   );
 
-  const bootstrapTableByServer = useCallback(
+  const waitForActiveSessionConfirmation = useCallback(
+    async (venueId: string, tableId: string, timeoutMs = 8000): Promise<boolean> => {
+      const v = venueId.trim();
+      const t = tableId.trim();
+      if (!v || !t) return false;
+      return await new Promise<boolean>((resolve) => {
+        let done = false;
+        const finish = (ok: boolean) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          unsub();
+          resolve(ok);
+        };
+        const q = query(
+          collection(db, "activeSessions"),
+          where("venueId", "==", v),
+          where("tableId", "==", t),
+          where("status", "in", [...ACTIVE_SESSION_STATUS_FILTER]),
+          limit(25)
+        );
+        const unsub = onSnapshot(
+          q,
+          (snap) => {
+            const picked = pickNewestFreshActiveSessionDoc(snap.docs);
+            finish(Boolean(picked));
+          },
+          () => finish(false)
+        );
+        const timer = setTimeout(() => finish(false), timeoutMs);
+      });
+    },
+    []
+  );
+
+  const resolveCheckInFailureMessage = useCallback((status: string | undefined, apiMessage?: string): string => {
+    if (typeof apiMessage === "string" && apiMessage.trim()) return apiMessage.trim();
+    if (status === "table_private") return "Стол занят другим гостем. Подселение запрещено хозяином.";
+    if (status === "table_conflict") return "Стол занят или забронирован. Отсканируйте другой QR.";
+    return "Сессия недоступна. Отсканируйте QR стола снова.";
+  }, []);
+
+  /** Диктатура сервера: единая точка входа (QR/URL) + geo-check + подтверждение через onSnapshot. */
+  const processEntry = useCallback(
     async (
       venueId: string,
       tableId: string,
-      participantUidHint?: string,
-      knownGlobalGuestUidHint?: string,
       options?: { forceTableListenerResubscribe?: boolean }
     ): Promise<boolean> => {
+      const v = venueId.trim();
+      const t = tableId.trim();
+      if (!v || !t) return false;
+
+      const access = await checkGuestQrVenueAccess(v);
+      if (!access.ok) {
+        toast.error(access.message);
+        setShowLandingScanner(true);
+        await switchLocation(null, null);
+        return false;
+      }
+
+      setShowLandingScanner(false);
+      await switchLocation(null, null);
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
-        const participantUid =
-          (participantUidHint ?? guestIdentity.currentUid ?? "").trim() || undefined;
-        const knownGlobal =
-          (knownGlobalGuestUidHint ?? globalGuestUid ?? "").trim() || undefined;
+        const participantUid = guestIdentity.currentUid?.trim() || undefined;
         const res = await fetch("/api/check-in", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            venueId,
-            tableId,
+            venueId: v,
+            tableId: t,
             participantUid,
             deviceAnchor: deviceAnchor || undefined,
-            ...(knownGlobal ? { globalGuestUid: knownGlobal } : {}),
           }),
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -882,16 +877,21 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           mode?: "table" | "scanner";
           venueId?: string;
           tableId?: string;
-          globalGuestUid?: string;
           onboardingHint?: string | null;
           messageGuest?: string;
+          sessionStatus?: string;
         };
         if (res.ok && data.ok === true && data.mode === "table" && data.venueId && data.tableId) {
-          /** Сервер подтвердил стол — сразу переводим UI (currentLocation + onSnapshot подтянется следом). */
+          const confirmed = await waitForActiveSessionConfirmation(data.venueId, data.tableId);
+          if (!confirmed) {
+            setShowLandingScanner(true);
+            await switchLocation(null, null);
+            toast.error("Сервер не подтвердил активную сессию. Отсканируйте QR повторно.");
+            return false;
+          }
           await applySuccessfulTableBootstrap({
             venueId: data.venueId,
             tableId: data.tableId,
-            globalGuestUid: data.globalGuestUid,
             onboardingHint: data.onboardingHint ?? null,
           });
           if (options?.forceTableListenerResubscribe) {
@@ -899,31 +899,19 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           }
           return true;
         }
+
         setShowLandingScanner(true);
         await switchLocation(null, null);
-        if (typeof data.messageGuest === "string" && data.messageGuest.trim()) {
-          toast.error(data.messageGuest.trim());
-        }
+        toast.error(resolveCheckInFailureMessage(data.sessionStatus, data.messageGuest));
         return false;
       } catch {
         setShowLandingScanner(true);
         await switchLocation(null, null);
+        toast.error("Ошибка check-in. Повторите сканирование.");
         return false;
       }
     },
-    [applySuccessfulTableBootstrap, globalGuestUid, guestIdentity.currentUid, switchLocation]
-  );
-
-  /** Единый конвейер входа за стол: тот же POST /api/check-in + applySuccessfulTableBootstrap, что и у внешнего deep link. */
-  const enterGuestTableThroughGateway = useCallback(
-    async (
-      venueId: string,
-      tableId: string,
-      options?: { forceTableListenerResubscribe?: boolean }
-    ): Promise<boolean> => {
-      return bootstrapTableByServer(venueId, tableId, undefined, undefined, options);
-    },
-    [bootstrapTableByServer]
+    [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, guestIdentity.currentUid, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
   );
 
   // Единый server-side bootstrap: один запрос за итоговым состоянием.
@@ -995,7 +983,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           if (!cancelled) setIsInitializing(false);
           return;
         }
-        const ok = await enterGuestTableThroughGateway(entryTable.venueId, entryTable.tableId);
+        const ok = await processEntry(entryTable.venueId, entryTable.tableId);
         if (ok) urlCheckInGateKeyRef.current = gateKey;
         if (cancelled) return;
       } finally {
@@ -1012,7 +1000,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     searchParams,
     switchLocation,
     refreshVisitHistory,
-    enterGuestTableThroughGateway,
+    processEntry,
     applyPoliteStatePayload,
   ]);
 
@@ -1393,18 +1381,13 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             return;
           }
           const venueId = resolved.venueId.trim();
-          const access = await checkGuestQrVenueAccess(venueId);
-          if (!access.ok) {
-            toast.error(access.message);
-            return;
-          }
           const tableId = (resolved.tableId || "").trim();
           if (!tableId) {
             toast.error("В QR не указан стол");
             return;
           }
 
-          const entered = await enterGuestTableThroughGateway(venueId, tableId, {
+          const entered = await processEntry(venueId, tableId, {
             forceTableListenerResubscribe: true,
           });
           if (entered) urlCheckInGateKeyRef.current = `${venueId}|${tableId}`;
@@ -1419,7 +1402,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     }
     toast("Откройте приложение в Telegram для сканера QR", { icon: "ℹ️" });
     router.push("/");
-  }, [router, checkGuestQrVenueAccess, enterGuestTableThroughGateway]);
+  }, [router, processEntry]);
 
   const callWaiter = useCallback(async () => {
       if (isGuestBlocked) {
