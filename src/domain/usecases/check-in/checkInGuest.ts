@@ -5,11 +5,7 @@ import type {
 } from "@/lib/types";
 
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import {
-  buildTelegramCustomerUid,
-  guestCustomerUidsMatch,
-  visitHistoryUidCandidates,
-} from "@/lib/identity/customer-uid";
+import { buildTelegramCustomerUid, guestCustomerUidsMatch } from "@/lib/identity/customer-uid";
 import {
   guestIdentityFromCustomerUid,
   resolveGlobalGuestUidForCheckIn,
@@ -27,17 +23,9 @@ const RESERVATION_WINDOW_MS = 30 * 60 * 1000; // ±30 минут
 /** Только «бой» в activeSessions; сессии второго акта (`feedback_*` / guest_feedback_act) не блокируют стол. */
 const ACTIVE_VISIT_SESSION_STATUSES = ["check_in_success", "payment_confirmed"] as const;
 
-function collectGuestActiveSessionLookupKeys(currentUid: string, rawUidCandidate: string): string[] {
-  const set = new Set<string>();
-  for (const u of [currentUid, rawUidCandidate]) {
-    const t = String(u ?? "").trim();
-    if (!t) continue;
-    set.add(t);
-    for (const c of visitHistoryUidCandidates(t)) {
-      if (c.trim()) set.add(c.trim());
-    }
-  }
-  return [...set];
+function collectGuestActiveSessionLookupKeys(currentUid: string): string[] {
+  const u = String(currentUid ?? "").trim();
+  return u ? [u] : [];
 }
 
 /** Экспорт: универсальный статус гостя / восстановление без QR по всем ключам профиля. */
@@ -174,13 +162,11 @@ export async function checkInGuest(input: CheckInGuestInput): Promise<CheckInGue
   });
 
   const isSameGuestUid = (existingUid: string): boolean => {
-    if (guestCustomerUidsMatch(existingUid, currentUid)) return true;
-    if (rawUidCandidate && guestCustomerUidsMatch(existingUid, rawUidCandidate)) return true;
-    return false;
+    return guestCustomerUidsMatch(existingUid, currentUid);
   };
 
   /** Один гость — один стол: пока «бой» в activeSessions, другой стол недоступен (Акт 2 / архив снимает блок). */
-  const guestLockLookupKeys = collectGuestActiveSessionLookupKeys(currentUid, rawUidCandidate);
+  const guestLockLookupKeys = collectGuestActiveSessionLookupKeys(currentUid);
   if (guestLockLookupKeys.length > 0) {
     try {
       const existingBattleElsewhere = await findGuestExistingBattleSessionDoc(

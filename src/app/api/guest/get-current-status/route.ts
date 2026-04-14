@@ -6,12 +6,10 @@ import { findUserByIdentity, toIdentityKey } from "@/lib/auth/unifiedSearch";
 import { getEffectiveBotToken } from "@/lib/webhook/bots-store";
 import { verifyTelegramWebAppInitData } from "@/lib/telegram-webapp-init-data";
 import { resolveGuestCurrentStatusFromProfile } from "@/domain/usecases/guest/resolveGuestCurrentStatus";
-import { preferredClientSessionUid } from "@/lib/identity/global-user-session-lookup-keys";
 
 /**
  * POST /api/guest/get-current-status
- * Универсальное опознание гостя по провайдеру + providerId (+ credentials для Telegram).
- * Возвращает ACT_1 | ACT_2 | WELCOME и данные для восстановления UI без QR.
+ * Единственный источник фазы гостя: WORKING | FEEDBACK | WELCOME + globalUserFirestoreId.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -68,7 +66,6 @@ export async function POST(request: NextRequest) {
         recognized: false,
         status: "WELCOME",
         globalUserFirestoreId: null,
-        sessionParticipantUid: null,
       });
     }
 
@@ -80,7 +77,6 @@ export async function POST(request: NextRequest) {
         recognized: false,
         status: "WELCOME",
         globalUserFirestoreId: null,
-        sessionParticipantUid: null,
       });
     }
 
@@ -93,7 +89,6 @@ export async function POST(request: NextRequest) {
         staffProfile: true,
         status: "WELCOME",
         globalUserFirestoreId: globalUserId,
-        sessionParticipantUid: preferredClientSessionUid(globalUserId, data),
       });
     }
 

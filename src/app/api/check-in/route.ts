@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     } = body as unknown as {
       venueId?: string;
       tableId?: string;
-      tableNumber?: number;
+      tableNumber?: number | string;
       guestId?: string;
       participantUid?: string;
       guestIdentity?: unknown;
@@ -85,6 +85,17 @@ export async function POST(request: NextRequest) {
       rawGuest && typeof rawGuest === "object" && "channel" in rawGuest && "externalId" in rawGuest
         ? (rawGuest as MessengerIdentity)
         : undefined;
+
+    const participantUidRaw = typeof participantUid === "string" ? participantUid.trim() : "";
+    if (
+      participantUidRaw &&
+      /^(tg|anon|wa|vk|viber|wechat|inst|fb|line):/i.test(participantUidRaw)
+    ) {
+      return NextResponse.json(
+        { error: "use_globalGuestUid_only_channel_prefixed_participantUid_forbidden" },
+        { status: 400 }
+      );
+    }
 
     const venueId = String(rawVenue ?? "").trim();
     const tableId = String(rawTable ?? "").trim();
@@ -152,7 +163,7 @@ export async function POST(request: NextRequest) {
           tableId: canonicalTableId,
           tableNumber: tableNumberParsed,
           guestId: typeof guestId === "string" ? guestId : guestId != null ? String(guestId) : undefined,
-          participantUid: typeof participantUid === "string" ? participantUid : undefined,
+          participantUid: participantUidRaw || undefined,
           guestIdentity,
           deviceAnchor: typeof deviceAnchor === "string" ? deviceAnchor : undefined,
           knownGlobalGuestUid: knownGlobalForTable || undefined,

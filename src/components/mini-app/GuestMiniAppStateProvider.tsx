@@ -50,13 +50,10 @@ import toast from "react-hot-toast";
 import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
-import { useVisitor } from "@/components/providers/VisitorProvider";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
-import { resolveUnifiedCustomerUid, visitHistoryUidCandidates } from "@/lib/identity/customer-uid";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
 import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
-import { buildFeedbackActSessionId } from "@/lib/feedback-act-session";
 import { FEEDBACK_SESSION_ID_PREFIX, GUEST_FEEDBACK_ACT_STATUS } from "@/lib/feedback-act-session";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
 import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
@@ -312,13 +309,6 @@ function visitTimestampMillis(v: unknown): number {
   return 0;
 }
 
-function chunkCandidateUids<T>(arr: T[], size: number): T[][] {
-  if (arr.length === 0) return [];
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 function pickNewestFeedbackActSnap(docs: QueryDocumentSnapshot[]): QueryDocumentSnapshot | null {
   const filtered = docs.filter((d) => d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX));
   if (filtered.length === 0) return null;
@@ -367,27 +357,11 @@ function parseGuestTableOrder(docId: string, data: Record<string, unknown>): Gue
   };
 }
 
-type PoliteStateResponse = {
-  ok?: boolean;
-  phase?: "working" | "thank_you" | "free";
-  globalGuestUid?: string;
-  working?: { venueId: string; tableId: string; sessionId: string };
-  thankYou?: {
-    visitId: string;
-    feedbackActSessionId?: string;
-    venueId: string;
-    tableId: string;
-    tableNumber: number;
-    feedbackStaffId: string | null;
-  };
-};
-
 type GuestMiniAppContextValue = {
-  guestIdentity: { sotaId: string | null; telegramUid: string | null; currentUid: string | null };
-  /** Документ global_users после успешного check-in. */
-  globalGuestUid: string | null;
-  /** Приоритетный UID для API и сессии: global, иначе канальный. */
-  guestProfileUid: string | null;
+  /** Канал (SDK): только отображение и initData, не id сессии. */
+  guestChannel: { sotaId: string | null; telegramUid: string | null };
+  /** Единственный id документа global_users. */
+  canonicalGuestUid: string | null;
   currentLocation: { venueId: string | null; tableId: string | null };
   visitHistory: GuestVisitEntry[];
   activeSession: ActiveSession | null;
@@ -442,7 +416,6 @@ const GuestMiniAppContext = createContext<GuestMiniAppContextValue | null>(null)
 
 export function GuestMiniAppStateProvider({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams();
-  const { visitorId } = useVisitor();
   const { checkGuestQrVenueAccess } = useSotaLocation();
 
   const urlTableFromParams = useMemo(
@@ -474,7 +447,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const [systemConfig, setSystemConfig] = useState<SotaSystemConfig>(DEFAULT_SYSTEM_CONFIG);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSdkReady, setIsSdkReady] = useState(false);
-  /** В Telegram ждём user id (или таймаут опроса), если нет сохранённого globalGuestUid. */
+  /** В Telegram ждём user id из WebApp (или таймаут опроса) — только для UX, не для id сессии. */
   const [telegramIdentityReady, setTelegramIdentityReady] = useState(false);
   const [isGuestBlocked, setIsGuestBlocked] = useState(false);
   const [guestBlockedReason, setGuestBlockedReason] = useState<string | null>(null);
@@ -498,15 +471,17 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const feedbackEarAppliedIdRef = useRef<string | null>(null);
   /** После /api/guest/get-current-status: не даём bootstrap сбросить стол в «сканер». */
   const guestAppServerRestoreRef = useRef(false);
-  const [globalGuestUid, setGlobalGuestUid] = useState<string | null>(null);
-  /** id global_users с сервера (приоритет над tg:… из SDK для матчинга сессий). */
-  const [serverPinnedGuestUid, setServerPinnedGuestUid] = useState<string | null>(null);
-  /** В Telegram ждём универсальный статус до основного bootstrap (без гонок со сбросом UI). */
+  /** Единственный id global_users (только с сервера / ответа check-in). */
+  const [canonicalGuestUid, setCanonicalGuestUid] = useState<string | null>(null);
+  /** В Telegram — после первого get-current-status; вне TG — сразу. */
   const [guestUniversalStatusGateOpen, setGuestUniversalStatusGateOpen] = useState(false);
-  const globalGuestUidRef = useRef<string | null>(globalGuestUid);
+  const canonicalGuestUidRef = useRef<string | null>(null);
   useEffect(() => {
-    globalGuestUidRef.current = globalGuestUid;
-  }, [globalGuestUid]);
+    canonicalGuestUidRef.current = canonicalGuestUid;
+  }, [canonicalGuestUid]);
+  const fetchAndApplyGuestStatusRef = useRef<() => Promise<void>>(async () => {
+    /* заполняется после объявления fetchAndApplyGuestStatus */
+  });
   /** Актуальные id на момент клика — для запросов без гонок со снимком замыкания. */
   const serviceHandshakeRef = useRef<{
     venueId: string | null;
@@ -519,32 +494,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const tableDirectCheckInSucceededKeyRef = useRef<string | null>(null);
   const tableDirectLaunchInFlightRef = useRef(false);
   const processEntryRef = useRef<(venueId: string, tableId: string) => Promise<boolean>>(async () => false);
-  const guestIdentity = useMemo(() => {
-    const anonId = visitorId?.trim() || getOrCreateGuestDeviceId() || null;
-    const currentUid = resolveUnifiedCustomerUid({
-      telegramUserId: telegramUid,
-      anonymousId: anonId,
-    });
+  const guestChannel = useMemo(() => {
     const webApp = getTelegramWebApp();
     const startParam = webApp?.initDataUnsafe?.start_param?.trim() ?? "";
     const sota = startParam ? parseSotaStartappPayload(startParam) : null;
     return {
       sotaId: sota?.venueSotaId ?? null,
       telegramUid,
-      currentUid,
     };
-  }, [telegramUid, visitorId]);
-
-  useEffect(() => {
-    const channel = guestIdentity.currentUid?.trim() || null;
-    const next = serverPinnedGuestUid?.trim() || channel;
-    setGlobalGuestUid(next || null);
-  }, [guestIdentity.currentUid, serverPinnedGuestUid]);
-
-  const guestProfileUid = useMemo(
-    () => globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || null,
-    [globalGuestUid, guestIdentity.currentUid]
-  );
+  }, [telegramUid]);
 
   /** Bootstrap only after identity channel is resolved (or timed out). */
   const bootstrapIdentityReady = useMemo(() => telegramIdentityReady, [telegramIdentityReady]);
@@ -587,58 +545,31 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setVisitHistory([]);
       return;
     }
-    const gg = globalGuestUid?.trim() || "";
-    const channelUid = guestIdentity.currentUid?.trim() || "";
-    const uidSet = new Set<string>();
-    if (gg) uidSet.add(gg);
-    if (channelUid) {
-      for (const c of visitHistoryUidCandidates(channelUid)) {
-        if (c.trim()) uidSet.add(c.trim());
-      }
-    }
-    if (uidSet.size === 0) {
+    const uid = canonicalGuestUid?.trim() || "";
+    if (!uid) {
       setVisitHistory([]);
       return;
     }
     try {
-      const byVenue = new Map<string, GuestVisitEntry>();
-      for (const uid of uidSet) {
-        const q = query(
-          collection(db, "global_users", uid, "visits"),
-          orderBy("lastVisitAt", "desc"),
-          limit(5)
-        );
-        const snap = await getDocs(q);
-        for (const d of snap.docs) {
-          const x = d.data() as Record<string, unknown>;
-          const next: GuestVisitEntry = {
-            venueId: d.id,
-            lastVisitAt: x.lastVisitAt,
-            totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
-          };
-          const prev = byVenue.get(d.id);
-          if (!prev) {
-            byVenue.set(d.id, next);
-          } else {
-            const prevMs = visitTimestampMillis(prev.lastVisitAt);
-            const nextMs = visitTimestampMillis(next.lastVisitAt);
-            if (nextMs >= prevMs) {
-              byVenue.set(d.id, {
-                ...next,
-                totalVisits: next.totalVisits ?? prev.totalVisits,
-              });
-            }
-          }
-        }
-      }
-      const entries = [...byVenue.values()]
-        .sort((a, b) => visitTimestampMillis(b.lastVisitAt) - visitTimestampMillis(a.lastVisitAt))
-        .slice(0, 5);
+      const q = query(
+        collection(db, "global_users", uid, "visits"),
+        orderBy("lastVisitAt", "desc"),
+        limit(5)
+      );
+      const snap = await getDocs(q);
+      const entries: GuestVisitEntry[] = snap.docs.map((d) => {
+        const x = d.data() as Record<string, unknown>;
+        return {
+          venueId: d.id,
+          lastVisitAt: x.lastVisitAt,
+          totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
+        };
+      });
       setVisitHistory(entries);
     } catch {
       setVisitHistory([]);
     }
-  }, [globalGuestUid, guestIdentity.currentUid, currentLocation.venueId, currentLocation.tableId]);
+  }, [canonicalGuestUid, currentLocation.venueId, currentLocation.tableId]);
 
   const switchLocation = useCallback(
     async (
@@ -854,15 +785,100 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     clearPersistedGuestSeat();
     feedbackEarAppliedIdRef.current = null;
     guestAppServerRestoreRef.current = false;
-    setServerPinnedGuestUid(null);
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     await switchLocation(null, null);
   }, [switchLocation]);
 
+  type GuestCurrentStatusPayload = {
+    ok?: boolean;
+    recognized?: boolean;
+    staffProfile?: boolean;
+    status?: "WORKING" | "FEEDBACK" | "WELCOME";
+    globalUserFirestoreId?: string | null;
+    act1?: { venueId: string; tableId: string; sessionId: string };
+    act2?: {
+      visitId: string;
+      feedbackActSessionId: string;
+      venueId: string;
+      tableId: string;
+      tableNumber: number;
+      feedbackStaffId: string | null;
+    };
+  };
+
+  /** Единственный источник фазы: POST /api/guest/get-current-status (Telegram initData). */
+  const fetchAndApplyGuestStatus = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const tg = getTelegramWebApp();
+    if (!tg || !isTelegramContext()) return;
+    const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+    if (!initData) return;
+
+    const res = await fetch("/api/guest/get-current-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "telegram",
+        credentials: { initData },
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as GuestCurrentStatusPayload;
+    if (!res.ok || !data.ok) return;
+    if (data.staffProfile) return;
+
+    const gid = typeof data.globalUserFirestoreId === "string" ? data.globalUserFirestoreId.trim() : "";
+    if (data.recognized && gid) {
+      setCanonicalGuestUid(gid);
+    } else {
+      setCanonicalGuestUid(null);
+    }
+
+    if (data.recognized && data.status === "WORKING" && data.act1?.venueId && data.act1?.tableId) {
+      guestAppServerRestoreRef.current = true;
+      feedbackEarAppliedIdRef.current = null;
+      setPostServiceVisit(null);
+      setShowLandingScanner(false);
+      await switchLocation(data.act1.venueId, data.act1.tableId);
+      return;
+    }
+
+    if (
+      data.recognized &&
+      data.status === "FEEDBACK" &&
+      data.act2?.visitId &&
+      data.act2.venueId &&
+      data.act2.tableId
+    ) {
+      guestAppServerRestoreRef.current = true;
+      const a = data.act2;
+      await switchToFeedbackVisit({
+        visitId: a.visitId,
+        feedbackActSessionId: a.feedbackActSessionId,
+        venueId: a.venueId,
+        tableId: a.tableId,
+        tableNumber: typeof a.tableNumber === "number" ? a.tableNumber : 0,
+        feedbackStaffId:
+          typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim()
+            ? a.feedbackStaffId.trim()
+            : null,
+      });
+      return;
+    }
+
+    guestAppServerRestoreRef.current = false;
+    feedbackEarAppliedIdRef.current = null;
+    setPostServiceVisit(null);
+    setShowLandingScanner(true);
+    await switchLocation(null, null);
+  }, [switchLocation, switchToFeedbackVisit]);
+
+  useEffect(() => {
+    fetchAndApplyGuestStatusRef.current = fetchAndApplyGuestStatus;
+  }, [fetchAndApplyGuestStatus]);
+
   /**
-   * Универсальное опознание (SuperAdmin / мультибот): сервер по identities → ACT_1 | ACT_2 | WELCOME.
-   * Telegram: подпись initData; остальные провайдеры — расширить credentials в API.
+   * Холодный старт: один запрос статуса до bootstrap (WORKING → стол, FEEDBACK → звёзды, WELCOME → сканер).
    */
   useEffect(() => {
     if (!isSdkReady || typeof window === "undefined") return;
@@ -879,66 +895,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/guest/get-current-status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider: "telegram",
-            credentials: { initData },
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          ok?: boolean;
-          recognized?: boolean;
-          staffProfile?: boolean;
-          status?: string;
-          globalUserFirestoreId?: string | null;
-          sessionParticipantUid?: string | null;
-          act1?: { venueId: string; tableId: string; sessionId: string };
-          act2?: {
-            visitId: string;
-            feedbackActSessionId: string;
-            venueId: string;
-            tableId: string;
-            tableNumber: number;
-            feedbackStaffId: string | null;
-          };
-        };
-        if (cancelled || !res.ok || !data.ok) return;
-        if (data.staffProfile) return;
-
-        if (data.recognized) {
-          const pin = data.globalUserFirestoreId?.trim() || data.sessionParticipantUid?.trim() || "";
-          if (pin) setServerPinnedGuestUid(pin);
-        }
-
-        if (data.recognized && data.status === "ACT_1" && data.act1?.venueId && data.act1?.tableId) {
-          guestAppServerRestoreRef.current = true;
-          feedbackEarAppliedIdRef.current = null;
-          setPostServiceVisit(null);
-          setShowLandingScanner(false);
-          await switchLocation(data.act1.venueId, data.act1.tableId);
-        } else if (
-          data.recognized &&
-          data.status === "ACT_2" &&
-          data.act2?.visitId &&
-          data.act2.venueId &&
-          data.act2.tableId
-        ) {
-          guestAppServerRestoreRef.current = true;
-          const a = data.act2;
-          await switchToFeedbackVisit({
-            visitId: a.visitId,
-            feedbackActSessionId: a.feedbackActSessionId,
-            venueId: a.venueId,
-            tableId: a.tableId,
-            tableNumber: typeof a.tableNumber === "number" ? a.tableNumber : 0,
-            feedbackStaffId:
-              typeof a.feedbackStaffId === "string" && a.feedbackStaffId.trim()
-                ? a.feedbackStaffId.trim()
-                : null,
-          });
-        }
+        await fetchAndApplyGuestStatus();
       } catch {
         /* сеть */
       } finally {
@@ -948,35 +905,25 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     return () => {
       cancelled = true;
     };
-  }, [isSdkReady, switchLocation, switchToFeedbackVisit]);
+  }, [isSdkReady, fetchAndApplyGuestStatus]);
 
   /**
-   * Рация: постоянный эфир `feedback_act` по всем алиасам UID. Без Telegram, без ролей, без polite-state.
-   * Сигнал есть → сразу Акт 2 (звёзды).
+   * Эфир feedback_act только по canonical global_users id (без списков алиасов).
    */
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const base = (globalGuestUid?.trim() || guestIdentity.currentUid?.trim() || "").trim();
-    if (!base) return;
-
-    const candidates = [...new Set(visitHistoryUidCandidates(base).map((x) => x.trim()).filter(Boolean))];
-    if (candidates.length === 0) return;
+    const uid = (canonicalGuestUid?.trim() || "").trim();
+    if (!uid) return;
 
     let cancelled = false;
-    const masterChunks = chunkCandidateUids(candidates, 10);
-    const participantChunks = chunkCandidateUids(candidates, 10);
-    const masterPool = new Map<number, QueryDocumentSnapshot[]>();
-    const participantPool = new Map<number, QueryDocumentSnapshot[]>();
+    const masterPool: QueryDocumentSnapshot[] = [];
+    const participantPool: QueryDocumentSnapshot[] = [];
 
     const reconcile = () => {
       if (cancelled) return;
       const byId = new Map<string, QueryDocumentSnapshot>();
-      for (const docs of masterPool.values()) {
-        for (const d of docs) byId.set(d.id, d);
-      }
-      for (const docs of participantPool.values()) {
-        for (const d of docs) byId.set(d.id, d);
-      }
+      for (const d of masterPool) byId.set(d.id, d);
+      for (const d of participantPool) byId.set(d.id, d);
       const picked = pickNewestFeedbackActSnap([...byId.values()]);
       if (!picked) return;
       const visit = postServiceVisitFromFeedbackActSnap(picked);
@@ -991,107 +938,47 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       });
     };
 
-    const unsubs: Array<() => void> = [];
-    const pushMaster = (idx: number, docs: QueryDocumentSnapshot[]) => {
-      masterPool.set(idx, docs);
-      reconcile();
-    };
-    const pushParticipant = (idx: number, docs: QueryDocumentSnapshot[]) => {
-      participantPool.set(idx, docs);
-      reconcile();
-    };
+    const qMaster = query(
+      collection(db, "activeSessions"),
+      where("sessionKind", "==", "feedback_act"),
+      where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+      where("masterId", "==", uid),
+      limit(25)
+    );
+    const qParticipant = query(
+      collection(db, "activeSessions"),
+      where("sessionKind", "==", "feedback_act"),
+      where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
+      where("participantUids", "array-contains", uid),
+      limit(25)
+    );
 
-    masterChunks.forEach((chunk, idx) => {
-      const q = query(
-        collection(db, "activeSessions"),
-        where("sessionKind", "==", "feedback_act"),
-        where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-        where("masterId", "in", chunk),
-        limit(25)
-      );
-      unsubs.push(
-        onSnapshot(
-          q,
-          (snap) => pushMaster(idx, [...snap.docs]),
-          (err) => console.error("[guest] feedback ear (masterId) failed:", err)
-        )
-      );
-    });
-
-    participantChunks.forEach((chunk, idx) => {
-      const q = query(
-        collection(db, "activeSessions"),
-        where("sessionKind", "==", "feedback_act"),
-        where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-        where("participantUids", "array-contains-any", chunk),
-        limit(25)
-      );
-      unsubs.push(
-        onSnapshot(
-          q,
-          (snap) => pushParticipant(idx, [...snap.docs]),
-          (err) => console.error("[guest] feedback ear (participantUids) failed:", err)
-        )
-      );
-    });
+    const unsubs: Array<() => void> = [
+      onSnapshot(
+        qMaster,
+        (snap) => {
+          masterPool.length = 0;
+          masterPool.push(...snap.docs);
+          reconcile();
+        },
+        (err) => console.error("[guest] feedback ear (masterId) failed:", err)
+      ),
+      onSnapshot(
+        qParticipant,
+        (snap) => {
+          participantPool.length = 0;
+          participantPool.push(...snap.docs);
+          reconcile();
+        },
+        (err) => console.error("[guest] feedback ear (participantUids) failed:", err)
+      ),
+    ];
 
     return () => {
       cancelled = true;
       for (const u of unsubs) u();
     };
-  }, [globalGuestUid, guestIdentity.currentUid, switchToFeedbackVisit]);
-
-  const resolveFeedbackActVisitByGlobalUid = useCallback(
-    async (globalUid: string): Promise<PostServiceVisitState | null> => {
-      const uid = globalUid.trim();
-      if (!uid) return null;
-      const [byMaster, byParticipant] = await Promise.all([
-        getDocs(
-          query(
-            collection(db, "activeSessions"),
-            where("masterId", "==", uid),
-            where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-            limit(10)
-          )
-        ),
-        getDocs(
-          query(
-            collection(db, "activeSessions"),
-            where("participantUids", "array-contains", uid),
-            where("status", "==", GUEST_FEEDBACK_ACT_STATUS),
-            limit(10)
-          )
-        ),
-      ]);
-      const docs = [...byMaster.docs, ...byParticipant.docs].filter((d) =>
-        d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX)
-      );
-      if (docs.length === 0) return null;
-      const picked = docs.sort((a, b) => {
-        const ta = visitTimestampMillis((a.data() as Record<string, unknown>).createdAt);
-        const tb = visitTimestampMillis((b.data() as Record<string, unknown>).createdAt);
-        return tb - ta;
-      })[0];
-      const raw = (picked.data() ?? {}) as Record<string, unknown>;
-      const visitId =
-        typeof raw.sourceSessionId === "string" && raw.sourceSessionId.trim()
-          ? raw.sourceSessionId.trim()
-          : picked.id.replace(FEEDBACK_SESSION_ID_PREFIX, "").trim();
-      if (!visitId) return null;
-      return {
-        visitId,
-        feedbackActSessionId: picked.id,
-        venueId: String(raw.venueId ?? "").trim(),
-        tableId: String(raw.tableId ?? "").trim(),
-        tableNumber: typeof raw.tableNumber === "number" ? raw.tableNumber : 0,
-        feedbackStaffId:
-          typeof raw.assignedStaffId === "string" && raw.assignedStaffId.trim()
-            ? raw.assignedStaffId.trim()
-            : null,
-      };
-    },
-    []
-  );
+  }, [canonicalGuestUid, switchToFeedbackVisit]);
 
   const waitForActiveSessionConfirmation = useCallback(
     async (venueId: string, tableId: string, timeoutMs = 12000): Promise<boolean> => {
@@ -1155,7 +1042,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
       try {
         const deviceAnchor = getOrCreateGuestDeviceId();
-        const participantUid = guestIdentity.currentUid?.trim() || undefined;
         const controller = new AbortController();
         const abortTimer = window.setTimeout(() => controller.abort(), 35_000);
         let res: Response;
@@ -1166,7 +1052,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
             body: JSON.stringify({
               venueId: v,
               tableId: t,
-              participantUid,
+              globalGuestUid: canonicalGuestUidRef.current?.trim() || undefined,
               deviceAnchor: deviceAnchor || undefined,
             }),
             signal: controller.signal,
@@ -1183,6 +1069,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           onboardingHint?: string | null;
           messageGuest?: string;
           sessionStatus?: string;
+          globalGuestUid?: string | null;
         };
 
         const access = await geoPromise;
@@ -1202,6 +1089,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const respVenue = String(data.venueId ?? "").trim();
         const respTable = String(data.tableId ?? "").trim();
         if (res.ok && data.ok === true && data.mode === "table" && respVenue && respTable) {
+          const gg = typeof data.globalGuestUid === "string" ? data.globalGuestUid.trim() : "";
+          if (gg) setCanonicalGuestUid(gg);
           const confirmed = await waitForActiveSessionConfirmation(respVenue, respTable);
           if (!confirmed) {
             setShowLandingScanner(true);
@@ -1232,7 +1121,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return false;
       }
     },
-    [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, guestIdentity.currentUid, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
+    [applySuccessfulTableBootstrap, checkGuestQrVenueAccess, resolveCheckInFailureMessage, switchLocation, waitForActiveSessionConfirmation]
   );
 
   processEntryRef.current = processEntry;
@@ -1311,58 +1200,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           if (!cancelled) setIsInitializing(false);
           return;
         }
-        const uid = globalGuestUidRef.current?.trim() || "";
-        if (!uid) {
-          if (!cancelled) {
-            await switchToScanQrScreen();
-            await refreshVisitHistory();
-          }
-        } else {
-          try {
-            const feedbackAct = await resolveFeedbackActVisitByGlobalUid(uid);
-            if (feedbackAct) {
-              if (!cancelled) {
-                await switchToFeedbackVisit(feedbackAct);
-              }
-              if (!cancelled) setIsInitializing(false);
-              return;
-            }
-            const res = await fetch("/api/guest/polite-state", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ globalGuestUid: uid }),
-            });
-            const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
-            if (cancelled) return;
-            if (res.ok && data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
-              const t = data.thankYou;
-              const vid = t.visitId.trim();
-              const fid =
-                typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
-                  ? t.feedbackActSessionId.trim()
-                  : buildFeedbackActSessionId(vid);
-              await switchToFeedbackVisit({
-                visitId: vid,
-                feedbackActSessionId: fid,
-                venueId: String(t.venueId ?? "").trim(),
-                tableId: String(t.tableId ?? "").trim(),
-                tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
-                feedbackStaffId:
-                  typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
-                    ? t.feedbackStaffId.trim()
-                    : null,
-              });
-              return;
-            }
-            await switchToScanQrScreen();
-            await refreshVisitHistory();
-          } catch {
-            if (!cancelled) {
-              await switchToScanQrScreen();
-              await refreshVisitHistory();
-            }
-          }
+        if (!cancelled) {
+          await switchToScanQrScreen();
+          await refreshVisitHistory();
         }
+        if (!cancelled) setIsInitializing(false);
+        return;
+      }
+
+      if (guestAppServerRestoreRef.current) {
         if (!cancelled) setIsInitializing(false);
         return;
       }
@@ -1394,8 +1240,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     switchLocation,
     refreshVisitHistory,
     processEntry,
-    resolveFeedbackActVisitByGlobalUid,
-    switchToFeedbackVisit,
     switchToScanQrScreen,
   ]);
 
@@ -1490,48 +1334,11 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
     const finalizeAfterActiveSessionVanished = () => {
       void (async () => {
-        const uid = globalGuestUidRef.current?.trim() || "";
-        if (!uid) {
-          await switchToScanQrScreen();
-          return;
-        }
+        if (cancelled) return;
         try {
-          const feedbackAct = await resolveFeedbackActVisitByGlobalUid(uid);
-          if (feedbackAct) {
-            if (!cancelled) await switchToFeedbackVisit(feedbackAct);
-            return;
-          }
-          const res = await fetch("/api/guest/polite-state", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ globalGuestUid: uid }),
-          });
-          const data = (await res.json().catch(() => ({}))) as PoliteStateResponse;
-          if (cancelled) return;
-          if (res.ok && data.ok === true && data.phase === "thank_you" && data.thankYou?.visitId?.trim()) {
-            const t = data.thankYou;
-            const vid = t.visitId.trim();
-            const fid =
-              typeof t.feedbackActSessionId === "string" && t.feedbackActSessionId.trim()
-                ? t.feedbackActSessionId.trim()
-                : buildFeedbackActSessionId(vid);
-            await switchToFeedbackVisit({
-              visitId: vid,
-              feedbackActSessionId: fid,
-              venueId: String(t.venueId ?? "").trim(),
-              tableId: String(t.tableId ?? "").trim(),
-              tableNumber: typeof t.tableNumber === "number" ? t.tableNumber : 0,
-              feedbackStaffId:
-                typeof t.feedbackStaffId === "string" && t.feedbackStaffId.trim()
-                  ? t.feedbackStaffId.trim()
-                  : null,
-            });
-            return;
-          }
-          await switchToScanQrScreen();
+          await fetchAndApplyGuestStatusRef.current();
         } catch {
-          if (cancelled) return;
-          await switchToScanQrScreen();
+          if (!cancelled) await switchToScanQrScreen();
         }
       })();
     };
@@ -1571,15 +1378,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       cancelled = true;
       unsub?.();
     };
-  }, [
-    isSdkReady,
-    currentLocation.venueId,
-    currentLocation.tableId,
-    switchLocation,
-    resolveFeedbackActVisitByGlobalUid,
-    switchToFeedbackVisit,
-    switchToScanQrScreen,
-  ]);
+  }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, switchLocation, switchToScanQrScreen]);
 
   // Live orders data for the table.
   useEffect(() => {
@@ -1644,9 +1443,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   }, [isSdkReady, currentLocation.venueId, currentLocation.tableId, activeSession?.id, postServiceVisit]);
 
   useEffect(() => {
-    if (!isSdkReady || isInitializing || !guestIdentity.currentUid) return;
+    if (!isSdkReady || isInitializing) return;
+    if (!canonicalGuestUid?.trim()) return;
     void refreshVisitHistory();
-  }, [isSdkReady, isInitializing, guestIdentity.currentUid, refreshVisitHistory]);
+  }, [isSdkReady, isInitializing, canonicalGuestUid, refreshVisitHistory]);
 
   const visitVenueIdsKey = useMemo(() => {
     const s = new Set<string>();
@@ -1797,7 +1597,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
           body: JSON.stringify({
             venueId,
             tableId,
-            customerUid: globalGuestUid?.trim() || guestProfileUid?.trim() || undefined,
+            customerUid: canonicalGuestUid?.trim() || undefined,
             assignedStaffId: snap.assignedStaffId ?? undefined,
           }),
         });
@@ -1808,14 +1608,14 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос");
       }
     },
-    [guestBlockedReason, isGuestBlocked, globalGuestUid, guestProfileUid]
+    [guestBlockedReason, isGuestBlocked, canonicalGuestUid]
   );
 
   const setTablePrivacyAllowJoin = useCallback(
     async (allowJoin: boolean) => {
       const v = currentLocation.venueId?.trim();
       const t = currentLocation.tableId?.trim();
-      const uid = globalGuestUid?.trim() || guestProfileUid?.trim();
+      const uid = canonicalGuestUid?.trim();
       if (!v || !t || !uid) {
         return { ok: false, error: "Не удалось определить стол или гостя" };
       }
@@ -1838,7 +1638,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         return { ok: false, error: msg };
       }
     },
-    [currentLocation.venueId, currentLocation.tableId, globalGuestUid, guestProfileUid]
+    [currentLocation.venueId, currentLocation.tableId, canonicalGuestUid]
   );
 
   const requestBill = useCallback(
@@ -1851,7 +1651,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const snap = serviceHandshakeRef.current;
       const venueId = snap.venueId?.trim();
       const tableId = snap.tableId?.trim();
-      const uid = globalGuestUid?.trim() || guestProfileUid?.trim();
+      const uid = canonicalGuestUid?.trim();
       if (!venueId || !tableId || !uid) {
         toast.error("Не удалось определить гостя или стол");
         return;
@@ -1876,7 +1676,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
       }
     },
-    [globalGuestUid, guestProfileUid, guestBlockedReason, isGuestBlocked]
+    [canonicalGuestUid, guestBlockedReason, isGuestBlocked]
   );
 
   const guestAwaitingTableFeedback = useMemo(() => Boolean(postServiceVisit), [postServiceVisit]);
@@ -1889,7 +1689,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const completeTableFeedbackSession = useCallback(async () => {
     if (typeof window === "undefined") return;
     feedbackEarAppliedIdRef.current = null;
-    setServerPinnedGuestUid(null);
     setPostServiceVisit(null);
     setShowLandingScanner(true);
     const tg = getTelegramWebApp();
@@ -1910,9 +1709,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const value = useMemo<GuestMiniAppContextValue>(
     () => ({
-      guestIdentity,
-      globalGuestUid,
-      guestProfileUid,
+      guestChannel,
+      canonicalGuestUid,
       currentLocation,
       visitHistory,
       activeSession,
@@ -1945,9 +1743,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       showLandingScanner,
     }),
     [
-      guestIdentity,
-      globalGuestUid,
-      guestProfileUid,
+      guestChannel,
+      canonicalGuestUid,
       currentLocation,
       visitHistory,
       activeSession,

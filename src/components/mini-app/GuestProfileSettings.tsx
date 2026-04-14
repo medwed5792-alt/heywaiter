@@ -25,7 +25,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 };
 
 export function GuestProfileSettings() {
-  const { globalGuestUid } = useGuestContext();
+  const { canonicalGuestUid } = useGuestContext();
   const [channels, setChannels] = useState<Record<string, ChannelStatus> | null>(null);
   const [resolvedUid, setResolvedUid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,7 +44,7 @@ export function GuestProfileSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           initData: initData || undefined,
-          globalGuestUid: globalGuestUid ?? undefined,
+          globalGuestUid: canonicalGuestUid ?? undefined,
           deviceAnchor: deviceAnchor || undefined,
         }),
       });
@@ -64,7 +64,7 @@ export function GuestProfileSettings() {
     } finally {
       setLoading(false);
     }
-  }, [globalGuestUid]);
+  }, [canonicalGuestUid]);
 
   useEffect(() => {
     void load();

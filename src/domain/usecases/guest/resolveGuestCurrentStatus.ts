@@ -6,25 +6,20 @@ import {
 } from "@/lib/feedback-act-session";
 import { findGuestExistingBattleSessionDoc } from "@/domain/usecases/check-in/checkInGuest";
 import { resolveGuestPoliteState } from "@/domain/usecases/guest/resolveGuestPoliteState";
-import {
-  collectGlobalUserSessionLookupKeys,
-  preferredClientSessionUid,
-} from "@/lib/identity/global-user-session-lookup-keys";
+import { canonicalGlobalUserLookupKeys } from "@/lib/identity/global-user-session-lookup-keys";
 import { isActiveSessionWithinMaxAge } from "@/lib/session-freshness";
 
-export type GuestMiniAppServerStatus = "ACT_1" | "ACT_2" | "WELCOME";
+export type GuestMiniAppServerStatus = "WORKING" | "FEEDBACK" | "WELCOME";
 
 export type ResolveGuestCurrentStatusResult =
   | {
-      status: "ACT_1";
+      status: "WORKING";
       globalUserFirestoreId: string;
-      sessionParticipantUid: string;
       act1: { venueId: string; tableId: string; sessionId: string };
     }
   | {
-      status: "ACT_2";
+      status: "FEEDBACK";
       globalUserFirestoreId: string;
-      sessionParticipantUid: string;
       act2: {
         visitId: string;
         feedbackActSessionId: string;
@@ -37,15 +32,7 @@ export type ResolveGuestCurrentStatusResult =
   | {
       status: "WELCOME";
       globalUserFirestoreId: string;
-      sessionParticipantUid: string;
     };
-
-function chunkKeys(keys: string[], size: number): string[][] {
-  const dedup = [...new Set(keys.map((k) => k.trim()).filter(Boolean))];
-  const out: string[][] = [];
-  for (let i = 0; i < dedup.length; i += size) out.push(dedup.slice(i, i + size));
-  return out;
-}
 
 function visitTimestampMillis(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -59,55 +46,39 @@ function visitTimestampMillis(v: unknown): number {
   return 0;
 }
 
-async function findBestFeedbackActForLookupKeys(
-  lookupKeys: string[],
+async function findBestFeedbackActForCanonicalUid(
+  canonicalUid: string,
   nowMs: number
 ): Promise<QueryDocumentSnapshot | null> {
-  if (lookupKeys.length === 0) return null;
+  const uid = String(canonicalUid ?? "").trim();
+  if (!uid) return null;
   const fs = getAdminFirestore();
   const byId = new Map<string, QueryDocumentSnapshot>();
 
-  for (const chunk of chunkKeys(lookupKeys, 10)) {
-    try {
-      const snap = await fs
-        .collection("activeSessions")
-        .where("sessionKind", "==", "feedback_act")
-        .where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
-        .where("masterId", "in", chunk)
-        .limit(25)
-        .get();
-      for (const d of snap.docs) byId.set(d.id, d);
-    } catch {
-      /* индекс / сеть */
-    }
+  try {
+    const m = await fs
+      .collection("activeSessions")
+      .where("sessionKind", "==", "feedback_act")
+      .where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
+      .where("masterId", "==", uid)
+      .limit(25)
+      .get();
+    for (const d of m.docs) byId.set(d.id, d);
+  } catch {
+    /* */
   }
 
-  for (const chunk of chunkKeys(lookupKeys, 10)) {
-    try {
-      const snap = await fs
-        .collection("activeSessions")
-        .where("sessionKind", "==", "feedback_act")
-        .where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
-        .where("participantUids", "array-contains-any", chunk)
-        .limit(25)
-        .get();
-      for (const d of snap.docs) byId.set(d.id, d);
-    } catch {
-      try {
-        for (const k of chunk) {
-          const one = await fs
-            .collection("activeSessions")
-            .where("sessionKind", "==", "feedback_act")
-            .where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
-            .where("participantUids", "array-contains", k)
-            .limit(25)
-            .get();
-          for (const d of one.docs) byId.set(d.id, d);
-        }
-      } catch {
-        /* */
-      }
-    }
+  try {
+    const p = await fs
+      .collection("activeSessions")
+      .where("sessionKind", "==", "feedback_act")
+      .where("status", "==", GUEST_FEEDBACK_ACT_STATUS)
+      .where("participantUids", "array-contains", uid)
+      .limit(25)
+      .get();
+    for (const d of p.docs) byId.set(d.id, d);
+  } catch {
+    /* */
   }
 
   const feedbackDocs = [...byId.values()].filter((d) => d.id.startsWith(FEEDBACK_SESSION_ID_PREFIX));
@@ -121,11 +92,10 @@ async function findBestFeedbackActForLookupKeys(
   })[0]!;
 }
 
-function act2FromFeedbackSnap(
+function feedbackFromSnap(
   picked: QueryDocumentSnapshot,
-  globalUserFirestoreId: string,
-  sessionParticipantUid: string
-): Extract<ResolveGuestCurrentStatusResult, { status: "ACT_2" }> {
+  globalUserFirestoreId: string
+): Extract<ResolveGuestCurrentStatusResult, { status: "FEEDBACK" }> {
   const raw = (picked.data() ?? {}) as Record<string, unknown>;
   const visitId =
     typeof raw.sourceSessionId === "string" && raw.sourceSessionId.trim()
@@ -136,9 +106,8 @@ function act2FromFeedbackSnap(
       ? raw.assignedStaffId.trim()
       : null;
   return {
-    status: "ACT_2",
+    status: "FEEDBACK",
     globalUserFirestoreId,
-    sessionParticipantUid,
     act2: {
       visitId,
       feedbackActSessionId: picked.id,
@@ -150,17 +119,8 @@ function act2FromFeedbackSnap(
   };
 }
 
-function pickBestThankYou(
-  results: Awaited<ReturnType<typeof resolveGuestPoliteState>>[]
-): Extract<Awaited<ReturnType<typeof resolveGuestPoliteState>>, { phase: "thank_you" }> | null {
-  const thanks = results.filter((r): r is Extract<typeof r, { phase: "thank_you" }> => r.phase === "thank_you");
-  if (thanks.length === 0) return null;
-  if (thanks.length === 1) return thanks[0]!;
-  return thanks.sort((a, b) => b.visitId.localeCompare(a.visitId))[0]!;
-}
-
 /**
- * Универсальный статус мини-аппа гостя по профилю global_users (все каналы из identities).
+ * Фаза гостя только по каноническому id global_users (без tg:/legacy в запросах).
  */
 export async function resolveGuestCurrentStatusFromProfile(args: {
   profileDocId: string;
@@ -169,10 +129,9 @@ export async function resolveGuestCurrentStatusFromProfile(args: {
   const profileDocId = String(args.profileDocId ?? "").trim();
   if (!profileDocId) return null;
 
-  const sessionParticipantUid = preferredClientSessionUid(profileDocId, args.profileData);
-  const lookupKeys = collectGlobalUserSessionLookupKeys(profileDocId, args.profileData);
+  const lookupKeys = canonicalGlobalUserLookupKeys(profileDocId);
   if (lookupKeys.length === 0) {
-    return { status: "WELCOME", globalUserFirestoreId: profileDocId, sessionParticipantUid };
+    return { status: "WELCOME", globalUserFirestoreId: profileDocId };
   }
 
   const fs = getAdminFirestore();
@@ -185,42 +144,38 @@ export async function resolveGuestCurrentStatusFromProfile(args: {
     const tableId = String(d.tableId ?? "").trim();
     if (venueId && tableId) {
       return {
-        status: "ACT_1",
+        status: "WORKING",
         globalUserFirestoreId: profileDocId,
-        sessionParticipantUid,
         act1: { venueId, tableId, sessionId: battle.id },
       };
     }
   }
 
-  const keySample = lookupKeys.slice(0, 12);
-  const politeResults = await Promise.all(keySample.map((k) => resolveGuestPoliteState(k)));
-  const thank = pickBestThankYou(politeResults);
-  if (thank) {
+  const polite = await resolveGuestPoliteState(profileDocId);
+  if (polite.phase === "thank_you") {
     return {
-      status: "ACT_2",
+      status: "FEEDBACK",
       globalUserFirestoreId: profileDocId,
-      sessionParticipantUid,
       act2: {
-        visitId: thank.visitId,
-        feedbackActSessionId: thank.feedbackActSessionId,
-        venueId: thank.venueId,
-        tableId: thank.tableId,
-        tableNumber: thank.tableNumber,
-        feedbackStaffId: thank.feedbackStaffId,
+        visitId: polite.visitId,
+        feedbackActSessionId: polite.feedbackActSessionId,
+        venueId: polite.venueId,
+        tableId: polite.tableId,
+        tableNumber: polite.tableNumber,
+        feedbackStaffId: polite.feedbackStaffId,
       },
     };
   }
 
-  const feedbackSnap = await findBestFeedbackActForLookupKeys(lookupKeys, nowMs);
+  const feedbackSnap = await findBestFeedbackActForCanonicalUid(profileDocId, nowMs);
   if (feedbackSnap) {
     const raw = feedbackSnap.data() as Record<string, unknown>;
     const v = String(raw.venueId ?? "").trim();
     const t = String(raw.tableId ?? "").trim();
     if (v && t) {
-      return act2FromFeedbackSnap(feedbackSnap, profileDocId, sessionParticipantUid);
+      return feedbackFromSnap(feedbackSnap, profileDocId);
     }
   }
 
-  return { status: "WELCOME", globalUserFirestoreId: profileDocId, sessionParticipantUid };
+  return { status: "WELCOME", globalUserFirestoreId: profileDocId };
 }

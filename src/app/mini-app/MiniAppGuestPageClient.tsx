@@ -144,9 +144,8 @@ function GuestServiceTabContent() {
 function GuestSession() {
   const {
     currentLocation,
-    guestIdentity,
-    guestProfileUid,
-    globalGuestUid,
+    guestChannel,
+    canonicalGuestUid,
     activeSession,
     participants,
     currentTableOrders,
@@ -194,12 +193,9 @@ function GuestSession() {
   const canAct = Boolean(currentLocation.venueId && currentLocation.tableId);
   const sessionConfirmed = Boolean(activeSession?.id);
   const sessionActionsEnabled = canAct && sessionConfirmed && !guestAwaitingTableFeedback;
-  const currentUid = guestIdentity.currentUid ?? "";
-  const profileUid = (globalGuestUid?.trim() || guestProfileUid?.trim() || "") || "";
+  const profileUid = canonicalGuestUid?.trim() ?? "";
   const isMaster = Boolean(
-    activeSession?.masterId &&
-      profileUid &&
-      guestCustomerUidsMatch(activeSession.masterId, profileUid)
+    activeSession?.masterId && profileUid && guestCustomerUidsMatch(activeSession.masterId, profileUid)
   );
   const isPrivate = activeSession?.isPrivate === true;
   const ordersHidden = isPrivate && !isMaster;
@@ -237,7 +233,7 @@ function GuestSession() {
             const initial = p.uid.replace(/[^a-zA-Z0-9]/g, "").slice(0, 1).toUpperCase() || "G";
             const displayName = resolveGuestDisplayName({
               uid: p.uid,
-              currentUid: profileUid || currentUid || undefined,
+              currentUid: profileUid || guestChannel.telegramUid || undefined,
             });
             const isMe = Boolean(
               profileUid && guestCustomerUidsMatch(p.uid, profileUid)
@@ -425,9 +421,8 @@ function GuestPostServicePlaceholder() {
 
 function GuestCabinet() {
   const {
-    guestIdentity,
-    guestProfileUid,
-    globalGuestUid,
+    guestChannel,
+    canonicalGuestUid,
     visitHistory,
     openVenueMenu,
     isVenuePreOrderEnabled,
@@ -463,7 +458,7 @@ function GuestCabinet() {
                 venueTitle={resolveVenueDisplayName(v.venueId)}
                 registrySotaId={getVenueRegistrySotaId(v.venueId)}
                 venueTimeZone={getVenueTimeZone(v.venueId)}
-                customerUid={guestProfileUid ?? guestIdentity.currentUid}
+                customerUid={canonicalGuestUid}
                 enabled
                 maxCartItems={getPreorderMaxCartItems(v.venueId)}
                 submissionAllowed={gate.ok}
@@ -483,17 +478,15 @@ function GuestCabinet() {
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-600">UID</span>
-            <span className="text-sm font-mono text-slate-900">
-              {globalGuestUid ?? guestIdentity.currentUid ?? "—"}
-            </span>
+            <span className="text-sm font-mono text-slate-900">{canonicalGuestUid ?? "—"}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-600">Telegram</span>
-            <span className="text-sm font-mono text-slate-900">{guestIdentity.telegramUid ?? "—"}</span>
+            <span className="text-sm font-mono text-slate-900">{guestChannel.telegramUid ?? "—"}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-slate-600">SOTA</span>
-            <span className="text-sm font-mono text-slate-900">{guestIdentity.sotaId ?? "—"}</span>
+            <span className="text-sm font-mono text-slate-900">{guestChannel.sotaId ?? "—"}</span>
           </div>
         </div>
       </section>
@@ -535,9 +528,7 @@ function MiniAppScreenRouter() {
     postServiceVisit,
     completeTableFeedbackSession,
     feedbackTargetStaffId,
-    guestIdentity,
-    globalGuestUid,
-    guestProfileUid,
+    canonicalGuestUid,
     showLandingScanner,
   } = useGuestContext();
   const [tab, setTab] = useState<GuestTab>("service");
@@ -643,12 +634,12 @@ function MiniAppScreenRouter() {
       feedbackVisitId &&
       feedbackVenueId &&
       feedbackTableId &&
-      (globalGuestUid?.trim() || guestProfileUid?.trim()) ? (
+      canonicalGuestUid?.trim() ? (
         <GuestFeedbackStars
           walletStaffId={feedbackTargetStaffId}
           venueId={feedbackVenueId}
           tableId={feedbackTableId}
-          customerUid={(globalGuestUid?.trim() || guestProfileUid!.trim())}
+          customerUid={canonicalGuestUid.trim()}
           activeSessionId={feedbackVisitId}
           tipsSessionId={postServiceVisit?.feedbackActSessionId}
           title="Отзыв и чаевые"

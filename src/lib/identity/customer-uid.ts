@@ -68,43 +68,12 @@ export function resolveUnifiedCustomerUid(args: {
   return buildAnonCustomerUid(args.anonymousId);
 }
 
-/**
- * Один и тот же гость в разных формах записи (tg: ↔ telegram_user_id:, anon: ↔ anonymous_id:).
- */
+/** Строгое совпадение канонических идентификаторов (без алиасов каналов). */
 export function guestCustomerUidsMatch(a: string, b: string): boolean {
   const ta = String(a ?? "").trim();
   const tb = String(b ?? "").trim();
   if (!ta || !tb) return false;
-  if (ta === tb) return true;
-  const setB = new Set(visitHistoryUidCandidates(tb));
-  for (const c of visitHistoryUidCandidates(ta)) {
-    if (setB.has(c)) return true;
-  }
-  return false;
-}
-
-/** Кандидаты путей global_users/{uid}/visits при смене формата UID (tg: ↔ telegram_user_id:). */
-export function visitHistoryUidCandidates(primaryUid: string): string[] {
-  const u = primaryUid.trim();
-  if (!u) return [];
-  const set = new Set<string>([u]);
-  if (u.startsWith("tg:")) {
-    const id = u.slice(3).trim();
-    if (id) set.add(`telegram_user_id:${id}`);
-  }
-  if (u.startsWith("anon:")) {
-    const id = u.slice(5).trim();
-    if (id) set.add(`anonymous_id:${id}`);
-  }
-  if (u.startsWith("telegram_user_id:")) {
-    const id = u.slice("telegram_user_id:".length).trim();
-    if (id) set.add(`tg:${id}`);
-  }
-  if (u.startsWith("anonymous_id:")) {
-    const id = u.slice("anonymous_id:".length).trim();
-    if (id) set.add(`anon:${id}`);
-  }
-  return [...set];
+  return ta === tb;
 }
 
 /** Извлечь платформенный id для legacy-полей (например guestChatId в orders). */
