@@ -552,17 +552,21 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     if (!tg || !isTelegramContext()) return null;
     const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
     if (!initData) return null;
-    const res = await fetch("/api/get-current-status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: "telegram",
-        credentials: { initData },
-      }),
-    });
-    const data = (await res.json().catch(() => ({}))) as GuestCurrentStatusPayload;
-    if (!res.ok || !data.ok) return null;
-    return data;
+    try {
+      const res = await fetch("/api/get-current-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "telegram",
+          credentials: { initData },
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as GuestCurrentStatusPayload;
+      if (!res.ok || !data.ok) return null;
+      return data;
+    } catch {
+      return null;
+    }
   }, []);
 
   const applyGuestCommandPayload = useCallback(
@@ -678,11 +682,15 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     [switchLocation, switchToFeedbackVisit]
   );
 
-  /** Единственный источник команд UI: POST /api/get-current-status (алиас /api/get-current-status). */
+  /** Единственный источник команд UI: POST /api/get-current-status (= алиас на /api/guest/get-current-status). */
   const fetchAndApplyGuestStatus = useCallback(async () => {
-    const data = await pullGuestCommandPayload();
-    if (!data) return;
-    await applyGuestCommandPayload(data);
+    try {
+      const data = await pullGuestCommandPayload();
+      if (!data) return;
+      await applyGuestCommandPayload(data);
+    } catch {
+      /* сеть / сбой — сохраняем последний валидный снимок, ждём следующий цикл опроса */
+    }
   }, [pullGuestCommandPayload, applyGuestCommandPayload]);
 
   const refreshGuestStatus = useCallback(async () => {

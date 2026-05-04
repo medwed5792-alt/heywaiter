@@ -96,15 +96,19 @@ export async function fetchGlobalUserSystemRoleEdge(uid: string): Promise<string
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
     projectId
   )}/databases/(default)/documents/global_users/${encUid}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${access}` },
-    cache: "no-store",
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) return null;
-  const body = (await res.json()) as { fields?: Record<string, unknown> };
-  const role = parseFirestoreStringField(body.fields, "systemRole");
-  return role?.trim() ?? null;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${access}` },
+      cache: "no-store",
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    const body = (await res.json()) as { fields?: Record<string, unknown> };
+    const role = parseFirestoreStringField(body.fields, "systemRole");
+    return role?.trim() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function isStaffOrAdminRole(systemRole: string | null): boolean {
@@ -123,19 +127,7 @@ export async function staffAdminMiddlewareResponse(request: NextRequest): Promis
     return NextResponse.next();
   }
 
-  const loginBase = authLoginPathForRequest(pathname);
-  const nextParam = encodeURIComponent(`${pathname}${request.nextUrl.search || ""}`);
-
-  const redirectLogin = () => {
-    const u = request.nextUrl.clone();
-    u.pathname = loginBase;
-    u.search = `?next=${nextParam}`;
-    const res = NextResponse.redirect(u);
-    res.cookies.delete(HEYWAITER_STAFF_ADMIN_AUTH_COOKIE);
-    return res;
-  };
-
-  const redirectHome = () => {
+  const failClosedHome = () => {
     const u = request.nextUrl.clone();
     u.pathname = "/";
     u.search = "";
@@ -144,24 +136,50 @@ export async function staffAdminMiddlewareResponse(request: NextRequest): Promis
     return res;
   };
 
-  const cookie = request.cookies.get(HEYWAITER_STAFF_ADMIN_AUTH_COOKIE)?.value ?? "";
-  if (!cookie.trim()) {
-    return redirectLogin();
-  }
+  try {
+    const loginBase = authLoginPathForRequest(pathname);
+    const nextParam = encodeURIComponent(`${pathname}${request.nextUrl.search || ""}`);
 
-  if (!getFirebaseProjectId()) {
-    return redirectHome();
-  }
+    const redirectLogin = () => {
+      const u = request.nextUrl.clone();
+      u.pathname = loginBase;
+      u.search = `?next=${nextParam}`;
+      const res = NextResponse.redirect(u);
+      res.cookies.delete(HEYWAITER_STAFF_ADMIN_AUTH_COOKIE);
+      return res;
+    };
 
-  const verified = await verifyFirebaseIdTokenEdge(cookie);
-  if (!verified) {
-    return redirectLogin();
-  }
+    const redirectHome = () => {
+      const u = request.nextUrl.clone();
+      u.pathname = "/";
+      u.search = "";
+      const res = NextResponse.redirect(u);
+      res.cookies.delete(HEYWAITER_STAFF_ADMIN_AUTH_COOKIE);
+      return res;
+    };
 
-  const role = await fetchGlobalUserSystemRoleEdge(verified.uid);
-  if (!isStaffOrAdminRole(role)) {
-    return redirectHome();
-  }
+    const cookie = request.cookies.get(HEYWAITER_STAFF_ADMIN_AUTH_COOKIE)?.value ?? "";
+    if (!cookie.trim()) {
+      return redirectLogin();
+    }
 
-  return NextResponse.next();
+    if (!getFirebaseProjectId()) {
+      return redirectHome();
+    }
+
+    const verified = await verifyFirebaseIdTokenEdge(cookie);
+    if (!verified) {
+      return redirectLogin();
+    }
+
+    const role = await fetchGlobalUserSystemRoleEdge(verified.uid);
+    if (!isStaffOrAdminRole(role)) {
+      return redirectHome();
+    }
+
+    return NextResponse.next();
+  } catch (e) {
+    console.error("[middleware staff-admin]", e);
+    return failClosedHome();
+  }
 }

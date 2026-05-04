@@ -130,7 +130,21 @@ export async function POST(request: NextRequest) {
       profileData: data,
     });
     if (!resolved) {
-      return NextResponse.json({ ok: false, error: "resolve_failed" }, { status: 500 });
+      const bundle = await loadGuestMiniAppSystemBundle(fs);
+      return NextResponse.json({
+        ok: true,
+        recognized: false,
+        status: "WELCOME",
+        globalUserFirestoreId: null,
+        staffProfile: false,
+        activeSession: null,
+        tableOrders: [],
+        venueDoc: null,
+        venueMenuShowcase: null,
+        assignedStaffDisplayName: null,
+        visitHistory: [],
+        ...bundle,
+      });
     }
 
     const command = await buildGuestMiniAppCommandPayload(fs, resolved);
