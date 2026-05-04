@@ -15,7 +15,6 @@ import { getCheckInCopy } from "@/lib/i18n-checkin";
 import { buildDeepLink, messengerLabels } from "@/lib/deep-links";
 import { buildTelegramStartAppLinkResolved } from "@/lib/guest-telegram-link";
 import { CALL_WAITER_COOLDOWN_MS } from "@/lib/constants";
-import { DebugPanelTrigger } from "@/components/debug/DebugPanelTrigger";
 import { useVisitor } from "@/components/providers/VisitorProvider";
 import type { MessengerChannel } from "@/lib/types";
 import { WEBHOOK_CHANNELS } from "@/lib/webhook/channels";
@@ -172,19 +171,9 @@ function CheckInContent() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 bg-slate-50">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg border border-gray-200 text-center">
-        <DebugPanelTrigger>
-          {({ onClick }) => (
-            <h1
-              className="text-2xl font-black text-gray-900 tracking-tight cursor-pointer select-none"
-              onClick={onClick}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && onClick()}
-            >
-              {venueMetaLoaded ? venueDisplayName : copy.title}
-            </h1>
-          )}
-        </DebugPanelTrigger>
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight select-none">
+          {venueMetaLoaded ? venueDisplayName : copy.title}
+        </h1>
         <p className="mt-3 text-gray-600 text-sm">{copy.subtitle}</p>
         {status === "success" && (
           <p className="mt-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">

@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
         venueDoc: null,
         venueMenuShowcase: null,
         assignedStaffDisplayName: null,
+        visitHistory: [],
         ...bundle,
       });
     }

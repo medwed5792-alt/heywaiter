@@ -254,7 +254,6 @@ type GuestMiniAppContextValue = {
     opts?: { preservePostServiceVisit?: boolean }
   ) => Promise<void>;
   openVenueMenu: (venueId: string) => void;
-  refreshVisitHistory: () => Promise<void>;
   /** Опрос сервера: /api/get-current-status (команда для UI). */
   refreshGuestStatus: () => Promise<void>;
   callWaiter: () => Promise<void>;
@@ -689,9 +688,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   const refreshGuestStatus = useCallback(async () => {
     await fetchAndApplyGuestStatus();
   }, [fetchAndApplyGuestStatus]);
-
-  /** @deprecated Используйте refreshGuestStatus; оставлено для совместимости API контекста. */
-  const refreshVisitHistory = refreshGuestStatus;
 
   /**
    * Холодный старт: один запрос статуса до bootstrap (WORKING → стол, FEEDBACK → звёзды, WELCOME → сканер).
@@ -1219,7 +1215,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       assignedStaffDisplayName,
       switchLocation,
       openVenueMenu,
-      refreshVisitHistory,
       refreshGuestStatus,
       callWaiter,
       requestBill,
@@ -1255,7 +1250,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       assignedStaffDisplayName,
       switchLocation,
       openVenueMenu,
-      refreshVisitHistory,
       refreshGuestStatus,
       callWaiter,
       requestBill,
