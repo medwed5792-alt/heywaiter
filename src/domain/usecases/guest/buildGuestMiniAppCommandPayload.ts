@@ -206,6 +206,40 @@ export async function loadGuestMiniAppSystemBundle(fs: Firestore): Promise<{
   return { systemConfig, preorderModuleConfig };
 }
 
+/** Подколлекция global_users/{uid}/visits — только для ответа Диспетчера. */
+export type GuestVisitHistoryEntry = {
+  venueId: string;
+  lastVisitAt?: unknown;
+  totalVisits?: number;
+};
+
+export async function loadGuestMiniAppVisitHistory(
+  fs: Firestore,
+  globalUserFirestoreId: string
+): Promise<GuestVisitHistoryEntry[]> {
+  const uid = String(globalUserFirestoreId ?? "").trim();
+  if (!uid) return [];
+  try {
+    const snap = await fs
+      .collection("global_users")
+      .doc(uid)
+      .collection("visits")
+      .orderBy("lastVisitAt", "desc")
+      .limit(5)
+      .get();
+    return snap.docs.map((d) => {
+      const x = (d.data() ?? {}) as Record<string, unknown>;
+      return {
+        venueId: d.id,
+        lastVisitAt: x.lastVisitAt,
+        totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export type GuestMiniAppCommandExtras = {
   systemConfig: SotaSystemConfigPayload;
   preorderModuleConfig: PreorderModuleConfig;
@@ -214,6 +248,7 @@ export type GuestMiniAppCommandExtras = {
   venueDoc: Record<string, unknown> | null;
   venueMenuShowcase: VenueMenuVenueBlock | null;
   assignedStaffDisplayName: string | null;
+  visitHistory: GuestVisitHistoryEntry[];
 };
 
 const ACTIVE_ORDER_STATUSES = ["pending", "ready"] as const;
@@ -223,6 +258,7 @@ export async function buildGuestMiniAppCommandPayload(
   resolved: ResolveGuestCurrentStatusResult
 ): Promise<GuestMiniAppCommandExtras> {
   const { systemConfig, preorderModuleConfig } = await loadGuestMiniAppSystemBundle(fs);
+  const visitHistory = await loadGuestMiniAppVisitHistory(fs, resolved.globalUserFirestoreId);
 
   let activeSession: ActiveSession | null = null;
   let tableOrders: GuestTableOrderPayload[] = [];
@@ -281,5 +317,6 @@ export async function buildGuestMiniAppCommandPayload(
     venueDoc,
     venueMenuShowcase,
     assignedStaffDisplayName,
+    visitHistory,
   };
 }

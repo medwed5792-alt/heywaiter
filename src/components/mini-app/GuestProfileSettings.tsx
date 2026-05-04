@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
-import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 type ChannelStatus = { linked: boolean; hint?: string };
 
 type TelegramWebAppInit = {
@@ -38,14 +37,12 @@ export function GuestProfileSettings() {
     try {
       const tg = getTelegramWebApp();
       const initData = typeof tg?.initData === "string" ? tg.initData.trim() : "";
-      const deviceAnchor = getOrCreateGuestDeviceId();
       const res = await fetch("/api/guest/hub-profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           initData: initData || undefined,
           globalGuestUid: canonicalGuestUid ?? undefined,
-          deviceAnchor: deviceAnchor || undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {

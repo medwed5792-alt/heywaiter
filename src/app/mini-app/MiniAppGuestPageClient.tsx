@@ -4,7 +4,6 @@ import { Suspense, useEffect, useMemo, useState, useCallback } from "react";
 import { AdSpace } from "@/components/common/AdSpace";
 import { MiniAppIdentifyingFallback } from "@/components/mini-app/MiniAppBotRoleDispatcher";
 import { GuestMiniAppStateProvider, useGuestContext } from "@/components/mini-app/GuestMiniAppStateProvider";
-import { GuestSessionGeoWatch } from "@/components/mini-app/GuestSessionGeoWatch";
 import { SotaLocationProvider, useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { resolveVenueDisplayName } from "@/lib/venue-display";
 import { resolveGuestDisplayName } from "@/lib/identity/guest-display";
@@ -580,9 +579,6 @@ function MiniAppScreenRouter() {
     <>
       <div className="min-h-screen bg-slate-50 md:mx-auto md:max-w-2xl md:shadow-lg" style={{ zoom: 0.75 }}>
         <main className="flex-1 p-4 pb-10 md:p-6">
-          {guestAtTable && activeSession && !guestAwaitingTableFeedback ? (
-            <GuestSessionGeoWatch key={activeSession.id} />
-          ) : null}
           <div className="space-y-5">
           {!guestAtTable ? (
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

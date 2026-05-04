@@ -12,7 +12,6 @@ import {
   type ReactNode,
 } from "react";
 import { useSearchParams } from "next/navigation";
-import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
 import {
   mergePreOrderSystemFields,
   resolvePreOrderEnabled,
@@ -24,15 +23,12 @@ import { readVenueTimezone } from "@/lib/venue-timezone";
 import type { PreorderModuleConfig } from "@/lib/system-configs/preorder-module-config";
 import type { VenueMenuVenueBlock } from "@/lib/system-configs/venue-menu-config";
 import toast from "react-hot-toast";
-import { db } from "@/lib/firebase";
 import { parseStartParamPayload } from "@/lib/parse-start-param";
 import { parseSotaStartappPayload } from "@/lib/sota-id";
 import { useSotaLocation } from "@/components/providers/SotaLocationProvider";
 import { getTelegramUserIdFromWebApp } from "@/lib/telegram-webapp-user";
 import { DEFAULT_GLOBAL_GEO_RADIUS_LIMIT_METERS } from "@/lib/geo";
-import { clearPersistedGuestSeat } from "@/lib/guest-table-persistence";
 import { guestSessionClear } from "@/lib/guest-session-bridge";
-import { getOrCreateGuestDeviceId } from "@/lib/guest-device-anchor";
 import { resolveWaiterStaffIdFromSessionDoc } from "@/lib/active-session-waiter";
 import type { ActiveSession, ActiveSessionParticipant, ActiveSessionParticipantStatus } from "@/lib/types";
 import type { OrderStatus } from "@/lib/types";
@@ -413,37 +409,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     };
   }, [isSdkReady]);
 
-  const refreshVisitHistory = useCallback(async () => {
-    if (currentLocation.venueId || currentLocation.tableId) {
-      setVisitHistory([]);
-      return;
-    }
-    const uid = canonicalGuestUid?.trim() || "";
-    if (!uid) {
-      setVisitHistory([]);
-      return;
-    }
-    try {
-      const q = query(
-        collection(db, "global_users", uid, "visits"),
-        orderBy("lastVisitAt", "desc"),
-        limit(5)
-      );
-      const snap = await getDocs(q);
-      const entries: GuestVisitEntry[] = snap.docs.map((d) => {
-        const x = d.data() as Record<string, unknown>;
-        return {
-          venueId: d.id,
-          lastVisitAt: x.lastVisitAt,
-          totalVisits: typeof x.totalVisits === "number" ? x.totalVisits : undefined,
-        };
-      });
-      setVisitHistory(entries);
-    } catch {
-      setVisitHistory([]);
-    }
-  }, [canonicalGuestUid, currentLocation.venueId, currentLocation.tableId]);
-
   const switchLocation = useCallback(
     async (
       venueId: string | null,
@@ -475,19 +440,8 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       setActiveSession(null);
       setParticipants([]);
       setCurrentTableOrders([]);
-      if (nextVenueId && !nextTableId) {
-        clearPersistedGuestSeat();
-        setVisitHistory((prev) => {
-          const deduped = prev.filter((v) => v.venueId !== nextVenueId);
-          return [{ venueId: nextVenueId }, ...deduped].slice(0, 5);
-        });
-      }
-      if (!nextVenueId && !nextTableId) {
-        if (hadTable) clearPersistedGuestSeat();
-        await refreshVisitHistory();
-      }
     },
-    [refreshVisitHistory]
+    []
   );
 
   useEffect(() => {
@@ -554,7 +508,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
 
   const switchToFeedbackVisit = useCallback(
     async (visit: PostServiceVisitState) => {
-      clearPersistedGuestSeat();
       setShowLandingScanner(false);
       await switchLocation(null, null, { preservePostServiceVisit: true });
       setPostServiceVisit(visit);
@@ -563,7 +516,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
   );
 
   const switchToScanQrScreen = useCallback(async () => {
-    clearPersistedGuestSeat();
     guestAppServerRestoreRef.current = false;
     setPostServiceVisit(null);
     setShowLandingScanner(true);
@@ -592,6 +544,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     venueDoc?: Record<string, unknown> | null;
     venueMenuShowcase?: VenueMenuVenueBlock | null;
     assignedStaffDisplayName?: string | null;
+    visitHistory?: GuestVisitEntry[];
   };
 
   const pullGuestCommandPayload = useCallback(async (): Promise<GuestCurrentStatusPayload | null> => {
@@ -620,6 +573,22 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       }
       if (data.preorderModuleConfig !== undefined) {
         setPreorderModuleConfig(data.preorderModuleConfig ?? {});
+      }
+
+      if (Array.isArray(data.visitHistory)) {
+        setVisitHistory(
+          data.visitHistory
+            .map((row) => {
+              const venueId = typeof row?.venueId === "string" ? row.venueId.trim() : "";
+              if (!venueId) return null;
+              return {
+                venueId,
+                lastVisitAt: row.lastVisitAt,
+                totalVisits: typeof row.totalVisits === "number" ? row.totalVisits : undefined,
+              } satisfies GuestVisitEntry;
+            })
+            .filter(Boolean) as GuestVisitEntry[]
+        );
       }
 
       if (data.staffProfile) return;
@@ -721,6 +690,9 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     await fetchAndApplyGuestStatus();
   }, [fetchAndApplyGuestStatus]);
 
+  /** @deprecated Используйте refreshGuestStatus; оставлено для совместимости API контекста. */
+  const refreshVisitHistory = refreshGuestStatus;
+
   /**
    * Холодный старт: один запрос статуса до bootstrap (WORKING → стол, FEEDBACK → звёзды, WELCOME → сканер).
    */
@@ -821,7 +793,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
       const geoPromise = checkGuestQrVenueAccess(v);
 
       try {
-        const deviceAnchor = getOrCreateGuestDeviceId();
         const controller = new AbortController();
         const abortTimer = window.setTimeout(() => controller.abort(), 35_000);
         let res: Response;
@@ -833,7 +804,6 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
               venueId: v,
               tableId: t,
               globalGuestUid: canonicalGuestUidRef.current?.trim() || undefined,
-              deviceAnchor: deviceAnchor || undefined,
             }),
             signal: controller.signal,
           });
@@ -990,7 +960,7 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         }
         if (!cancelled) {
           await switchToScanQrScreen();
-          await refreshVisitHistory();
+          await refreshGuestStatus();
         }
         if (!cancelled) setIsInitializing(false);
         return;
@@ -1026,16 +996,10 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
     searchParams,
     urlTableFromParams,
     switchLocation,
-    refreshVisitHistory,
+    refreshGuestStatus,
     processEntry,
     switchToScanQrScreen,
   ]);
-
-  useEffect(() => {
-    if (!isSdkReady || isInitializing) return;
-    if (!canonicalGuestUid?.trim()) return;
-    void refreshVisitHistory();
-  }, [isSdkReady, isInitializing, canonicalGuestUid, refreshVisitHistory]);
 
   const isVenuePreOrderEnabled = useCallback(
     (venueFirestoreId: string) => {
@@ -1202,11 +1166,12 @@ export function GuestMiniAppStateProvider({ children }: { children: ReactNode })
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
         if (!res.ok || data.ok === false) throw new Error(data.error ?? "request-bill failed");
         toast.success("Запрос счета отправлен");
+        void refreshGuestStatus();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Не удалось отправить запрос счета");
       }
     },
-    [canonicalGuestUid, guestBlockedReason, isGuestBlocked]
+    [canonicalGuestUid, guestBlockedReason, isGuestBlocked, refreshGuestStatus]
   );
 
   const guestAwaitingTableFeedback = useMemo(() => Boolean(postServiceVisit), [postServiceVisit]);

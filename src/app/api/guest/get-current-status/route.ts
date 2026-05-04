@@ -9,6 +9,7 @@ import { resolveGuestCurrentStatusFromProfile } from "@/domain/usecases/guest/re
 import {
   buildGuestMiniAppCommandPayload,
   loadGuestMiniAppSystemBundle,
+  loadGuestMiniAppVisitHistory,
 } from "@/domain/usecases/guest/buildGuestMiniAppCommandPayload";
 
 /**
@@ -97,6 +98,7 @@ export async function POST(request: NextRequest) {
         venueDoc: null,
         venueMenuShowcase: null,
         assignedStaffDisplayName: null,
+        visitHistory: [],
         ...bundle,
       });
     }
@@ -105,6 +107,7 @@ export async function POST(request: NextRequest) {
     const role = typeof data.systemRole === "string" ? data.systemRole.trim().toUpperCase() : "";
     if (role === "STAFF" || role === "ADMIN") {
       const bundle = await loadGuestMiniAppSystemBundle(fs);
+      const visitHistory = await loadGuestMiniAppVisitHistory(fs, globalUserId);
       return NextResponse.json({
         ok: true,
         recognized: true,
@@ -116,6 +119,7 @@ export async function POST(request: NextRequest) {
         venueDoc: null,
         venueMenuShowcase: null,
         assignedStaffDisplayName: null,
+        visitHistory,
         ...bundle,
       });
     }
