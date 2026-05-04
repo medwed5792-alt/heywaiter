@@ -1,19 +1,54 @@
 rules_version = '2';
 
 /**
- * HeyWaiter — venues/{venueId}/preorder_carts/{cartId}
+ * HeyWaiter — правила «Диктатуры сервера».
  *
- * cartId = resolveUnifiedCustomerUid: tg:|wa:|vk:|anon: (и legacy telegram_user_id:|anonymous_id:).
- * authUid = Firebase Auth uid — владелец документа; гость: read/write только если resource.data.authUid == request.auth.uid.
+ * Важно: Next.js API и любой код на Admin SDK **обходит** эти правила.
+ * Клиент (Web / Mini App) с Firebase SDK — только то, что разрешено ниже.
  *
- * Персонал: preorder_staff_gate/{request.auth.uid}
- *   venueIds: ["<Firestore venues doc id>", ...]
- *   venueSotaIds: ["<VR…>", ...]  — доступ ко всем площадкам с данным SOTA-ID
- * Запись gate — только Admin SDK.
+ * Идентификация: для путей global_users/{uid} и членства в сессии используется
+ * равенство request.auth.uid идентификатору документа global_users (канонический UID).
  */
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // --- Общие функции: роль из документа global_users/{auth.uid} ---
+
+    function globalUserPath() {
+      return /databases/$(database)/documents/global_users/$(request.auth.uid);
+    }
+
+    function globalUserExists() {
+      return request.auth != null && exists(globalUserPath());
+    }
+
+    function globalUserRole() {
+      return globalUserExists()
+        ? get(globalUserPath()).data.systemRole
+        : null;
+    }
+
+    function isStaffOrAdmin() {
+      return globalUserExists()
+        && (globalUserRole() == 'STAFF' || globalUserRole() == 'ADMIN');
+    }
+
+    function isAdmin() {
+      return globalUserExists() && globalUserRole() == 'ADMIN';
+    }
+
+    /** Гость привязан к боевой сессии (логический UID = id global_users). */
+    function isActiveSessionMember() {
+      return request.auth != null
+        && (
+          resource.data.masterId == request.auth.uid
+          || (resource.data.participantUids is list
+            && request.auth.uid in resource.data.participantUids)
+        );
+    }
+
+    // --- Предзаказ (как раньше; корзины не ходят через global_users uid как cartId) ---
 
     function preorderStaffGateDoc() {
       return get(/databases/$(database)/documents/preorder_staff_gate/$(request.auth.uid));
@@ -81,7 +116,6 @@ service cloud.firestore {
         );
     }
 
-    /** Гость: отмена только из sent (до подтверждения персоналом). */
     function guestPreorderCancelFromSentOk(venueId, cartId) {
       return request.resource.data.customerUid == cartId
         && request.resource.data.authUid == request.auth.uid
@@ -98,7 +132,6 @@ service cloud.firestore {
              .hasOnly(['status', 'cancelReason', 'cancelledBy', 'cancelledAt', 'updatedAt', 'updatedAtMs']);
     }
 
-    /** Персонал: отмена из любого «активного» статуса (не оконченного цикла). */
     function staffPreorderCancelActiveOk() {
       return resource.data.status in ['sent', 'confirmed', 'ready', 'completed', 'received']
         && request.resource.data.status == 'cancelled'
@@ -114,7 +147,6 @@ service cloud.firestore {
              .hasOnly(['status', 'cancelReason', 'cancelledBy', 'cancelledAt', 'cancelledByStaffId', 'updatedAt', 'updatedAtMs']);
     }
 
-    /** Персонал: sent → confirmed (заглушка до платежей / остатков). */
     function staffPreorderConfirmSentOk() {
       return resource.data.status == 'sent'
         && request.resource.data.status == 'confirmed'
@@ -133,25 +165,174 @@ service cloud.firestore {
         || (request.auth != null && preorderStaffForVenue(venueId) && staffPreorderCancelActiveOk());
     }
 
+    // --- global_users: только свой документ и visits; без записи с клиента ---
+
+    match /global_users/{uid} {
+      /**
+       * Свой паспорт — любой авторизованный с тем же uid.
+       * Чужие документы global_users — только STAFF/ADMIN (дашборд, stealth, команда).
+       */
+      allow read: if (request.auth != null && request.auth.uid == uid) || isStaffOrAdmin();
+      allow write: if false;
+
+      match /visits/{visitVenueId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
+    // --- activeSessions: чтение участником или персоналом; узкая запись участником ---
+
+    match /activeSessions/{sessionId} {
+      allow read: if isStaffOrAdmin() || isActiveSessionMember();
+
+      /** Создание сессий — только Admin SDK (check-in API). */
+      allow create: if false;
+
+      /** Удаление — дашборд / персонал; гость с клиента не удаляет. */
+      allow delete: if isStaffOrAdmin();
+
+      /**
+       * Персонал: полное обновление (админка).
+       * Участник сессии: только узкие поля (гео-статус); вызов официанта / счёт — через API.
+       */
+      allow update: if isStaffOrAdmin()
+        || (
+          isActiveSessionMember()
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['geoStatus', 'updatedAt'])
+          && request.resource.data.venueId == resource.data.venueId
+          && request.resource.data.tableId == resource.data.tableId
+          && request.resource.data.masterId == resource.data.masterId
+          && request.resource.data.status == resource.data.status
+        );
+    }
+
+    // --- venues: публичное чтение каркаса заведения; запись только ADMIN ---
+
+    match /venues/{venueId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /tables/{tableId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      match /configs/{configId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+
+      /** Персонал заведения: кадры / смены — только STAFF или ADMIN в global_users. */
+      match /staff/{staffDocId} {
+        allow read, write: if isStaffOrAdmin();
+      }
+
+      match /preorder_carts/{cartId} {
+        allow read: if preorderCartCanRead(venueId, cartId);
+        allow create: if preorderCartCanCreate(venueId, cartId);
+        allow update: if preorderCartCanUpdate(venueId, cartId);
+        allow delete: if request.auth != null
+          && resource.data.authUid == request.auth.uid
+          && resource.data.status == 'draft';
+      }
+
+      /** CRM гостей заведения — только персонал. */
+      match /guests/{guestId} {
+        allow read, write: if isStaffOrAdmin();
+      }
+
+      /**
+       * Прочие подколлекции venues (halls, …): публичное чтение, запись только ADMIN.
+       * Не покрывает preorder_carts, staff, guests — у них свои правила выше.
+       */
+      match /{subCollection}/{docId} {
+        allow read: if subCollection != 'preorder_carts'
+          && subCollection != 'staff'
+          && subCollection != 'guests';
+        allow write: if isAdmin()
+          && subCollection != 'preorder_carts'
+          && subCollection != 'staff'
+          && subCollection != 'guests';
+      }
+    }
+
+    // --- Заказы (корневая коллекция): только персонал с ролью из global_users ---
+
+    match /orders/{orderId} {
+      allow read, write: if isStaffOrAdmin();
+    }
+
+    /**
+     * Транзакции кошелька / чаевых (если используются с клиента).
+     * Путь может отличаться — при необходимости сузите под фактическую схему.
+     */
+    match /wallets/{walletId}/transactions/{txId} {
+      allow read, write: if isStaffOrAdmin();
+    }
+
+    // --- Уведомления персоналу: чтение/создание только STAFF/ADMIN (без гостевого спама с клиента) ---
+
+    match /staffNotifications/{notificationId} {
+      allow read, create, update, delete: if isStaffOrAdmin();
+    }
+
+    // --- Анонимная аналитика входа на /check-in (ограниченное создание) ---
+
+    match /visitor_sessions/{docId} {
+      allow read: if false;
+      allow update, delete: if false;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['visitorId', 'venueId', 'tableId', 'createdAt'])
+        && request.resource.data.visitorId is string
+        && request.resource.data.visitorId.size() > 0
+        && request.resource.data.visitorId.size() <= 128
+        && request.resource.data.venueId is string
+        && request.resource.data.venueId.size() > 0
+        && request.resource.data.tableId is string
+        && request.resource.data.tableId.size() > 0;
+    }
+
+    /**
+     * Системные конфиги.
+     * global_settings — публичное чтение (радиус гео и т.п., без секретов).
+     * bots / google_maps — только ADMIN того же Firebase uid, что и документ global_users.
+     * preorder_module_config — чтение персоналом (кухня/настройки), запись только ADMIN.
+     */
+    match /system_configs/{docId} {
+      allow read: if docId == 'global_settings'
+        || (isAdmin() && docId in ['bots', 'google_maps'])
+        || (isStaffOrAdmin() && docId == 'preorder_module_config');
+
+      allow write: if isAdmin()
+        && docId in ['bots', 'google_maps', 'global_settings', 'preorder_module_config'];
+    }
+
+    // --- Шлюз персонала предзаказа (запись только через Admin SDK) ---
+
     match /preorder_staff_gate/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
 
-    match /venues/{venueId}/preorder_carts/{cartId} {
-      allow read: if preorderCartCanRead(venueId, cartId);
+    // --- Живая гео персонала (чтение в админке; запись с клиента не используется) ---
 
-      allow create: if preorderCartCanCreate(venueId, cartId);
-
-      allow update: if preorderCartCanUpdate(venueId, cartId);
-
-      allow delete: if request.auth != null
-        && resource.data.authUid == request.auth.uid
-        && resource.data.status == 'draft';
+    match /staffLiveGeos/{geoId} {
+      allow read: if isStaffOrAdmin();
+      allow write: if false;
     }
 
+    // --- Отзывы (админ-аналитика / список отзывов) ---
+
+    match /reviews/{reviewId} {
+      allow read, write: if isStaffOrAdmin();
+    }
+
+    // --- Явный запрет всего остального ---
+
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
