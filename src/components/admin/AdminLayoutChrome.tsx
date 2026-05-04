@@ -2,13 +2,14 @@
 
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import { isStaffAdminLoginPath } from "@/lib/auth/staff-admin-paths";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { AdminHeader } from "@/components/admin/AdminHeader";
 import { AdminStaffSessionSync } from "@/components/admin/AdminStaffSessionSync";
 
 export function AdminLayoutChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  if (pathname === "/admin/login" || pathname?.startsWith("/admin/login/")) {
+  if (isStaffAdminLoginPath(pathname)) {
     return <>{children}</>;
   }
 

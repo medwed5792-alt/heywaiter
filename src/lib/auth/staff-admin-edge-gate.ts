@@ -2,6 +2,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT, importPKCS8 } from "jose";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { HEYWAITER_STAFF_ADMIN_AUTH_COOKIE } from "@/lib/auth/staff-admin-auth-cookie";
+import { isStaffAdminLoginPath } from "@/lib/auth/staff-admin-paths";
 
 const FIREBASE_JWKS = createRemoteJWKSet(
   new URL(
@@ -112,19 +113,13 @@ export function isStaffOrAdminRole(systemRole: string | null): boolean {
   return u === "STAFF" || u === "ADMIN";
 }
 
-export function isStaffAdminLoginWhitelist(pathname: string): boolean {
-  if (pathname === "/admin/login" || pathname.startsWith("/admin/login/")) return true;
-  if (pathname === "/staff/login" || pathname.startsWith("/staff/login/")) return true;
-  return false;
-}
-
 function authLoginPathForRequest(pathname: string): "/admin/login" | "/staff/login" {
   return pathname.startsWith("/staff") ? "/staff/login" : "/admin/login";
 }
 
 export async function staffAdminMiddlewareResponse(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
-  if (isStaffAdminLoginWhitelist(pathname)) {
+  if (isStaffAdminLoginPath(pathname)) {
     return NextResponse.next();
   }
 
